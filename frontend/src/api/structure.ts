@@ -1,0 +1,19 @@
+import { request } from './client'
+
+export type Span = { start_line: number | null; end_line: number | null; start_column: number | null; end_column: number | null }
+export type Expression = { text: string | null; span: Span | null; omitted: boolean; truncated: boolean }
+export type Diagnostic = { code: string; message: string; severity: 'warning' | 'error'; span: Span | null }
+export type Structure = { quarantined: boolean; superseded: boolean; analysis_id: string; snapshot_id: string; started_at: string; completed_at: string; outcome: 'complete' | 'partial' | 'failed'; parser_version: string; runtime_version: string; policy_version: string; limits: Record<string, number>; summary: { modules: number; symbols: number; imports: number; failed: number; skipped: number }; warnings: Diagnostic[]; observation_note: string; revision: number; captured_predecessor_analysis_id: string | null; producer_contract: Record<string, string> | null; reuse_count: number; reparse_count: number }
+export type ArtifactAnalysis = { id: string; artifact_id: string; locator: string; outcome: 'parsed' | 'failed' | 'skipped'; read_started_at: string | null; read_completed_at: string | null; encoding: string | null; line_count: number | null; is_package_initializer: boolean | null; symbol_count: number; import_count: number; diagnostics: Diagnostic[]; input_fingerprint: string | null; snapshot_verified: boolean; execution_mode: 'parsed' | 'reused'; reuse_source_artifact_analysis_id: string | null }
+export type Symbol = { locator: string; id: string; artifact_analysis_id: string; parent_id: string | null; kind: 'function' | 'class' | 'method'; name: string; qualified_name: string; is_async: boolean; declaration_span: Span; full_start_line: number | null; stable_identity_id: string | null; state_fingerprint: string | null; continuity_reason: string | null }
+export type SymbolDetail = Symbol & { parameters: { name: string; kind: string; has_default: boolean; default: Expression | null; annotation: Expression | null; span: Span | null }[] | null; return_annotation: Expression | null; decorators: { ordinal: number; form: string; expression: Expression; span: Span | null }[]; type_parameters: Expression[] }
+export type ImportReference = { locator: string; id: string; artifact_analysis_id: string; owner_symbol_id: string | null; form: 'import' | 'from'; from_module: string | null; name: string; alias: string | null; level: number; statement_ordinal: number; item_ordinal: number; span: Span; resolution_status: 'unresolved'; resolution_reason: 'not_attempted' }
+export type Page<T> = { analysis_id: string | null; total: number; limit: number; offset: number; items: T[] }
+
+const base = (projectId: string, snapshotId: string) => `/projects/${projectId}/snapshots/${snapshotId}/structure`
+export const analyseStructure = (projectId: string, snapshotId: string): Promise<Structure> => request(base(projectId, snapshotId), { method: 'POST', body: '{}' })
+export const getStructure = (projectId: string, snapshotId: string): Promise<Structure> => request(base(projectId, snapshotId))
+export const listStructureArtifacts = (projectId: string, snapshotId: string, offset = 0): Promise<Page<ArtifactAnalysis>> => request(`${base(projectId, snapshotId)}/artifacts?limit=100&offset=${offset}`)
+export const listSymbols = (projectId: string, snapshotId: string, offset = 0): Promise<Page<Symbol>> => request(`${base(projectId, snapshotId)}/symbols?limit=100&offset=${offset}`)
+export const listImports = (projectId: string, snapshotId: string, offset = 0): Promise<Page<ImportReference>> => request(`${base(projectId, snapshotId)}/imports?limit=100&offset=${offset}`)
+export const getSymbol = (projectId: string, snapshotId: string, symbolId: string): Promise<SymbolDetail> => request(`${base(projectId, snapshotId)}/symbols/${symbolId}`)

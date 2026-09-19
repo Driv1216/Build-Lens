@@ -1,0 +1,1 @@
+"""Concrete structural-analysis adapters."""

@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "buildlens"
+version = "0.1.0"
+description = "BuildLens Phase 2 Stage 8 lexical and hybrid retrieval"
+readme = {text = "BuildLens Phase 2 Stage 8 lexical and hybrid retrieval.", content-type = "text/markdown"}
+requires-python = ">=3.11"
+dependencies = [
+  "pyyaml>=6.0.2,<7",
+  "alembic>=1.14,<2",
+  "fastapi>=0.115,<1",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic-settings>=2.6,<3",
+  "pathspec>=1.1,<2",
+  "pgvector==0.4.1",
+  "sqlalchemy>=2.0,<3",
+  "typer>=0.15,<1",
+  "uvicorn[standard]>=0.32,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "types-PyYAML>=6,<7",
+  "mypy>=1.13,<2",
+  "pytest>=8.3,<9",
+  "ruff>=0.8,<1",
+]
+embeddings = [
+  "huggingface-hub==0.34.4",
+  "psutil==7.0.0",
+  "sentence-transformers==5.1.1",
+  "torch==2.8.0",
+  "transformers==4.56.2",
+]
+
+[project.scripts]
+buildlens = "buildlens.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/buildlens"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not real_model'"
+markers = [
+  "integration: requires a running PostgreSQL database and applies real migrations",
+  "real_model: requires the explicitly downloaded pinned embedding model",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"] # FastAPI dependency injection intentionally uses Depends defaults.
+
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+python_version = "3.11"
+files = ["src", "tests"]
+mypy_path = "src"
+check_untyped_defs = true
+follow_imports = "skip"
+disallow_any_generics = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["alembic.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["huggingface_hub.*", "psutil.*", "sentence_transformers.*", "torch.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pgvector", "pgvector.*", "numpy", "numpy.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
