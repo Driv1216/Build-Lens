@@ -1,7 +1,7 @@
 from functools import lru_cache
-from typing import Self
+from typing import Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +51,21 @@ class Settings(BaseSettings):
     embeddings_batch_timeout_seconds: float = 30
     embeddings_preparation_timeout_seconds: float = 300
     embeddings_search_timeout_seconds: float = 15
+    reranker_model_revision: str = "233902d25c440f23af6f7d6e94d2946bac0bee0a"
+    reranker_cache_dir: str = "~/.cache/buildlens/reranking"
+    reranker_batch_size: int = 8
+    reranker_worker_max_rss_bytes: int = 2 * 1024 * 1024 * 1024
+    reranker_model_load_timeout_seconds: float = 60
+    reranker_inference_timeout_seconds: float = 45
+    context_request_timeout_seconds: float = 120
+    context_max_source_bytes: int = 2 * 1024 * 1024
+    context_max_response_bytes: int = 4 * 1024 * 1024
+    context_max_bytes: int = 32_000
+    context_max_items: int = 16
+    ask_enabled: bool = False
+    generation_provider: Literal["gemini", "openai"] = "gemini"
+    gemini_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
 
     @model_validator(mode="after")
     def valid_limits(self) -> Self:
@@ -75,6 +90,12 @@ class Settings(BaseSettings):
             value not in "0123456789abcdef" for value in self.embeddings_model_revision
         ):
             raise ValueError("Embedding model revision must be a full lowercase commit SHA")
+        if len(self.reranker_model_revision) != 40 or any(
+            value not in "0123456789abcdef" for value in self.reranker_model_revision
+        ):
+            raise ValueError("Reranker revision must be a full lowercase commit SHA")
+        if self.context_max_bytes > self.context_max_response_bytes:
+            raise ValueError("Context payload budget exceeds response budget")
         if not self.database_url.startswith("postgresql+psycopg://"):
             raise ValueError("A PostgreSQL psycopg database URL is required")
         return self

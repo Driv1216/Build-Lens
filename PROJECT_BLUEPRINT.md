@@ -1,4 +1,4 @@
-# BuildLens Master Plan v1
+# BuildLens Project Blueprint v1
 
 **Status:** Initial authoritative product and engineering specification  
 **Working product name:** BuildLens  
@@ -1302,7 +1302,7 @@ Stages are implementation slices, not permanent product modules.
 
 Create and lock:
 
-- Master Plan;
+- Project Blueprint;
 - product definition;
 - architecture principles;
 - development rules;
@@ -2431,12 +2431,12 @@ Long-lived documentation should remain concise and authoritative:
 
 ```text
 README.md
-MASTER_PLAN.md
+PROJECT_BLUEPRINT.md
 CURRENT_STATE.md
 docs/ARCHITECTURE.md
 ```
 
-README is the setup and current product entry point. MASTER_PLAN is the long-term
+README is the setup and current product entry point. PROJECT_BLUEPRINT is the long-term
 product and engineering constitution. CURRENT_STATE is the operational truth of what is
 implemented and verified. The living architecture document describes how the current
 system works.
@@ -2478,7 +2478,7 @@ The current-state file prevents future agents from relying on stale plans.
 Every stage follows:
 
 ```text
-MASTER PLAN
+PROJECT BLUEPRINT
      ↓
 CURRENT STATE
      ↓

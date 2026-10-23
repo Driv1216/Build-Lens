@@ -5,6 +5,7 @@ import type { Project } from '../api/projects'
 import { StructuralAnalysisPanel } from './StructuralAnalysisPanel'
 import { ArtifactProcessingPanel } from './ArtifactProcessingPanel'
 import { SemanticSearchPanel } from './SemanticSearchPanel'
+import { AskPanel } from './AskPanel'
 
 function displayPath(value: string): string {
   return Array.from(value, (character) => {
@@ -24,6 +25,7 @@ function SnapshotScope({ project }: { project: Project }) {
   const [changes, setChanges] = useState<ArtifactChangePage | null>(null)
   const [loading, setLoading] = useState(false)
   const [revision, setRevision] = useState(0)
+  const [askRevision, setAskRevision] = useState(0)
   const lifetime = useRef<AbortController | null>(null)
   const pageRequest = useRef<AbortController | null>(null)
   const [scanning, setScanning] = useState(false)
@@ -43,6 +45,7 @@ function SnapshotScope({ project }: { project: Project }) {
   }, [expanded, project.id])
 
   async function inspect() {
+    setAskRevision(x => x + 1)
     const signal = lifetime.current?.signal
     setScanning(true); setError(null); pageRequest.current?.abort()
     try {
@@ -50,7 +53,7 @@ function SnapshotScope({ project }: { project: Project }) {
       const [inventory, comparison] = await Promise.all([listArtifacts(project.id, value.id, 0, signal), listArtifactChanges(project.id, value.id, 0, signal)])
       if (!signal?.aborted) { setSnapshot(value); setArtifacts(inventory); setChanges(comparison) }
     } catch (reason) { if (!signal?.aborted) setError(String(reason)) }
-    finally { if (!signal?.aborted) setScanning(false) }
+    finally { setAskRevision(x => x + 1); if (!signal?.aborted) setScanning(false) }
   }
   async function showPage(offset: number, kind: 'artifacts' | 'changes' = 'artifacts') {
     if (!snapshot) return
@@ -75,9 +78,10 @@ function SnapshotScope({ project }: { project: Project }) {
         {snapshot.warnings.length > 0 && <details><summary>Warnings ({snapshot.warnings.length})</summary><ul>{snapshot.warnings.map((warning) => <li key={`${warning.code}-${warning.locator}`}>{warning.code}: {warning.message}{warning.locator ? ` (${displayPath(warning.locator)})` : ''}</li>)}</ul></details>}
         {changes && <details open><summary>Current versus predecessor ({changes.total})</summary><ul>{changes.items.map((change) => <li key={`${change.state}-${change.locator}`}><code>{displayPath(change.locator)}</code> · {change.state.toLowerCase()} · {change.reason}</li>)}</ul><nav className="pager" aria-label="Change pages"><button disabled={!changes.offset} onClick={() => void showPage(Math.max(0, changes.offset - changes.limit), 'changes')}>Previous</button><button disabled={changes.offset + changes.limit >= changes.total} onClick={() => void showPage(changes.offset + changes.limit, 'changes')}>Next</button></nav></details>}
         {artifacts && <><h3>Inventory</h3><div className="inventory-scroll"><table><thead><tr><th>Path</th><th>Kind</th><th>Language</th><th>Tags</th><th>Size</th><th>Exclusion</th></tr></thead><tbody>{artifacts.items.map((artifact) => <tr key={artifact.id}><td><code>{displayPath(artifact.locator)}</code></td><td>{artifact.kind}</td><td>{artifact.language ?? '—'}</td><td>{artifact.tags.join(', ') || '—'}</td><td>{artifact.size_bytes?.toLocaleString() ?? '—'}</td><td>{artifact.exclusion_reasons.join(', ') || '—'}</td></tr>)}</tbody></table></div><p>{artifacts.total} observed entries</p><div className="pager"><button disabled={artifacts.offset === 0} onClick={() => showPage(Math.max(0, artifacts.offset - artifacts.limit))}>Previous</button><button disabled={artifacts.offset + artifacts.limit >= artifacts.total} onClick={() => showPage(artifacts.offset + artifacts.limit)}>Next</button></div></>}
-        <StructuralAnalysisPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onRefresh={() => setRevision(x => x + 1)} />
-        <ArtifactProcessingPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onRefresh={() => setRevision(x => x + 1)} />
-        <SemanticSearchPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} />
+        <StructuralAnalysisPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onRefresh={() => setRevision(x => x + 1)} onAskInvalidate={() => setAskRevision(x => x + 1)} />
+        <ArtifactProcessingPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onRefresh={() => setRevision(x => x + 1)} onAskInvalidate={() => setAskRevision(x => x + 1)} />
+        <SemanticSearchPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onAskInvalidate={() => setAskRevision(x => x + 1)} />
+        <AskPanel projectId={project.id} snapshotId={snapshot.id} invalidation={askRevision} />
       </>}
     </div>}
   </section>

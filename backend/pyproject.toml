@@ -5,8 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "buildlens"
 version = "0.1.0"
-description = "BuildLens Phase 2 Stage 8 lexical and hybrid retrieval"
-readme = {text = "BuildLens Phase 2 Stage 8 lexical and hybrid retrieval.", content-type = "text/markdown"}
+description = "BuildLens Phase 2 Stage 10 grounded Ask mode"
+readme = {text = "BuildLens Phase 2 Stage 10 grounded Ask mode.", content-type = "text/markdown"}
 requires-python = ">=3.11"
 dependencies = [
   "pyyaml>=6.0.2,<7",
@@ -36,6 +36,16 @@ embeddings = [
   "torch==2.8.0",
   "transformers==4.56.2",
 ]
+reranking = [
+  "huggingface-hub==0.34.4",
+  "psutil==7.0.0",
+  "torch==2.8.0",
+  "transformers==4.56.2",
+]
+generation = [
+  "google-genai==2.25.0",
+  "openai==2.37.0",
+]
 
 [project.scripts]
 buildlens = "buildlens.cli.main:app"
@@ -45,10 +55,11 @@ packages = ["src/buildlens"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not real_model'"
+addopts = "-m 'not real_model and not real_provider'"
 markers = [
   "integration: requires a running PostgreSQL database and applies real migrations",
   "real_model: requires the explicitly downloaded pinned embedding model",
+  "real_provider: explicitly enabled paid Gemini and disposable PostgreSQL verification",
 ]
 
 [tool.ruff]
@@ -79,10 +90,14 @@ module = ["alembic.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["huggingface_hub.*", "psutil.*", "sentence_transformers.*", "torch.*"]
+module = ["huggingface_hub.*", "psutil.*", "sentence_transformers.*", "torch.*", "transformers.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["pgvector", "pgvector.*", "numpy", "numpy.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["openai", "openai.*"]
+ignore_missing_imports = true

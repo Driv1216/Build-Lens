@@ -5,6 +5,28 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from buildlens.application.ask import (
+    AskBudgetExceededError,
+    AskInputError,
+    AskTimeoutError,
+    GenerationCitationInvalidError,
+    GenerationConfigurationInvalidError,
+    GenerationContextRejectedError,
+    GenerationNotConfiguredError,
+    GenerationOutputInvalidError,
+    GenerationRateLimitedError,
+    GenerationRefusedError,
+    GenerationUnavailableError,
+    TokenCountTimeoutError,
+    TokenCountUnavailableError,
+)
+from buildlens.application.context import (
+    ContextBusyError,
+    ContextConflictError,
+    ContextInputError,
+    ContextLimitError,
+    ContextUnavailableError,
+)
 from buildlens.application.embeddings import (
     EmbeddingBusyError,
     EmbeddingConflictError,
@@ -38,6 +60,59 @@ from buildlens.application.structural import (
 
 def register_errors(app: FastAPI) -> None:
     mapping: dict[type[Exception], tuple[int, str, str]] = {
+        GenerationNotConfiguredError: (
+            503,
+            "GENERATION_NOT_CONFIGURED",
+            "Ask generation is not configured.",
+        ),
+        GenerationConfigurationInvalidError: (
+            503,
+            "GENERATION_CONFIGURATION_INVALID",
+            "Generation configuration was rejected.",
+        ),
+        GenerationUnavailableError: (
+            503,
+            "GENERATION_UNAVAILABLE",
+            "Generation provider is unavailable.",
+        ),
+        GenerationRateLimitedError: (
+            429,
+            "GENERATION_RATE_LIMITED",
+            "Generation provider rate limit was reached.",
+        ),
+        AskTimeoutError: (504, "ASK_TIMEOUT", "Ask did not finish within its deadline."),
+        TokenCountUnavailableError: (
+            503,
+            "TOKEN_COUNT_UNAVAILABLE",
+            "Provider token counting is unavailable.",
+        ),
+        TokenCountTimeoutError: (504, "TOKEN_COUNT_TIMEOUT", "Provider token counting timed out."),
+        AskBudgetExceededError: (
+            422,
+            "ASK_BUDGET_EXCEEDED",
+            "Question or evidence exceeds the Ask token allowance.",
+        ),
+        GenerationContextRejectedError: (
+            502,
+            "GENERATION_CONTEXT_REJECTED",
+            "Provider rejected the counted context.",
+        ),
+        GenerationOutputInvalidError: (
+            502,
+            "GENERATION_OUTPUT_INVALID",
+            "Generation output did not satisfy the answer contract.",
+        ),
+        GenerationCitationInvalidError: (
+            502,
+            "GENERATION_CITATION_INVALID",
+            "Generation cited evidence outside the supplied package.",
+        ),
+        GenerationRefusedError: (
+            422,
+            "GENERATION_REFUSED",
+            "Generation provider refused the request.",
+        ),
+        AskInputError: (422, "ASK_INPUT_INVALID", "Ask question is invalid."),
         AnalysisNotFoundError: (404, "ANALYSIS_NOT_FOUND", "Structural run was not found."),
         AnalysisContentUnavailableError: (
             409,
@@ -68,6 +143,18 @@ def register_errors(app: FastAPI) -> None:
             "EMBEDDING_LIMIT_EXCEEDED",
             "Current content exceeds a configured embedding limit.",
         ),
+        ContextInputError: (422, "CONTEXT_INPUT_INVALID", "Context input is invalid."),
+        ContextLimitError: (
+            422,
+            "CONTEXT_LIMIT_EXCEEDED",
+            "Context construction exceeded a configured limit.",
+        ),
+        ContextUnavailableError: (
+            503,
+            "CONTEXT_UNAVAILABLE",
+            "Context construction is unavailable. Inspect GET /api/v1/reranker; acquire the "
+            "pinned model with 'buildlens reranking download-model' when learned ranking is used.",
+        ),
         SQLAlchemyError: (
             503,
             "PERSISTENCE_UNAVAILABLE",
@@ -85,13 +172,19 @@ def register_errors(app: FastAPI) -> None:
         EmbeddingConflictError,
         SnapshotConflictError,
         ScanBusyError,
+        ContextBusyError,
+        ContextConflictError,
     ):
         mapping[error] = (
             409,
             "OPERATION_CONFLICT",
             "Another operation changed or holds publication authority.",
         )
-    for error in (ProcessingUnavailableError, AnalysisUnavailableError, EmbeddingUnavailableError):
+    for error in (
+        ProcessingUnavailableError,
+        AnalysisUnavailableError,
+        EmbeddingUnavailableError,
+    ):
         mapping[error] = (503, "OPERATION_UNAVAILABLE", "Operation infrastructure is unavailable.")
 
     async def handler(request: Request, error: Exception) -> JSONResponse:

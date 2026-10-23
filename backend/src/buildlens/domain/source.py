@@ -11,7 +11,7 @@ import tokenize
 from importlib.metadata import version
 from io import BytesIO
 
-READER_VERSION = "posix-secure-reader.v2"
+READER_VERSION = "posix-secure-reader.v3"
 SCREENING_VERSION = "secret-screen.v2"
 PARSER_VERSION = "python-ast.v2"
 PROCESSING_VERSION = "stage5.native.v2"

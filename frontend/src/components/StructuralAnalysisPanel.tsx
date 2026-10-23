@@ -3,12 +3,12 @@ import { request } from '../api/client'
 import type { ArtifactAnalysis, ImportReference, Structure, Symbol, SymbolDetail } from '../api/structure'
 import { EvidencePage } from './EvidencePage'
 
-type Props = { projectId: string; snapshotId: string; revision?: number; onRefresh?: () => void }
+type Props = { projectId: string; snapshotId: string; revision?: number; onRefresh?: () => void; onAskInvalidate?: () => void }
 type Status = { latest_attempt: Structure | null; active_run: Structure | null }
 export function StructuralAnalysisPanel(props: Props) {
   return <StructureScope key={`${props.projectId}/${props.snapshotId}/${props.revision ?? 0}`} {...props} />
 }
-function StructureScope({ projectId, snapshotId, onRefresh }: Props) {
+function StructureScope({ projectId, snapshotId, onRefresh, onAskInvalidate }: Props) {
   const base = `/projects/${projectId}/snapshots/${snapshotId}/structure`
   const [status, setStatus] = useState<Status | null>(null)
   const [history, setHistory] = useState<Structure | null>(null)
@@ -27,13 +27,14 @@ function StructureScope({ projectId, snapshotId, onRefresh }: Props) {
     return () => { controller.abort(); contentRequest.current?.abort() }
   }, [base, revision])
   async function run() {
+    onAskInvalidate?.()
     const signal = lifetime.current?.signal
     setRunning(true); setError(null); setDetail(null); contentRequest.current?.abort()
     try {
       await request(base, { method: 'POST', body: '{}', signal })
       if (!signal?.aborted) { setRevision(x => x + 1); onRefresh?.() }
     } catch (reason) { if (!signal?.aborted) setError(String(reason)) }
-    finally { if (!signal?.aborted) setRunning(false) }
+    finally { onAskInvalidate?.(); if (!signal?.aborted) setRunning(false) }
   }
   function choose(run: Structure | null) { contentRequest.current?.abort(); setDetail(null); setHistory(run); setError(null) }
   async function show(item: Symbol) {

@@ -25,3 +25,7 @@ postgres-data/
 .idea/
 .vscode/
 *.swp
+
+# Evaluation definitions are tracked; generated observations and working reviews are local.
+.buildlens-eval/runs/
+.buildlens-eval/reviews/

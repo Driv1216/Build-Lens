@@ -5,13 +5,18 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from buildlens import __version__
+from buildlens.cli.evaluation import app as evaluation_app
 from buildlens.core.config import get_settings
 from buildlens.infrastructure.embeddings.model_cache import download_snapshot
 from buildlens.infrastructure.persistence.database import create_database_engine
+from buildlens.infrastructure.reranking.model_cache import download_snapshot as download_reranker
 
 app = typer.Typer(add_completion=False, help="BuildLens command-line interface.")
+app.add_typer(evaluation_app, name="eval")
 embeddings_app = typer.Typer(help="Manage the pinned local embedding model.")
 app.add_typer(embeddings_app, name="embeddings")
+reranking_app = typer.Typer(help="Manage the pinned local cross-encoder reranker.")
+app.add_typer(reranking_app, name="reranking")
 
 
 def version_callback(value: bool) -> None:
@@ -160,3 +165,17 @@ def download_embedding_model() -> None:
         typer.echo(f"embedding model: unavailable ({error})")
         raise typer.Exit(code=1) from None
     typer.echo(f"embedding model: verified at {target}")
+
+
+@reranking_app.command("download-model")
+def download_reranking_model() -> None:
+    """Download and verify the pinned reranker without reading repository content."""
+    settings = get_settings()
+    try:
+        target = download_reranker(
+            Path(settings.reranker_cache_dir).expanduser(), settings.reranker_model_revision
+        )
+    except (RuntimeError, OSError, ValueError) as error:
+        typer.echo(f"reranker model: unavailable ({error})")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"reranker model: verified at {target}")

@@ -3,11 +3,11 @@ import { request } from '../api/client'
 import type { ArtifactOutcome, Chunk, ProcessingRun, ProcessingStatus } from '../api/processing'
 import { EvidencePage } from './EvidencePage'
 
-type Props = { projectId: string; snapshotId: string; revision?: number; onRefresh?: () => void }
+type Props = { projectId: string; snapshotId: string; revision?: number; onRefresh?: () => void; onAskInvalidate?: () => void }
 export function ArtifactProcessingPanel(props: Props) {
   return <ProcessingScope key={`${props.projectId}/${props.snapshotId}/${props.revision ?? 0}`} {...props} />
 }
-function ProcessingScope({ projectId, snapshotId, onRefresh }: Props) {
+function ProcessingScope({ projectId, snapshotId, onRefresh, onAskInvalidate }: Props) {
   const base = `/projects/${projectId}/snapshots/${snapshotId}/processing`
   const [status, setStatus] = useState<ProcessingStatus | null>(null)
   const [history, setHistory] = useState<ProcessingRun | null>(null)
@@ -26,13 +26,14 @@ function ProcessingScope({ projectId, snapshotId, onRefresh }: Props) {
     return () => { controller.abort(); contentRequest.current?.abort() }
   }, [base, revision])
   async function run() {
+    onAskInvalidate?.()
     const signal = lifetime.current?.signal
     setRunning(true); setError(null); setSelected(null); contentRequest.current?.abort()
     try {
       await request(base, { method: 'POST', body: '{}', signal })
       if (!signal?.aborted) { setRevision(x => x + 1); onRefresh?.() }
     } catch (reason) { if (!signal?.aborted) setError(String(reason)) }
-    finally { if (!signal?.aborted) setRunning(false) }
+    finally { onAskInvalidate?.(); if (!signal?.aborted) setRunning(false) }
   }
   function choose(run: ProcessingRun | null) { contentRequest.current?.abort(); setSelected(null); setHistory(run); setError(null) }
   async function show(item: Chunk) {

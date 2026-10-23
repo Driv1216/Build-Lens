@@ -2,9 +2,10 @@
 
 from pathlib import PurePosixPath
 
-POLICY_VERSION = "stage2.v2"
+POLICY_VERSION = "stage2.v3"
 
 _DIRECTORY_EXCLUSIONS = {
+    ".buildlens-eval": "evaluation_data",
     ".git": "vcs_metadata",
     ".hg": "vcs_metadata",
     ".svn": "vcs_metadata",

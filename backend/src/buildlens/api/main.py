@@ -1,7 +1,5 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from pathlib import Path
-from threading import Lock
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,19 +7,18 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from buildlens import __version__
+from buildlens.api.ask_routes import router as ask_router
+from buildlens.api.ask_routes import runtime_router as ask_runtime_router
+from buildlens.api.context_routes import router as context_router
+from buildlens.api.context_routes import runtime_router as context_runtime_router
 from buildlens.api.processing_routes import router as processing_router
 from buildlens.api.retrieval_routes import router as embedding_router
 from buildlens.api.routes import router as projects_router
 from buildlens.api.schemas import HealthResponse
 from buildlens.api.snapshot_routes import router as snapshots_router
 from buildlens.api.structural_routes import router as structural_router
-from buildlens.application.embeddings import EmbeddingRuntime
 from buildlens.core.config import Settings, get_settings
-from buildlens.infrastructure.embeddings.supervisor import SupervisedSentenceTransformer
-from buildlens.infrastructure.persistence.database import (
-    create_database_engine,
-    create_session_factory_from_engine,
-)
+from buildlens.infrastructure.runtime import LocalRuntime
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -30,27 +27,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        engine = create_database_engine(active_settings)
-        app.state.settings = active_settings
-        app.state.session_factory = create_session_factory_from_engine(engine)
-        app.state.scan_lock = Lock()
-        app.state.analysis_lock = Lock()
-        app.state.processing_lock = Lock()
-        app.state.embedding_runtime = EmbeddingRuntime(
-            SupervisedSentenceTransformer(
-                Path(active_settings.embeddings_cache_dir).expanduser(),
-                revision=active_settings.embeddings_model_revision,
-                model_load_timeout_seconds=(active_settings.embeddings_model_load_timeout_seconds),
-                batch_timeout_seconds=active_settings.embeddings_batch_timeout_seconds,
-                window_batch_size=active_settings.embeddings_window_batch_size,
-                max_rss_bytes=active_settings.embeddings_worker_max_rss_bytes,
-            )
-        )
+        runtime = LocalRuntime(active_settings)
+        for name, value in vars(runtime).items():
+            setattr(app.state, name, value)
         try:
             yield
         finally:
-            app.state.embedding_runtime.close()
-            engine.dispose()
+            await runtime.close()
 
     app = FastAPI(title="BuildLens API", version=__version__, lifespan=lifespan)
     app.add_middleware(
@@ -73,7 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             origin = request.headers.get("origin")
             allowed = {"http://localhost:5173", "http://127.0.0.1:5173"}
             if origin and origin not in allowed:
-                return JSONResponse(
+                rejected = JSONResponse(
                     status_code=403,
                     content={
                         "detail": {
@@ -82,6 +65,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         }
                     },
                 )
+                if request.url.path.rstrip("/").endswith("/ask"):
+                    rejected.headers["Cache-Control"] = "no-store"
+                return rejected
             if (
                 request.url.path.rstrip("/").endswith(
                     (
@@ -91,12 +77,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "/embeddings",
                         "/semantic-search",
                         "/search",
+                        "/context",
+                        "/ask",
                     )
                 )
             ) and request.headers.get("content-type", "").split(";", 1)[
                 0
             ].strip().lower() != "application/json":
-                return JSONResponse(
+                rejected = JSONResponse(
                     status_code=415,
                     content={
                         "detail": {
@@ -105,7 +93,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         }
                     },
                 )
-        return await call_next(request)
+                if request.url.path.rstrip("/").endswith("/ask"):
+                    rejected.headers["Cache-Control"] = "no-store"
+                return rejected
+        result = await call_next(request)
+        if request.url.path.rstrip("/").endswith("/ask"):
+            result.headers["Cache-Control"] = "no-store"
+        return result
 
     @app.get("/api/v1/health", response_model=HealthResponse, tags=["health"])
     def health() -> HealthResponse:
@@ -120,6 +114,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(structural_router)
     app.include_router(processing_router)
     app.include_router(embedding_router)
+    app.include_router(context_router)
+    app.include_router(context_runtime_router)
+    app.include_router(ask_router)
+    app.include_router(ask_runtime_router)
     return app
 
 

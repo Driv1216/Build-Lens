@@ -1,25 +1,31 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
+  buildContext,
   getEmbeddingHistory,
   getEmbeddings,
+  getReranker,
   prepareEmbeddings,
   retrievalSearch,
+  type ContextResponse,
   type EmbeddingHistory,
   type EmbeddingStatus,
+  type RankingPolicy,
+  type RerankerStatus,
   type RetrievalMode,
   type RetrievalResponse,
   type SemanticSearchFilters,
 } from '../api/embeddings'
 
-type Props = { projectId: string; snapshotId: string; revision?: number }
+type Props = { projectId: string; snapshotId: string; revision?: number; onAskInvalidate?: () => void }
 
 export function SemanticSearchPanel(props: Props) {
   const key = `${props.projectId}/${props.snapshotId}/${props.revision ?? 0}`
   return <SearchScope key={key} {...props} />
 }
 
-function SearchScope({ projectId, snapshotId }: Props) {
+function SearchScope({ projectId, snapshotId, onAskInvalidate }: Props) {
   const [status, setStatus] = useState<EmbeddingStatus | null>(null)
+  const [reranker, setReranker] = useState<RerankerStatus | null>(null)
   const [history, setHistory] = useState<EmbeddingHistory | null>(null)
   const [mode, setMode] = useState<RetrievalMode>('lexical')
   const [query, setQuery] = useState('')
@@ -28,20 +34,27 @@ function SearchScope({ projectId, snapshotId }: Props) {
   const [language, setLanguage] = useState('')
   const [kind, setKind] = useState('')
   const [result, setResult] = useState<RetrievalResponse | null>(null)
+  const [rankingPolicy, setRankingPolicy] = useState<RankingPolicy>('local_cross_encoder')
+  const [context, setContext] = useState<ContextResponse | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [searching, setSearching] = useState(false)
+  const [building, setBuilding] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [contextError, setContextError] = useState<string | null>(null)
   const lifetime = useRef<AbortController | null>(null)
   const searchRequest = useRef<AbortController | null>(null)
+  const contextRequest = useRef<AbortController | null>(null)
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    const [nextStatus, nextHistory] = await Promise.all([
+    const [nextStatus, nextHistory, nextReranker] = await Promise.all([
       getEmbeddings(projectId, snapshotId, signal),
       getEmbeddingHistory(projectId, snapshotId, signal),
+      getReranker(signal),
     ])
     if (!signal?.aborted) {
       setStatus(nextStatus)
       setHistory(Array.isArray(nextHistory.items) ? nextHistory : null)
+      setReranker(nextReranker)
     }
   }, [projectId, snapshotId])
 
@@ -49,13 +62,16 @@ function SearchScope({ projectId, snapshotId }: Props) {
     const controller = new AbortController()
     lifetime.current = controller
     setResult(null)
+    setContext(null)
     setError(null)
+    setContextError(null)
     void refresh(controller.signal).catch((reason: unknown) => {
       if (!controller.signal.aborted) setError(messageFrom(reason))
     })
     return () => {
       controller.abort()
       searchRequest.current?.abort()
+      contextRequest.current?.abort()
     }
   }, [projectId, snapshotId, refresh])
 
@@ -66,17 +82,29 @@ function SearchScope({ projectId, snapshotId }: Props) {
     setSearching(false)
   }, [mode, query, topK, locatorPrefix, language, kind])
 
+  useEffect(() => {
+    contextRequest.current?.abort()
+    setContext(null)
+    setContextError(null)
+    setBuilding(false)
+  }, [mode, query, locatorPrefix, language, kind, rankingPolicy])
+
   async function prepare() {
+    onAskInvalidate?.()
     const signal = lifetime.current?.signal
     searchRequest.current?.abort()
+    contextRequest.current?.abort()
     setPreparing(true)
     setResult(null)
+    setContext(null)
     setError(null)
+    setContextError(null)
     try {
       await prepareEmbeddings(projectId, snapshotId, signal)
     } catch (reason: unknown) {
       if (!signal?.aborted) setError(messageFrom(reason))
     } finally {
+      onAskInvalidate?.()
       if (!signal?.aborted) {
         try {
           await refresh(signal)
@@ -85,6 +113,35 @@ function SearchScope({ projectId, snapshotId }: Props) {
         }
         setPreparing(false)
       }
+    }
+  }
+
+  async function constructContext() {
+    contextRequest.current?.abort()
+    const controller = new AbortController()
+    contextRequest.current = controller
+    setBuilding(true)
+    setContext(null)
+    setContextError(null)
+    const filters: SemanticSearchFilters = {}
+    if (locatorPrefix) filters.locator_prefix = locatorPrefix
+    if (language) filters.language = language
+    if (kind) filters.kind = kind
+    try {
+      const value = await buildContext(
+        projectId,
+        snapshotId,
+        mode,
+        rankingPolicy,
+        query,
+        filters,
+        controller.signal,
+      )
+      if (!controller.signal.aborted) setContext(value)
+    } catch (reason: unknown) {
+      if (!controller.signal.aborted) setContextError(messageFrom(reason))
+    } finally {
+      if (!controller.signal.aborted) setBuilding(false)
     }
   }
 
@@ -144,6 +201,10 @@ function SearchScope({ projectId, snapshotId }: Props) {
         {status.freshness_reasons.map((reason) => <p className="note" key={reason}>{reason}</p>)}
         {!status.model.available && <p className="note">Exact and lexical modes remain available. Run <code>buildlens embeddings download-model</code> to enable query inference.</p>}
       </>}
+      {reranker && <p>
+        Reranker: <code>{reranker.contract.model_id}</code> · {reranker.available ? 'local cache verified' : `unavailable (${reranker.reason ?? 'unknown'})`}
+      </p>}
+      {reranker && !reranker.available && <p className="note">Run <code>{reranker.acquisition_command}</code> to enable learned context ranking. Retrieval-order context remains available.</p>}
       <form className="semantic-form" onSubmit={(event) => void search(event)}>
         <label>
           Search mode
@@ -193,6 +254,38 @@ function SearchScope({ projectId, snapshotId }: Props) {
           <pre>{hit.content}</pre>
         </li>)}</ol>
       </div>}
+      <div className="context-builder">
+        <label>
+          Context ranking
+          <select
+            aria-label="Context ranking"
+            value={rankingPolicy}
+            onChange={(event) => setRankingPolicy(event.target.value as RankingPolicy)}
+            disabled={building}
+          >
+            <option value="local_cross_encoder">Local cross-encoder</option>
+            <option value="retrieval_order">Retrieval order</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          onClick={() => void constructContext()}
+          disabled={
+            building || !query.trim() || !searchable ||
+            (rankingPolicy === 'local_cross_encoder' && !reranker?.available)
+          }
+        >
+          {building ? 'Building context…' : 'Build context'}
+        </button>
+        <p className="note">Context uses a fixed server policy; “Top results” affects search only.</p>
+      </div>
+      {contextError && <p className="error" role="alert">{contextError}</p>}
+      {contextError && rankingPolicy === 'local_cross_encoder' && (
+        <button type="button" onClick={() => setRankingPolicy('retrieval_order')}>
+          Switch to retrieval-order context
+        </button>
+      )}
+      {context && <ContextInspector value={context} />}
       {history && <details>
         <summary>Embedding history ({history.total})</summary>
         {history.items.length === 0 ? <p className="note">No persisted attempts.</p> : <ol>
@@ -203,6 +296,45 @@ function SearchScope({ projectId, snapshotId }: Props) {
       </details>}
     </section>
   )
+}
+
+function ContextInspector({ value }: { value: ContextResponse }) {
+  const excluded = value.decisions.filter((decision) => decision.disposition === 'excluded')
+  return <div className="semantic-results context-results" aria-live="polite">
+    <h4>Context package · {value.item_count} item{value.item_count === 1 ? '' : 's'}</h4>
+    <p>
+      {value.budget.used.toLocaleString()} of {value.budget.limit.toLocaleString()} UTF-8 bytes ·{' '}
+      {value.budget.remaining.toLocaleString()} remaining · exact {value.budget.measurement.policy}
+    </p>
+    <p className="note">
+      {value.ranking_policy === 'local_cross_encoder' ? 'Local cross-encoder' : 'Retrieval order'} ·{' '}
+      {value.reranker_state.replaceAll('_', ' ')} · candidates {value.retrieval.candidate_count}/{value.retrieval.candidate_depth}
+      {value.retrieval.candidates_truncated ? ' (bounded tail omitted)' : ''}
+    </p>
+    {value.items.length === 0 && <p>No eligible evidence was included.</p>}
+    <ol>{value.items.map((item) => <li key={item.chunk_id}>
+      <div>
+        <strong>{item.selected_as_seed ? 'Seed' : 'Neighbour'}</strong> · <code>{item.locator}</code> · lines {item.span.start_line}–{item.span.end_line} · {item.context_cost} bytes
+      </div>
+      <p className="note">
+        Retrieval {item.retrieval ? `#${item.retrieval.rank}` : 'expanded only'}
+        {item.rerank_rank ? ` · rerank #${item.rerank_rank} · raw logit ${item.rerank_score?.toFixed(6)} · ${item.rerank_window_count} window${item.rerank_window_count === 1 ? '' : 's'}` : ''}
+      </p>
+      {item.expanded_from.length > 0 && <p className="note">Expanded from: {item.expanded_from.join(', ')}</p>}
+      <p className="note">Chunk <code>{item.stable_key}</code> · part {item.part_index} · anchor <code>{item.unit_anchor}</code></p>
+      <pre>{item.content}</pre>
+    </li>)}</ol>
+    <details>
+      <summary>Excluded decisions ({excluded.length})</summary>
+      {excluded.length === 0 ? <p className="note">No exclusions.</p> : <ul>
+        {excluded.map((decision, index) => <li key={`${decision.chunk_id}/${decision.stage}/${decision.reason}/${index}`}>
+          <code>{decision.locator}</code> · {decision.stage}: {decision.reason}
+          {decision.retrieval_rank ? ` · retrieval #${decision.retrieval_rank}` : ''}
+          {decision.rerank_rank ? ` · rerank #${decision.rerank_rank}` : ''}
+        </li>)}
+      </ul>}
+    </details>
+  </div>
 }
 
 function messageFrom(reason: unknown): string {

@@ -104,4 +104,63 @@ describe('evidence request scopes', () => {
     expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled()
     expect(screen.getByText(/Hybrid requires both lexical retrieval/)).toBeInTheDocument()
   })
+  it('builds and inspects bounded context independently of top results', async () => {
+    const prepared = {
+      model: { available: true, path: '/embeddings', reason: null },
+      contract: { model_id: 'test/embedding', dimensions: 384 },
+      prepared: true,
+      search_available: true,
+      active_processing_run_id: 'processing1',
+      freshness_reasons: [],
+      active_run: null,
+      latest_attempt: null,
+    }
+    mocked.mockImplementation((path, init) => {
+      if (path === '/reranker') return Promise.resolve({
+        available: true,
+        path: '/reranker',
+        reason: null,
+        runtime_verified: false,
+        acquisition_command: 'buildlens reranking download-model',
+        contract: { model_id: 'test/reranker' },
+      })
+      if (path.includes('/embeddings/runs')) return Promise.resolve(empty)
+      if (path.endsWith('/embeddings')) return Promise.resolve(prepared)
+      if (path.endsWith('/context') && init?.method === 'POST') return Promise.resolve({
+        item_count: 1,
+        ranking_policy: 'local_cross_encoder',
+        reranker_state: 'completed',
+        retrieval: { candidate_count: 3, candidate_depth: 100, candidates_truncated: false },
+        budget: { used: 5300, limit: 8000, remaining: 2700, measurement: { policy: 'canonical-json-evidence.v1' } },
+        items: [{
+          chunk_id: 'chunk1',
+          locator: 'src/example.py',
+          span: { start_line: 4, end_line: 8 },
+          context_cost: 1200,
+          selected_as_seed: true,
+          retrieval: { rank: 2 },
+          rerank_rank: 1,
+          rerank_score: -0.5,
+          rerank_window_count: 1,
+          expanded_from: [],
+          stable_key: 'stable',
+          part_index: 0,
+          unit_anchor: 'function:run',
+          content: 'def run(): pass',
+        }],
+        decisions: [{ disposition: 'excluded', chunk_id: 'chunk2', locator: 'src/other.py', stage: 'packing', reason: 'remaining_budget', retrieval_rank: 3, rerank_rank: 2 }],
+      })
+      return Promise.resolve(prepared)
+    })
+    render(<SemanticSearchPanel projectId="p" snapshotId="s" />)
+    fireEvent.change(await screen.findByLabelText('Semantic query'), { target: { value: 'run function' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Build context' }))
+    expect(await screen.findByText(/5,300 of 8,000 UTF-8 bytes/)).toBeInTheDocument()
+    expect(screen.getByText('def run(): pass')).toBeInTheDocument()
+    expect(screen.getByText(/rerank #1 · raw logit -0.500000/)).toBeInTheDocument()
+    expect(screen.getByText(/packing: remaining_budget/)).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Top results'), { target: { value: '5' } })
+    expect(screen.getByText('def run(): pass')).toBeInTheDocument()
+  })
 })

@@ -386,7 +386,7 @@ class LocalRepositoryInspector:
         reader = PosixSecureSourceReader()
         for locator in sorted(controls, key=lambda x: (x != ".git/info/exclude", x.count("/"), x)):
             try:
-                data = reader.read(
+                data = reader.read_ignore_control(
                     root, locator, min(256 * 1024, remaining), self._root_identity
                 ).data
                 remaining -= len(data)

@@ -1,0 +1,932 @@
+{
+  "authorship": "agent",
+  "review_status": "draft",
+  "human_approval": null,
+  "original_dataset_digest": "8adfe163853e912bceb8fa57b68adc1bdbed32f8975343f876776508800fc9c1",
+  "changes": [
+    {
+      "case_id": "identifier-01",
+      "old": {
+        "id": "identifier-01.e1",
+        "locator": "backend/src/buildlens/domain/eligibility.py",
+        "artifact_fingerprint": "f0fe915714afe699a045af87e53c804f38788d3cdce1db9abff25aea089165c0",
+        "start_offset": 1364,
+        "end_offset": 2397,
+        "excerpt_hash": "6de34797cc6eb5b7fbcc2eb90190bb467aeeac691ce03e5a6cf984b3f73dc727",
+        "label": "exclusion_reason"
+      },
+      "new": {
+        "id": "identifier-01.e1",
+        "locator": "backend/src/buildlens/domain/eligibility.py",
+        "artifact_fingerprint": "f0fe915714afe699a045af87e53c804f38788d3cdce1db9abff25aea089165c0",
+        "start_offset": 1364,
+        "end_offset": 2397,
+        "excerpt_hash": "6de34797cc6eb5b7fbcc2eb90190bb467aeeac691ce03e5a6cf984b3f73dc727",
+        "label": "exclusion_reason"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "identifier-02",
+      "old": {
+        "id": "identifier-02.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 3936,
+        "end_offset": 4228,
+        "excerpt_hash": "425b6e991edd20618f055e1dc4f7f0b0465da34bcfb95cd19686f5470b5a334f",
+        "label": "ContextSizer.serialize"
+      },
+      "new": {
+        "id": "identifier-02.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 3936,
+        "end_offset": 4228,
+        "excerpt_hash": "425b6e991edd20618f055e1dc4f7f0b0465da34bcfb95cd19686f5470b5a334f",
+        "label": "ContextSizer.serialize"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "identifier-03",
+      "old": {
+        "id": "identifier-03.e1",
+        "locator": "backend/src/buildlens/application/grounded_prompt.py",
+        "artifact_fingerprint": "1ed6ad8bfe3f9b81769ece4401ea08eac63725af5a940955aee80b01d9fb7973",
+        "start_offset": 2291,
+        "end_offset": 4696,
+        "excerpt_hash": "3ee42787d8b48d228b54cfa0337d1ddeda05f957992b71426db6f64525269125",
+        "label": "validate_output"
+      },
+      "new": {
+        "id": "identifier-03.e1",
+        "locator": "backend/src/buildlens/application/grounded_prompt.py",
+        "artifact_fingerprint": "1ed6ad8bfe3f9b81769ece4401ea08eac63725af5a940955aee80b01d9fb7973",
+        "start_offset": 2291,
+        "end_offset": 4696,
+        "excerpt_hash": "3ee42787d8b48d228b54cfa0337d1ddeda05f957992b71426db6f64525269125",
+        "label": "validate_output"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "identifier-04",
+      "old": {
+        "id": "identifier-04.e1",
+        "locator": "backend/src/buildlens/infrastructure/persistence/retrieval.py",
+        "artifact_fingerprint": "4d0e2a9955384ac4b140709e25a46aceb08db90de5541be13f4c7afc2880b885",
+        "start_offset": 4515,
+        "end_offset": 7332,
+        "excerpt_hash": "36a0eb9ad9a066e122f2784bf6b1eca05d2970bb5d9a20054e509b302dd42113",
+        "label": "_SqlAlchemyRetrievalSession.verify"
+      },
+      "new": {
+        "id": "identifier-04.e1",
+        "locator": "backend/src/buildlens/infrastructure/persistence/retrieval.py",
+        "artifact_fingerprint": "4d0e2a9955384ac4b140709e25a46aceb08db90de5541be13f4c7afc2880b885",
+        "start_offset": 4515,
+        "end_offset": 7332,
+        "excerpt_hash": "36a0eb9ad9a066e122f2784bf6b1eca05d2970bb5d9a20054e509b302dd42113",
+        "label": "_SqlAlchemyRetrievalSession.verify"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "identifier-05",
+      "old": {
+        "id": "identifier-05.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 19470,
+        "end_offset": 22118,
+        "excerpt_hash": "ee8589d2598b67fa4bced60fb3170ea701a37fbc08cbe5351a52167d64c05996",
+        "label": "ContextService._rerank"
+      },
+      "new": {
+        "id": "identifier-05.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 19470,
+        "end_offset": 22118,
+        "excerpt_hash": "ee8589d2598b67fa4bced60fb3170ea701a37fbc08cbe5351a52167d64c05996",
+        "label": "ContextService._rerank"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "identifier-06",
+      "old": {
+        "id": "identifier-06.e1",
+        "locator": "backend/src/buildlens/domain/source.py",
+        "artifact_fingerprint": "b2c9195dcb2aaa96585a31ccd1420add59d9ff8248553641d7850be1bcc7029d",
+        "start_offset": 2961,
+        "end_offset": 3374,
+        "excerpt_hash": "641d5231a682dddc14eaa5cde594b7d98244e3f42c9df543722bb82d5807dbf5",
+        "label": "processing_contract"
+      },
+      "new": {
+        "id": "identifier-06.e1",
+        "locator": "backend/src/buildlens/domain/source.py",
+        "artifact_fingerprint": "b2c9195dcb2aaa96585a31ccd1420add59d9ff8248553641d7850be1bcc7029d",
+        "start_offset": 2961,
+        "end_offset": 3374,
+        "excerpt_hash": "641d5231a682dddc14eaa5cde594b7d98244e3f42c9df543722bb82d5807dbf5",
+        "label": "processing_contract"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "semantic-01",
+      "old": {
+        "id": "semantic-01.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 2537,
+        "end_offset": 4966,
+        "excerpt_hash": "7d16d5196b511fdb6a0b8bea20b2317389d164d277debf2e9371d92c5e4f247a",
+        "label": "ContextSizer"
+      },
+      "new": {
+        "id": "semantic-01.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 2537,
+        "end_offset": 4966,
+        "excerpt_hash": "7d16d5196b511fdb6a0b8bea20b2317389d164d277debf2e9371d92c5e4f247a",
+        "label": "ContextSizer"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "semantic-02",
+      "old": {
+        "id": "semantic-02.e1",
+        "locator": "backend/src/buildlens/application/ask.py",
+        "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+        "start_offset": 5819,
+        "end_offset": 14755,
+        "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+        "label": "AskService.ask"
+      },
+      "new": {
+        "id": "semantic-02.e1",
+        "locator": "backend/src/buildlens/application/ask.py",
+        "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+        "start_offset": 5819,
+        "end_offset": 14755,
+        "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+        "label": "AskService.ask"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "semantic-03",
+      "old": {
+        "id": "semantic-03.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 7832,
+        "end_offset": 9330,
+        "excerpt_hash": "86e4256f9186f79a0be007ebe8484f2a1fbad04d1ed9aafc0a4c00e577d7100b",
+        "label": "ContextService.repack"
+      },
+      "new": {
+        "id": "semantic-03.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 7832,
+        "end_offset": 9330,
+        "excerpt_hash": "86e4256f9186f79a0be007ebe8484f2a1fbad04d1ed9aafc0a4c00e577d7100b",
+        "label": "ContextService.repack"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "semantic-04",
+      "old": {
+        "id": "semantic-04.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 19470,
+        "end_offset": 22118,
+        "excerpt_hash": "ee8589d2598b67fa4bced60fb3170ea701a37fbc08cbe5351a52167d64c05996",
+        "label": "ContextService._rerank"
+      },
+      "new": {
+        "id": "semantic-04.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 19470,
+        "end_offset": 22118,
+        "excerpt_hash": "ee8589d2598b67fa4bced60fb3170ea701a37fbc08cbe5351a52167d64c05996",
+        "label": "ContextService._rerank"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "semantic-05",
+      "old": {
+        "id": "semantic-05.e1",
+        "locator": "backend/src/buildlens/application/ask.py",
+        "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+        "start_offset": 5819,
+        "end_offset": 14755,
+        "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+        "label": "AskService.ask"
+      },
+      "new": {
+        "id": "semantic-05.e1",
+        "locator": "backend/src/buildlens/application/ask.py",
+        "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+        "start_offset": 5819,
+        "end_offset": 14755,
+        "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+        "label": "AskService.ask"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "semantic-06",
+      "old": {
+        "id": "semantic-06.e1",
+        "locator": "backend/src/buildlens/infrastructure/generation/openai.py",
+        "artifact_fingerprint": "766cb31b3c7a2adfbeaffe7ea5f5d76d452a15afce3e3dcbe7b041ca46996971",
+        "start_offset": 1002,
+        "end_offset": 2054,
+        "excerpt_hash": "488b3f14bc853c731239952e58a50464e9fa908a6a497275e6b201fa945b7a83",
+        "label": "_prepared"
+      },
+      "new": {
+        "id": "semantic-06.e1",
+        "locator": "backend/src/buildlens/infrastructure/generation/openai.py",
+        "artifact_fingerprint": "766cb31b3c7a2adfbeaffe7ea5f5d76d452a15afce3e3dcbe7b041ca46996971",
+        "start_offset": 1002,
+        "end_offset": 2054,
+        "excerpt_hash": "488b3f14bc853c731239952e58a50464e9fa908a6a497275e6b201fa945b7a83",
+        "label": "_prepared"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-01",
+      "old": {
+        "id": "cross_file-01.e1",
+        "locator": "backend/src/buildlens/api/ask_routes.py",
+        "artifact_fingerprint": "9620de4d254631eb0b4354104f412b1e6dbf53b24958f21921cf662dff3f0fbc",
+        "start_offset": 5324,
+        "end_offset": 5986,
+        "excerpt_hash": "b7d7b85427d60afa09e0dda3fef8419eabce99be72fac83e78d0ca496df59bc8",
+        "label": "ask"
+      },
+      "new": {
+        "id": "cross_file-01.e1",
+        "locator": "backend/src/buildlens/api/ask_routes.py",
+        "artifact_fingerprint": "9620de4d254631eb0b4354104f412b1e6dbf53b24958f21921cf662dff3f0fbc",
+        "start_offset": 5324,
+        "end_offset": 5986,
+        "excerpt_hash": "b7d7b85427d60afa09e0dda3fef8419eabce99be72fac83e78d0ca496df59bc8",
+        "label": "ask"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-01",
+      "old": {
+        "id": "cross_file-01.e2",
+        "locator": "backend/src/buildlens/application/ask.py",
+        "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+        "start_offset": 5819,
+        "end_offset": 14755,
+        "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+        "label": "AskService.ask"
+      },
+      "new": {
+        "id": "cross_file-01.e2",
+        "locator": "backend/src/buildlens/application/ask.py",
+        "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+        "start_offset": 5819,
+        "end_offset": 14755,
+        "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+        "label": "AskService.ask"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-01",
+      "old": {
+        "id": "cross_file-01.e3",
+        "locator": "backend/src/buildlens/application/grounded_prompt.py",
+        "artifact_fingerprint": "1ed6ad8bfe3f9b81769ece4401ea08eac63725af5a940955aee80b01d9fb7973",
+        "start_offset": 2291,
+        "end_offset": 4696,
+        "excerpt_hash": "3ee42787d8b48d228b54cfa0337d1ddeda05f957992b71426db6f64525269125",
+        "label": "validate_output"
+      },
+      "new": {
+        "id": "cross_file-01.e3",
+        "locator": "backend/src/buildlens/application/grounded_prompt.py",
+        "artifact_fingerprint": "1ed6ad8bfe3f9b81769ece4401ea08eac63725af5a940955aee80b01d9fb7973",
+        "start_offset": 2291,
+        "end_offset": 4696,
+        "excerpt_hash": "3ee42787d8b48d228b54cfa0337d1ddeda05f957992b71426db6f64525269125",
+        "label": "validate_output"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-02",
+      "old": {
+        "id": "cross_file-02.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 9336,
+        "end_offset": 17183,
+        "excerpt_hash": "413a534b099eea2b798c28b4cb5734a61362409e748fc5e8de36fa238d8d470a",
+        "label": "ContextService.build"
+      },
+      "new": {
+        "id": "cross_file-02.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 9336,
+        "end_offset": 17183,
+        "excerpt_hash": "413a534b099eea2b798c28b4cb5734a61362409e748fc5e8de36fa238d8d470a",
+        "label": "ContextService.build"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-02",
+      "old": {
+        "id": "cross_file-02.e2",
+        "locator": "backend/src/buildlens/infrastructure/persistence/retrieval.py",
+        "artifact_fingerprint": "4d0e2a9955384ac4b140709e25a46aceb08db90de5541be13f4c7afc2880b885",
+        "start_offset": 15445,
+        "end_offset": 16694,
+        "excerpt_hash": "18e5db5173aed501115229555dceb7e8ccedc8d9859d6f92e25aab1de1243307",
+        "label": "_SqlAlchemyRetrievalSession.neighbours"
+      },
+      "new": {
+        "id": "cross_file-02.e2",
+        "locator": "backend/src/buildlens/infrastructure/persistence/retrieval.py",
+        "artifact_fingerprint": "4d0e2a9955384ac4b140709e25a46aceb08db90de5541be13f4c7afc2880b885",
+        "start_offset": 15445,
+        "end_offset": 16694,
+        "excerpt_hash": "18e5db5173aed501115229555dceb7e8ccedc8d9859d6f92e25aab1de1243307",
+        "label": "_SqlAlchemyRetrievalSession.neighbours"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-03",
+      "old": {
+        "id": "cross_file-03.e1",
+        "locator": "backend/src/buildlens/infrastructure/discovery/filesystem.py",
+        "artifact_fingerprint": "758e318349b9125cc8c793c09245d1ca10afd28e8144ddccbe5a49c558cbd308",
+        "start_offset": 2971,
+        "end_offset": 11488,
+        "excerpt_hash": "02f07c60e1e3c251650894e54d99691d186a4939fafb2e219c2b08a731e5d0ab",
+        "label": "LocalRepositoryInspector.inspect"
+      },
+      "new": {
+        "id": "cross_file-03.e1",
+        "locator": "backend/src/buildlens/infrastructure/discovery/filesystem.py",
+        "artifact_fingerprint": "758e318349b9125cc8c793c09245d1ca10afd28e8144ddccbe5a49c558cbd308",
+        "start_offset": 2971,
+        "end_offset": 11488,
+        "excerpt_hash": "02f07c60e1e3c251650894e54d99691d186a4939fafb2e219c2b08a731e5d0ab",
+        "label": "LocalRepositoryInspector.inspect"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-03",
+      "old": {
+        "id": "cross_file-03.e2",
+        "locator": "backend/src/buildlens/infrastructure/structural/reader.py",
+        "artifact_fingerprint": "25ef7668c796b22cbfa0bff75d5523680d3eb0dcae40de9a07585fb4b5a5dfb6",
+        "start_offset": 3419,
+        "end_offset": 6401,
+        "excerpt_hash": "2323bc70258a5259f96303b2ed0b960f615f6a0bdb76325cb4c4162e462fb080",
+        "label": "PosixSecureSourceReader._consume"
+      },
+      "new": {
+        "id": "cross_file-03.e2",
+        "locator": "backend/src/buildlens/infrastructure/structural/reader.py",
+        "artifact_fingerprint": "25ef7668c796b22cbfa0bff75d5523680d3eb0dcae40de9a07585fb4b5a5dfb6",
+        "start_offset": 3419,
+        "end_offset": 6401,
+        "excerpt_hash": "2323bc70258a5259f96303b2ed0b960f615f6a0bdb76325cb4c4162e462fb080",
+        "label": "PosixSecureSourceReader._consume"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-03",
+      "old": {
+        "id": "cross_file-03.e3",
+        "locator": "backend/src/buildlens/domain/eligibility.py",
+        "artifact_fingerprint": "f0fe915714afe699a045af87e53c804f38788d3cdce1db9abff25aea089165c0",
+        "start_offset": 1364,
+        "end_offset": 2397,
+        "excerpt_hash": "6de34797cc6eb5b7fbcc2eb90190bb467aeeac691ce03e5a6cf984b3f73dc727",
+        "label": "exclusion_reason"
+      },
+      "new": {
+        "id": "cross_file-03.e3",
+        "locator": "backend/src/buildlens/domain/eligibility.py",
+        "artifact_fingerprint": "f0fe915714afe699a045af87e53c804f38788d3cdce1db9abff25aea089165c0",
+        "start_offset": 1364,
+        "end_offset": 2397,
+        "excerpt_hash": "6de34797cc6eb5b7fbcc2eb90190bb467aeeac691ce03e5a6cf984b3f73dc727",
+        "label": "exclusion_reason"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-04",
+      "old": {
+        "id": "cross_file-04.e1",
+        "locator": "backend/src/buildlens/application/ask.py",
+        "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+        "start_offset": 5819,
+        "end_offset": 14755,
+        "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+        "label": "AskService.ask"
+      },
+      "new": {
+        "id": "cross_file-04.e1",
+        "locator": "backend/src/buildlens/application/ask.py",
+        "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+        "start_offset": 5819,
+        "end_offset": 14755,
+        "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+        "label": "AskService.ask"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-04",
+      "old": {
+        "id": "cross_file-04.e2",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 7832,
+        "end_offset": 9330,
+        "excerpt_hash": "86e4256f9186f79a0be007ebe8484f2a1fbad04d1ed9aafc0a4c00e577d7100b",
+        "label": "ContextService.repack"
+      },
+      "new": {
+        "id": "cross_file-04.e2",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 7832,
+        "end_offset": 9330,
+        "excerpt_hash": "86e4256f9186f79a0be007ebe8484f2a1fbad04d1ed9aafc0a4c00e577d7100b",
+        "label": "ContextService.repack"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-04",
+      "old": {
+        "id": "cross_file-04.e3",
+        "locator": "backend/src/buildlens/infrastructure/generation/gemini.py",
+        "artifact_fingerprint": "e0bd61c9acb22fc6dc44a9db2d61308be6abe2fea87f19a5f8b1564258275874",
+        "start_offset": 4561,
+        "end_offset": 7730,
+        "excerpt_hash": "d0359342955de2d6aec115205c0ca1fc2058606fb0065e9ddca5b79a59dee119",
+        "label": "GeminiProvider.generate"
+      },
+      "new": {
+        "id": "cross_file-04.e3",
+        "locator": "backend/src/buildlens/infrastructure/generation/gemini.py",
+        "artifact_fingerprint": "e0bd61c9acb22fc6dc44a9db2d61308be6abe2fea87f19a5f8b1564258275874",
+        "start_offset": 4561,
+        "end_offset": 7730,
+        "excerpt_hash": "d0359342955de2d6aec115205c0ca1fc2058606fb0065e9ddca5b79a59dee119",
+        "label": "GeminiProvider.generate"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-05",
+      "old": {
+        "id": "cross_file-05.e1",
+        "locator": "backend/src/buildlens/api/main.py",
+        "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+        "start_offset": 1138,
+        "end_offset": 4922,
+        "excerpt_hash": "fb645d2da598cbfd293693203589f54ab767300475784cce41df6aab93f94f16",
+        "label": "create_app"
+      },
+      "new": {
+        "id": "cross_file-05.e1",
+        "locator": "backend/src/buildlens/api/main.py",
+        "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+        "start_offset": 1138,
+        "end_offset": 4922,
+        "excerpt_hash": "fb645d2da598cbfd293693203589f54ab767300475784cce41df6aab93f94f16",
+        "label": "create_app"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-05",
+      "old": {
+        "id": "cross_file-05.e2",
+        "locator": "backend/src/buildlens/infrastructure/runtime.py",
+        "artifact_fingerprint": "7e502a708233fd4dc547071ccc1c314a9308f615c371af459ed2083b75fdc041",
+        "start_offset": 5113,
+        "end_offset": 5506,
+        "excerpt_hash": "94723a4e37a2c3e463c35d482db440a4c0258c88516e3046b5835f9416713c32",
+        "label": "LocalRuntime.close"
+      },
+      "new": {
+        "id": "cross_file-05.e2",
+        "locator": "backend/src/buildlens/infrastructure/runtime.py",
+        "artifact_fingerprint": "7e502a708233fd4dc547071ccc1c314a9308f615c371af459ed2083b75fdc041",
+        "start_offset": 5113,
+        "end_offset": 5506,
+        "excerpt_hash": "94723a4e37a2c3e463c35d482db440a4c0258c88516e3046b5835f9416713c32",
+        "label": "LocalRuntime.close"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-06",
+      "old": {
+        "id": "cross_file-06.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 23989,
+        "end_offset": 25156,
+        "excerpt_hash": "1a731ad758fe1a1c6e60f66bc7f7417d07e051cd5c4f3256127ffb6ab1f63ba1",
+        "label": "ContextService._final_verify"
+      },
+      "new": {
+        "id": "cross_file-06.e1",
+        "locator": "backend/src/buildlens/application/context.py",
+        "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+        "start_offset": 23989,
+        "end_offset": 25156,
+        "excerpt_hash": "1a731ad758fe1a1c6e60f66bc7f7417d07e051cd5c4f3256127ffb6ab1f63ba1",
+        "label": "ContextService._final_verify"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "cross_file-06",
+      "old": {
+        "id": "cross_file-06.e2",
+        "locator": "backend/src/buildlens/infrastructure/persistence/retrieval.py",
+        "artifact_fingerprint": "4d0e2a9955384ac4b140709e25a46aceb08db90de5541be13f4c7afc2880b885",
+        "start_offset": 4515,
+        "end_offset": 7332,
+        "excerpt_hash": "36a0eb9ad9a066e122f2784bf6b1eca05d2970bb5d9a20054e509b302dd42113",
+        "label": "_SqlAlchemyRetrievalSession.verify"
+      },
+      "new": {
+        "id": "cross_file-06.e2",
+        "locator": "backend/src/buildlens/infrastructure/persistence/retrieval.py",
+        "artifact_fingerprint": "4d0e2a9955384ac4b140709e25a46aceb08db90de5541be13f4c7afc2880b885",
+        "start_offset": 4515,
+        "end_offset": 7332,
+        "excerpt_hash": "36a0eb9ad9a066e122f2784bf6b1eca05d2970bb5d9a20054e509b302dd42113",
+        "label": "_SqlAlchemyRetrievalSession.verify"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "architecture-01",
+      "old": {
+        "id": "architecture-01.e1",
+        "locator": "backend/pyproject.toml",
+        "artifact_fingerprint": "9f4b68f0fa1ed6fb5e5b44741797d9bcb37918e4d0d0f1e51d5dea6bef9355e4",
+        "start_offset": 574,
+        "end_offset": 1030,
+        "excerpt_hash": "64074e8b44d7fecf751aa8bb6adc31fd0da67050f95352e09a1cea9096a05a34",
+        "label": "[project.optional-dependencies]"
+      },
+      "new": {
+        "id": "architecture-01.e1",
+        "locator": "backend/pyproject.toml",
+        "artifact_fingerprint": "9f4b68f0fa1ed6fb5e5b44741797d9bcb37918e4d0d0f1e51d5dea6bef9355e4",
+        "start_offset": 574,
+        "end_offset": 1030,
+        "excerpt_hash": "64074e8b44d7fecf751aa8bb6adc31fd0da67050f95352e09a1cea9096a05a34",
+        "label": "[project.optional-dependencies]"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "architecture-02",
+      "old": {
+        "id": "architecture-02.e1",
+        "locator": "backend/src/buildlens/core/config.py",
+        "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+        "start_offset": 186,
+        "end_offset": 4908,
+        "excerpt_hash": "1951a88170d0c36d75244ed32aa6c2ae26228dba0a3cdcb9bad52201fe176e86",
+        "label": "Settings"
+      },
+      "new": {
+        "id": "architecture-02.e1",
+        "locator": "backend/src/buildlens/core/config.py",
+        "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+        "start_offset": 186,
+        "end_offset": 4908,
+        "excerpt_hash": "1951a88170d0c36d75244ed32aa6c2ae26228dba0a3cdcb9bad52201fe176e86",
+        "label": "Settings"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "architecture-02",
+      "old": {
+        "id": "architecture-02.e2",
+        "locator": "backend/src/buildlens/domain/context.py",
+        "artifact_fingerprint": "7944fd57f2bc60477524e04b77638102d5bab48e92bc9fa535c8a372114bd949",
+        "start_offset": 1078,
+        "end_offset": 1826,
+        "excerpt_hash": "55e99d7bc275323efcd68a9a6c970fbf784f1f97fa175363676edeb86080bbb5",
+        "label": "ContextPolicy"
+      },
+      "new": {
+        "id": "architecture-02.e2",
+        "locator": "backend/src/buildlens/domain/context.py",
+        "artifact_fingerprint": "7944fd57f2bc60477524e04b77638102d5bab48e92bc9fa535c8a372114bd949",
+        "start_offset": 1078,
+        "end_offset": 1826,
+        "excerpt_hash": "55e99d7bc275323efcd68a9a6c970fbf784f1f97fa175363676edeb86080bbb5",
+        "label": "ContextPolicy"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "architecture-03",
+      "old": {
+        "id": "architecture-03.e1",
+        "locator": "backend/src/buildlens/core/config.py",
+        "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+        "start_offset": 186,
+        "end_offset": 4908,
+        "excerpt_hash": "1951a88170d0c36d75244ed32aa6c2ae26228dba0a3cdcb9bad52201fe176e86",
+        "label": "Settings"
+      },
+      "new": {
+        "id": "architecture-03.e1",
+        "locator": "backend/src/buildlens/core/config.py",
+        "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+        "start_offset": 186,
+        "end_offset": 4908,
+        "excerpt_hash": "1951a88170d0c36d75244ed32aa6c2ae26228dba0a3cdcb9bad52201fe176e86",
+        "label": "Settings"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "architecture-03",
+      "old": {
+        "id": "architecture-03.e2",
+        "locator": "backend/src/buildlens/infrastructure/runtime.py",
+        "artifact_fingerprint": "7e502a708233fd4dc547071ccc1c314a9308f615c371af459ed2083b75fdc041",
+        "start_offset": 3310,
+        "end_offset": 5107,
+        "excerpt_hash": "5b3a729a14d8ea123306c8c117e1fefd0a562d927053cd17e6802b1116e1ea4d",
+        "label": "LocalRuntime.__init__"
+      },
+      "new": {
+        "id": "architecture-03.e2",
+        "locator": "backend/src/buildlens/infrastructure/runtime.py",
+        "artifact_fingerprint": "7e502a708233fd4dc547071ccc1c314a9308f615c371af459ed2083b75fdc041",
+        "start_offset": 3310,
+        "end_offset": 5107,
+        "excerpt_hash": "5b3a729a14d8ea123306c8c117e1fefd0a562d927053cd17e6802b1116e1ea4d",
+        "label": "LocalRuntime.__init__"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "architecture-04",
+      "old": {
+        "id": "architecture-04.e1",
+        "locator": "backend/src/buildlens/domain/ask.py",
+        "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+        "start_offset": 1575,
+        "end_offset": 2073,
+        "excerpt_hash": "16f82d0d4e7b144f9fcc5514e7b7a25dd7da0e909c211e35ecc6b77cc26430c4",
+        "label": "GenerationPolicy.for_provider"
+      },
+      "new": {
+        "id": "architecture-04.e1",
+        "locator": "backend/src/buildlens/domain/ask.py",
+        "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+        "start_offset": 1575,
+        "end_offset": 2073,
+        "excerpt_hash": "16f82d0d4e7b144f9fcc5514e7b7a25dd7da0e909c211e35ecc6b77cc26430c4",
+        "label": "GenerationPolicy.for_provider"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "architecture-04",
+      "old": {
+        "id": "architecture-04.e2",
+        "locator": "backend/src/buildlens/infrastructure/generation/gemini.py",
+        "artifact_fingerprint": "e0bd61c9acb22fc6dc44a9db2d61308be6abe2fea87f19a5f8b1564258275874",
+        "start_offset": 4561,
+        "end_offset": 7730,
+        "excerpt_hash": "d0359342955de2d6aec115205c0ca1fc2058606fb0065e9ddca5b79a59dee119",
+        "label": "GeminiProvider.generate"
+      },
+      "new": {
+        "id": "architecture-04.e2",
+        "locator": "backend/src/buildlens/infrastructure/generation/gemini.py",
+        "artifact_fingerprint": "e0bd61c9acb22fc6dc44a9db2d61308be6abe2fea87f19a5f8b1564258275874",
+        "start_offset": 4561,
+        "end_offset": 7730,
+        "excerpt_hash": "d0359342955de2d6aec115205c0ca1fc2058606fb0065e9ddca5b79a59dee119",
+        "label": "GeminiProvider.generate"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "architecture-05",
+      "old": {
+        "id": "architecture-05.e1",
+        "locator": "backend/src/buildlens/application/retrieval.py",
+        "artifact_fingerprint": "ad18c279ac9f205a51b9962ea1e949f71317a879ddff56960ab634fab5f82245",
+        "start_offset": 12158,
+        "end_offset": 14710,
+        "excerpt_hash": "dd8e6ab57d6597199d111df1b798cbaf7faf51188b2beb4cd7c6f1444d602fea",
+        "label": "RetrievalService._rank_hybrid"
+      },
+      "new": {
+        "id": "architecture-05.e1",
+        "locator": "backend/src/buildlens/application/retrieval.py",
+        "artifact_fingerprint": "ad18c279ac9f205a51b9962ea1e949f71317a879ddff56960ab634fab5f82245",
+        "start_offset": 12158,
+        "end_offset": 14710,
+        "excerpt_hash": "dd8e6ab57d6597199d111df1b798cbaf7faf51188b2beb4cd7c6f1444d602fea",
+        "label": "RetrievalService._rank_hybrid"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "architecture-06",
+      "old": {
+        "id": "architecture-06.e1",
+        "locator": "backend/src/buildlens/api/main.py",
+        "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+        "start_offset": 1138,
+        "end_offset": 4922,
+        "excerpt_hash": "fb645d2da598cbfd293693203589f54ab767300475784cce41df6aab93f94f16",
+        "label": "create_app"
+      },
+      "new": {
+        "id": "architecture-06.e1",
+        "locator": "backend/src/buildlens/api/main.py",
+        "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+        "start_offset": 1138,
+        "end_offset": 4922,
+        "excerpt_hash": "fb645d2da598cbfd293693203589f54ab767300475784cce41df6aab93f94f16",
+        "label": "create_app"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "unsupported-01",
+      "old": {
+        "id": "unsupported-01.e1",
+        "locator": "backend/src/buildlens/domain/ask.py",
+        "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+        "start_offset": 3452,
+        "end_offset": 4328,
+        "excerpt_hash": "c4a00f46cf46d3d2ad637af45b151a7e76e21748cb9f714236eb7ac8480f0f56",
+        "label": "GroundedAskResult"
+      },
+      "new": {
+        "id": "unsupported-01.e1",
+        "locator": "backend/src/buildlens/domain/ask.py",
+        "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+        "start_offset": 3452,
+        "end_offset": 4328,
+        "excerpt_hash": "c4a00f46cf46d3d2ad637af45b151a7e76e21748cb9f714236eb7ac8480f0f56",
+        "label": "GroundedAskResult"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "unsupported-02",
+      "old": {
+        "id": "unsupported-02.e1",
+        "locator": "backend/src/buildlens/core/config.py",
+        "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+        "start_offset": 186,
+        "end_offset": 4908,
+        "excerpt_hash": "1951a88170d0c36d75244ed32aa6c2ae26228dba0a3cdcb9bad52201fe176e86",
+        "label": "Settings"
+      },
+      "new": {
+        "id": "unsupported-02.e1",
+        "locator": "backend/src/buildlens/core/config.py",
+        "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+        "start_offset": 186,
+        "end_offset": 4908,
+        "excerpt_hash": "1951a88170d0c36d75244ed32aa6c2ae26228dba0a3cdcb9bad52201fe176e86",
+        "label": "Settings"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "unsupported-03",
+      "old": {
+        "id": "unsupported-03.e1",
+        "locator": "backend/src/buildlens/api/main.py",
+        "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+        "start_offset": 1138,
+        "end_offset": 4922,
+        "excerpt_hash": "fb645d2da598cbfd293693203589f54ab767300475784cce41df6aab93f94f16",
+        "label": "create_app"
+      },
+      "new": {
+        "id": "unsupported-03.e1",
+        "locator": "backend/src/buildlens/api/main.py",
+        "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+        "start_offset": 1138,
+        "end_offset": 4922,
+        "excerpt_hash": "fb645d2da598cbfd293693203589f54ab767300475784cce41df6aab93f94f16",
+        "label": "create_app"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "unsupported-04",
+      "old": {
+        "id": "unsupported-04.e1",
+        "locator": "backend/src/buildlens/infrastructure/persistence/retrieval.py",
+        "artifact_fingerprint": "4d0e2a9955384ac4b140709e25a46aceb08db90de5541be13f4c7afc2880b885",
+        "start_offset": 4515,
+        "end_offset": 7332,
+        "excerpt_hash": "36a0eb9ad9a066e122f2784bf6b1eca05d2970bb5d9a20054e509b302dd42113",
+        "label": "_SqlAlchemyRetrievalSession.verify"
+      },
+      "new": {
+        "id": "unsupported-04.e1",
+        "locator": "backend/src/buildlens/infrastructure/persistence/retrieval.py",
+        "artifact_fingerprint": "4d0e2a9955384ac4b140709e25a46aceb08db90de5541be13f4c7afc2880b885",
+        "start_offset": 4515,
+        "end_offset": 7332,
+        "excerpt_hash": "36a0eb9ad9a066e122f2784bf6b1eca05d2970bb5d9a20054e509b302dd42113",
+        "label": "_SqlAlchemyRetrievalSession.verify"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "unsupported-05",
+      "old": {
+        "id": "unsupported-05.e1",
+        "locator": "backend/src/buildlens/domain/ask.py",
+        "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+        "start_offset": 3452,
+        "end_offset": 4328,
+        "excerpt_hash": "c4a00f46cf46d3d2ad637af45b151a7e76e21748cb9f714236eb7ac8480f0f56",
+        "label": "GroundedAskResult"
+      },
+      "new": {
+        "id": "unsupported-05.e1",
+        "locator": "backend/src/buildlens/domain/ask.py",
+        "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+        "start_offset": 3452,
+        "end_offset": 4328,
+        "excerpt_hash": "c4a00f46cf46d3d2ad637af45b151a7e76e21748cb9f714236eb7ac8480f0f56",
+        "label": "GroundedAskResult"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    },
+    {
+      "case_id": "unsupported-06",
+      "old": {
+        "id": "unsupported-06.e1",
+        "locator": "backend/src/buildlens/domain/ask.py",
+        "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+        "start_offset": 831,
+        "end_offset": 2207,
+        "excerpt_hash": "c955a08a2c9c737be17f81888555c3eb58ac0db6bdb0d30c44cc70b3f3768eb0",
+        "label": "GenerationPolicy"
+      },
+      "new": {
+        "id": "unsupported-06.e1",
+        "locator": "backend/src/buildlens/domain/ask.py",
+        "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+        "start_offset": 831,
+        "end_offset": 2207,
+        "excerpt_hash": "c955a08a2c9c737be17f81888555c3eb58ac0db6bdb0d30c44cc70b3f3768eb0",
+        "label": "GenerationPolicy"
+      },
+      "reason": "Explicit reauthoring at the same declaration against the Stage 11 source; agent proposal only."
+    }
+  ]
+}

@@ -119,6 +119,75 @@ unions the lexical and semantic lists by chunk UUID and computes `1 / (60 + rank
 component. Exact matches sort before fused scores. Candidate queries do not project source bodies
 or vectors; only the final at-most-50 IDs are hydrated in one batch.
 
+## Bounded context construction
+
+Stage 9 is a query-time application layer above the shared Stage 8 ranking path. Public search stays
+capped at 50 hydrated hits; the internal context entry point uses the same exact, lexical, semantic,
+and hybrid implementation and returns at most 100. A separate `ContextService`, `Reranker`,
+`RerankerRuntime`, evidence store, and exact `ContextSizer` keep generation, ORM objects, and model
+library objects outside domain results.
+
+Candidates are authority-validated, identity-deduplicated, and checked against the current
+zero-overlap producer contract before inference. Learned mode admits at most 32 candidates to the
+pinned local cross-encoder and ranks finite raw logits descending with retrieval rank, stable key,
+and UUID tie-breakers. Retrieval-order mode bypasses the worker entirely. Up to eight selected seeds
+may discover only part indexes immediately before or after the same artifact-processing logical unit.
+Expansion is one hop, preserves all parent edges, never crosses a missing part, and reapplies the
+original filters.
+
+Packing is rank-first, whole-item, and skip-if-does-not-fit: seeds precede neighbours, there is no
+truncation or backfill beyond the selected seed set. The current allowance is 16 observations and
+32,000 exact UTF-8 bytes for a versioned canonical JSON projection containing the query and complete
+citation-bearing evidence. Diagnostic/ranking traces are excluded from that projection and separately
+response-bounded. Ask separately counts its full provider request before generation.
+
+Expansion and final hydration use short shared-lock sessions around PostgreSQL reads. No database
+lock is held during model loading or inference. Final IDs are rehydrated and compared with the
+observations used for construction before return. Context packages, raw reranker scores, and decisions
+are not persisted.
+
+The dedicated reranker process loads only the explicitly acquired pinned safetensors/tokenizer from a
+verified cache with offline and telemetry-disabled settings. It uses CPU float32, one intra-op and one
+inter-op thread, bounded non-overlapping passage windows, batches of eight, an absolute request
+deadline, sampled RSS supervision, and terminate/kill/reap replacement after failure. The embedding
+and reranking workers can be resident together; each 2 GiB threshold is per-worker, not a total
+application memory ceiling.
+
+## Grounded Ask mode
+
+Stage 10 adds a single-turn `AskService` above `ContextService`. The context package is built once
+using the caller's existing retrieval and ranking policies. Evidence is assigned request-local `E1`,
+`E2`, ... IDs. `ContextService.verify_result` rechecks publication authority and exact stored chunks
+before token counting, before generation, and after generation. PostgreSQL sessions do not span
+provider calls. Empty evidence produces a deterministic `insufficient_evidence` result without
+cloud traffic.
+
+The selected Gemini adapter uses the official Google GenAI Python SDK with `gemini-3.8-flash`,
+Gemini `count_tokens`, structured JSON output, and the same server-owned prompt and validation.
+The identical contents supplied to counting and generation include the instructions, question,
+evidence, and schema text. The Gemini Developer API token counter cannot accept generation config;
+the output schema is also supplied as a structured-output generation setting. The retained OpenAI
+Responses adapter is selected with `BUILDLENS_GENERATION_PROVIDER=openai` and uses `gpt-6-luna`,
+strict JSON schema, server-owned prompt
+instructions, no tools, no history, no streaming, zero SDK retries, `store=false`, and disabled
+truncation. The provider counts the full model-visible request including the output schema. The
+product input ceiling is 30,720 tokens after reserving 2,048 output tokens. If the Stage 9 package
+does not fit, ContextService repacks only its existing whole items, retaining seed support and
+original evidence IDs. The response is accepted only after strict JSON and citation-membership
+validation. Source locations and excerpts come from authoritative records, never model text.
+
+Ask is disabled by default. `BUILDLENS_GENERATION_PROVIDER` selects exactly one provider with no
+fallback. The backend alone holds the selected provider's API key. `GET /generation` reports the
+selected provider and model and inspects local configuration without contacting either provider.
+No Ask database tables, stored conversations, prompt logs,
+or answer caches are added. The UI invalidates pending results on question, policy, filter, snapshot,
+or evidence-operation changes, and rechecks authority before rendering a completed answer. Browser
+cancellation does not guarantee cancellation of provider processing or billing.
+
+Schema and citation validation establish structure and membership; they do not prove statement
+faithfulness. The synthetic Gemini real-provider and local reranker closure gates passed; their
+execution evidence and limits are recorded in CURRENT_STATE.md. The OpenAI paid gate remains unrun.
+
 ## Security and resources
 
 The API is a local, unauthenticated interface bound to loopback. Host/origin restrictions and JSON
@@ -178,6 +247,100 @@ verified backup; repair validation uses generated disposable databases and actua
 Snapshots are observations, not content archives. If old bytes no longer exist and no compatible
 evidence can be reused, create a new snapshot; never relabel current bytes as historical input.
 
-Stage 8 deliberately adds no ANN index, reranking, neighbor expansion, context budgeting, RAG,
-agents, import resolution, call graphs, authentication, automatic scanning, or automatic
-regeneration. See `CURRENT_STATE.md` for actual verification evidence and remaining limitations.
+Stage 10 deliberately adds no ANN index, fuzzy redundancy,
+query rewriting, GraphRAG, agents, import resolution, call graphs, authentication, automatic
+scanning, automatic regeneration, or durable context traces. See `CURRENT_STATE.md` for actual
+verification evidence and remaining limitations.
+
+
+## Stage 11 native evaluation
+
+The CLI evaluation adapter composes the existing `RetrievalService`, `ContextService`, and
+`AskService` through `infrastructure.runtime`. HTTP dependencies use the same constructors and
+worker lifecycle. Application evaluation, binding and metrics modules depend on domain contracts
+and ports, without FastAPI or SQLAlchemy. PostgreSQL evidence inspection and atomic local JSON/
+Markdown persistence remain infrastructure adapters. No routes, tables, migrations or frontend
+features were added.
+
+The shared eligibility policy excludes `.buildlens-eval` with reason `evaluation_data`; the policy
+is versioned `stage2.v3` and source reader `posix-secure-reader.v3`. Inventory pruning, processing
+and direct source reads enforce the same rule. The inventory reader has an explicit exact-path
+control read for `.git/info/exclude` that preserves existing ignore evaluation while leaving VCS
+metadata and benchmark files excluded from source access.
+
+`ContextResult.ranking_observation` contains bounded identities, coordinates, hashes, retrieval
+component ranks/scores, exclusions, actual pre-seed selection order and reranker windows, without
+vectors or duplicated source bodies. It is constructed from existing decisions and is excluded
+from equality, repr, HTTP serialization, diagnostic admission, sizing, prompt projection, token
+counts and request digests. Production never reads the record. A one-way, invocation-local
+ContextVar collector retains completed stages for evaluation, including failures. It follows Ask's
+`asyncio.to_thread`; collectors perform no IO or inference, and collector exceptions are swallowed.
+An unavailable observation withholds dependent metrics without changing production success.
+
+Stage 8 retrieval, pre-seed ranking, packed Stage 9 context and final Ask generation evidence are
+separate observations. Only pre-seed ranking drives the three-way ranking comparison. Expanded
+neighbours contribute to delivery coverage. Ground truth binds exact decoded Unicode half-open
+source spans, fingerprinted artifacts and portable reviewed chunk selectors to retained frozen
+processing output. Gap-free union coverage is permitted within the same bound artifact; filtering,
+changes and ambiguity invalidate bindings rather than becoming retrieval misses. Corpus preflight
+checks native ownership, freshness, compatibility, complete membership and exclusion provenance
+through existing PostgreSQL gates. Mid-run authority changes invalidate comparison.
+
+Local runs retain versioned dataset/corpus copies, implementation and lockfile digests (including
+uncommitted/untracked source), explicit settings, execution order, sanitized errors, native evidence
+and atomic per-case artifacts. Offline reports validate retained digests and support rescoring both
+sides with a reviewed judgment revision. Human facet, statement and citation-link reviews are tied
+to result digests; structural checks never imply semantic entailment. Requested/sent/unknown-effective
+provider metadata is observed from existing adapter request construction; provider-reported fields
+are recorded separately, without changing arguments or assuming defaults.
+
+**Stage 11 is closed with an inconclusive/partial provider benchmark; answer quality is not
+passed.** Infrastructure verification **passed** the migrated PostgreSQL integration,
+full backend/static/frontend regression checks and pinned real local-model checks. A compatible
+retained corpus contains 2,099 chunks from 157 searchable artifacts; its partial processing and
+unsupported-language limits are explicit. All 30 reviewed cases bind and the real three-way retrieval
+run completed 90/90 calls without errors or authority changes. At packed context, complete approved
+evidence was delivered for 5/24 semantic, 5/24 hybrid and 7/24 reranked answerable cases. Lexical
+returned no candidates for all 30 full-sentence queries, so semantic/hybrid orders were identical.
+Source-span coverage and binary relevance are separate measurements, neither proving semantic
+answer quality. Dataset revision `4-r1-reviewed` records the user's explicit R1 acceptance of
+30 definitions and 798 judgments (98 relevant, 700 irrelevant). Offline rescoring of unchanged
+native observations gives MRR@32 0.4560 / 0.4560 / 0.5972, Recall@5 20.64% / 20.64% / 42.94%,
+and Precision@5 15.00% / 15.00% / 33.33% over the 24 answerable cases.
+
+Human ground-truth approval is **approved** for the reported cutoffs 1/5/10/32 and MRR@32:
+every returned answerable cutoff position is judged, and 30 known relevant sources outside rank
+32 remain in Recall denominators. The reference set is curated, not exhaustive corpus relevance.
+Deeper unjudged positions keep native whole-list provisional flags. The original draft and
+proposal packet remain preserved; approval provenance and definition/judgment digests are separate
+revision artifacts. Repeated rescoring is byte-identical, all 90 case files are unchanged, and
+offline self-comparison passed. The human then explicitly authorized the exact R1 sharing scope
+and 90 existing production Ask evaluations. The retained Gemini corpus run completed 90/90
+invocations with stable authority and successful counts (270), but provider verification is
+**inconclusive/partial**: 2 valid hybrid abstentions, 69 rate-limit failures and 19 generation-unavailable
+failures; zero answered responses. No retries or fallback were used. All generation evidence
+stayed within the authorized frozen packages, and observed retrieval/ranking matched the earlier
+baseline. Failed-generation usage and underlying unavailable causes remain unknown.
+
+The human explicitly **approved A1**, finalizing the six task-correctness, facet and abstention
+judgments for both valid responses. Each is an appropriate safe abstention against supplied
+incomplete evidence, incorrect for completing its answerable task, with the sole required
+facet missing. All eligible responses are reviewed (2/2); 88 operational failures have no
+answer and are ineligible. Zero statements/citations leave grounding, citation precision and
+completeness, and direct/inference support N/A with zero denominators. No LLM judge or invented
+reviewer identity was used. A complete three-way answer-quality comparison is unavailable;
+answer quality is **not passed**.
+
+The compact expected-answer summary was corrected to the already approved frozen locator
+`backend/src/buildlens/domain/source.py` for `processing_contract()`. Definitions, bindings
+and semantic judgments were unchanged. Actual approval and reviewed files are separate from
+sealed as-presented proposals and original execution-time manifests. Native rescoring validates
+the reviews against exact result digests; final closure records reconcile its generic
+`partial: 2 result reviews` label with 2/2 eligible coverage and 88 ineligible failures.
+Three small finalization tests and native review/zero-denominator/score-integrity checks passed;
+repeat scoring was byte-identical, and all 180 case files plus manifests, approved dataset,
+authorized scope and retrieval scores stayed unchanged. No new provider request or full gate
+was run. Stage 11 closure records retain partial/inconclusive provider verification separately
+from passed infrastructure and approved retrieval/human-review states. No Stage 12 work or
+production retrieval/reranking policy change was made. See [evaluation workflow and actual
+measurements](EVALUATION.md) and `CURRENT_STATE.md` for retained identities, results and limitations.

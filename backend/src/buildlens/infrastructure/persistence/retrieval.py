@@ -99,6 +99,36 @@ class SqlAlchemyRetrievalStore:
             adapter.verify()
 
 
+class SqlAlchemyContextEvidenceStore(SqlAlchemyRetrievalStore):
+    """Short shared-lock sessions used for Stage 9 expansion and final hydration."""
+
+    @contextmanager
+    def session(
+        self,
+        project_id: UUID,
+        snapshot_id: UUID,
+        authority: ProcessingRun,
+        embedding_run: EmbeddingRun | None,
+        timeout_ms: int,
+    ) -> Iterator[_SqlAlchemyRetrievalSession]:
+        with self._session_factory.begin() as session:
+            timeout = f"{max(1, timeout_ms)}ms"
+            session.execute(
+                text("SELECT set_config('statement_timeout', :timeout, true)"),
+                {"timeout": timeout},
+            )
+            session.execute(
+                text("SELECT set_config('lock_timeout', :timeout, true)"),
+                {"timeout": timeout},
+            )
+            adapter = _SqlAlchemyRetrievalSession(
+                session, project_id, snapshot_id, authority, embedding_run
+            )
+            adapter.verify()
+            yield adapter
+            adapter.verify()
+
+
 class _SqlAlchemyRetrievalSession:
     def __init__(
         self,
@@ -375,6 +405,37 @@ class _SqlAlchemyRetrievalSession:
             )
         ).all()
         return {row[0].id: _chunk(row) for row in rows}
+
+    def neighbours(self, seeds: list[Chunk], filters: RetrievalFilters) -> tuple[Chunk, ...]:
+        if not seeds:
+            return ()
+        identities = [
+            and_(
+                ChunkRecord.artifact_processing_id == seed.artifact_processing_id,
+                ChunkRecord.unit_anchor == seed.unit_anchor,
+                ChunkRecord.kind == seed.kind,
+                ChunkRecord.part_index.in_((seed.part_index - 1, seed.part_index + 1)),
+            )
+            for seed in seeds
+        ]
+        statement = self._base_select(
+            ChunkRecord,
+            ArtifactProcessingRecord.locator,
+            ArtifactProcessingRecord.artifact_id,
+            ArtifactProcessingRecord.processing_run_id,
+            ArtifactProcessingRecord.project_version_id,
+        ).where(or_(*identities))
+        statement = self._filters(statement, filters)
+        rows = self._session.execute(
+            statement.order_by(
+                ChunkRecord.artifact_processing_id,
+                ChunkRecord.unit_anchor.collate("C"),
+                ChunkRecord.part_index,
+                ChunkRecord.stable_key.collate("C"),
+                ChunkRecord.id,
+            )
+        ).all()
+        return tuple(_chunk(row) for row in rows)
 
     def _base_select(self, *columns: Any) -> Any:
         return (

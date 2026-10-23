@@ -1,0 +1,374 @@
+{
+  "authorship": "agent",
+  "review_status": "draft",
+  "human_approval": null,
+  "changes": [
+    {
+      "case_id": "semantic-01",
+      "previous_targets": [
+        {
+          "id": "semantic-01.e1",
+          "locator": "backend/src/buildlens/application/context.py",
+          "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+          "start_offset": 2537,
+          "end_offset": 4966,
+          "excerpt_hash": "7d16d5196b511fdb6a0b8bea20b2317389d164d277debf2e9371d92c5e4f247a",
+          "label": "ContextSizer"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "semantic-01.e1",
+          "locator": "backend/src/buildlens/application/context.py",
+          "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+          "start_offset": 3936,
+          "end_offset": 4228,
+          "excerpt_hash": "425b6e991edd20618f055e1dc4f7f0b0465da34bcfb95cd19686f5470b5a334f",
+          "label": "ContextSizer.serialize"
+        },
+        {
+          "id": "semantic-01.e2",
+          "locator": "backend/src/buildlens/application/context.py",
+          "artifact_fingerprint": "d0ed84d1757fd273c4bd4d01d2c4e9efd3ff3fa56ac58a33116d7f61da7b2498",
+          "start_offset": 4234,
+          "end_offset": 4342,
+          "excerpt_hash": "5474f2e54757f71851dd6dea12b86209b9efedebca634d55e73de5c7a4a9d615",
+          "label": "ContextSizer.measure"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "semantic-02",
+      "previous_targets": [
+        {
+          "id": "semantic-02.e1",
+          "locator": "backend/src/buildlens/application/ask.py",
+          "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+          "start_offset": 5819,
+          "end_offset": 14755,
+          "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+          "label": "AskService.ask"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "semantic-02.e1",
+          "locator": "backend/src/buildlens/application/ask.py",
+          "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+          "start_offset": 7620,
+          "end_offset": 8372,
+          "excerpt_hash": "841b12db48da341fe2357b1e3365af267282187cc208dde582022cb27f272cd3",
+          "label": "Empty-context return before token counting or generation"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "semantic-05",
+      "previous_targets": [
+        {
+          "id": "semantic-05.e1",
+          "locator": "backend/src/buildlens/application/ask.py",
+          "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+          "start_offset": 5819,
+          "end_offset": 14755,
+          "excerpt_hash": "31b663b77ae44f48de753343f25a49206c2f2ce77967d29c715bff59e4c9e650",
+          "label": "AskService.ask"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "semantic-05.e1",
+          "locator": "backend/src/buildlens/application/ask.py",
+          "artifact_fingerprint": "85d63f85c20b97e29a77b69cc091bd0b859fbf81fb201c37e5ed83134fce779e",
+          "start_offset": 12168,
+          "end_offset": 13486,
+          "excerpt_hash": "38f570876a20bb171dfab85c0c9a7b0f3e1078470f446505721e6efe71b0b61e",
+          "label": "Output validation followed by final evidence verification"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "cross_file-05",
+      "previous_targets": [
+        {
+          "id": "cross_file-05.e1",
+          "locator": "backend/src/buildlens/api/main.py",
+          "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+          "start_offset": 1138,
+          "end_offset": 4922,
+          "excerpt_hash": "fb645d2da598cbfd293693203589f54ab767300475784cce41df6aab93f94f16",
+          "label": "create_app"
+        },
+        {
+          "id": "cross_file-05.e2",
+          "locator": "backend/src/buildlens/infrastructure/runtime.py",
+          "artifact_fingerprint": "7e502a708233fd4dc547071ccc1c314a9308f615c371af459ed2083b75fdc041",
+          "start_offset": 5113,
+          "end_offset": 5506,
+          "excerpt_hash": "94723a4e37a2c3e463c35d482db440a4c0258c88516e3046b5835f9416713c32",
+          "label": "LocalRuntime.close"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "cross_file-05.e1",
+          "locator": "backend/src/buildlens/api/main.py",
+          "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+          "start_offset": 1368,
+          "end_offset": 1648,
+          "excerpt_hash": "0c14629b5b07822592ae553256c78ab0fe2ee9c49216e6c882272743c150480f",
+          "label": "create_app.lifespan"
+        },
+        {
+          "id": "cross_file-05.e2",
+          "locator": "backend/src/buildlens/infrastructure/runtime.py",
+          "artifact_fingerprint": "7e502a708233fd4dc547071ccc1c314a9308f615c371af459ed2083b75fdc041",
+          "start_offset": 5113,
+          "end_offset": 5506,
+          "excerpt_hash": "94723a4e37a2c3e463c35d482db440a4c0258c88516e3046b5835f9416713c32",
+          "label": "LocalRuntime.close"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "architecture-02",
+      "previous_targets": [
+        {
+          "id": "architecture-02.e1",
+          "locator": "backend/src/buildlens/core/config.py",
+          "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+          "start_offset": 186,
+          "end_offset": 4908,
+          "excerpt_hash": "1951a88170d0c36d75244ed32aa6c2ae26228dba0a3cdcb9bad52201fe176e86",
+          "label": "Settings"
+        },
+        {
+          "id": "architecture-02.e2",
+          "locator": "backend/src/buildlens/domain/context.py",
+          "artifact_fingerprint": "7944fd57f2bc60477524e04b77638102d5bab48e92bc9fa535c8a372114bd949",
+          "start_offset": 1078,
+          "end_offset": 1826,
+          "excerpt_hash": "55e99d7bc275323efcd68a9a6c970fbf784f1f97fa175363676edeb86080bbb5",
+          "label": "ContextPolicy"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "architecture-02.e1",
+          "locator": "backend/src/buildlens/core/config.py",
+          "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+          "start_offset": 2537,
+          "end_offset": 2755,
+          "excerpt_hash": "9940209ddd2e638f708864d45bb0ecccba8e5e7a4c8b2984ca356a69fe18e85d",
+          "label": "Configured context limits"
+        },
+        {
+          "id": "architecture-02.e2",
+          "locator": "backend/src/buildlens/domain/context.py",
+          "artifact_fingerprint": "7944fd57f2bc60477524e04b77638102d5bab48e92bc9fa535c8a372114bd949",
+          "start_offset": 1078,
+          "end_offset": 1826,
+          "excerpt_hash": "55e99d7bc275323efcd68a9a6c970fbf784f1f97fa175363676edeb86080bbb5",
+          "label": "ContextPolicy"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "architecture-03",
+      "previous_targets": [
+        {
+          "id": "architecture-03.e1",
+          "locator": "backend/src/buildlens/core/config.py",
+          "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+          "start_offset": 186,
+          "end_offset": 4908,
+          "excerpt_hash": "1951a88170d0c36d75244ed32aa6c2ae26228dba0a3cdcb9bad52201fe176e86",
+          "label": "Settings"
+        },
+        {
+          "id": "architecture-03.e2",
+          "locator": "backend/src/buildlens/infrastructure/runtime.py",
+          "artifact_fingerprint": "7e502a708233fd4dc547071ccc1c314a9308f615c371af459ed2083b75fdc041",
+          "start_offset": 3310,
+          "end_offset": 5107,
+          "excerpt_hash": "5b3a729a14d8ea123306c8c117e1fefd0a562d927053cd17e6802b1116e1ea4d",
+          "label": "LocalRuntime.__init__"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "architecture-03.e1",
+          "locator": "backend/src/buildlens/core/config.py",
+          "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+          "start_offset": 2760,
+          "end_offset": 2937,
+          "excerpt_hash": "27adcae1fb22ea43913c74dddf59247963af1164580b4e91d7ee6d035748fef0",
+          "label": "Opt-in Ask and explicit provider configuration"
+        },
+        {
+          "id": "architecture-03.e2",
+          "locator": "backend/src/buildlens/infrastructure/runtime.py",
+          "artifact_fingerprint": "7e502a708233fd4dc547071ccc1c314a9308f615c371af459ed2083b75fdc041",
+          "start_offset": 3310,
+          "end_offset": 5107,
+          "excerpt_hash": "5b3a729a14d8ea123306c8c117e1fefd0a562d927053cd17e6802b1116e1ea4d",
+          "label": "LocalRuntime.__init__"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "architecture-04",
+      "previous_targets": [
+        {
+          "id": "architecture-04.e1",
+          "locator": "backend/src/buildlens/domain/ask.py",
+          "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+          "start_offset": 1575,
+          "end_offset": 2073,
+          "excerpt_hash": "16f82d0d4e7b144f9fcc5514e7b7a25dd7da0e909c211e35ecc6b77cc26430c4",
+          "label": "GenerationPolicy.for_provider"
+        },
+        {
+          "id": "architecture-04.e2",
+          "locator": "backend/src/buildlens/infrastructure/generation/gemini.py",
+          "artifact_fingerprint": "e0bd61c9acb22fc6dc44a9db2d61308be6abe2fea87f19a5f8b1564258275874",
+          "start_offset": 4561,
+          "end_offset": 7730,
+          "excerpt_hash": "d0359342955de2d6aec115205c0ca1fc2058606fb0065e9ddca5b79a59dee119",
+          "label": "GeminiProvider.generate"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "architecture-04.e1",
+          "locator": "backend/src/buildlens/domain/ask.py",
+          "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+          "start_offset": 1575,
+          "end_offset": 2073,
+          "excerpt_hash": "16f82d0d4e7b144f9fcc5514e7b7a25dd7da0e909c211e35ecc6b77cc26430c4",
+          "label": "GenerationPolicy.for_provider"
+        },
+        {
+          "id": "architecture-04.e2",
+          "locator": "backend/src/buildlens/infrastructure/generation/gemini.py",
+          "artifact_fingerprint": "e0bd61c9acb22fc6dc44a9db2d61308be6abe2fea87f19a5f8b1564258275874",
+          "start_offset": 5269,
+          "end_offset": 6073,
+          "excerpt_hash": "6953988827df8a6e498084bdcd7aae41f4ad16b3158574af9e3a354ee3510f8b",
+          "label": "Complete Gemini generation config and SDK call"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "architecture-06",
+      "previous_targets": [
+        {
+          "id": "architecture-06.e1",
+          "locator": "backend/src/buildlens/api/main.py",
+          "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+          "start_offset": 1138,
+          "end_offset": 4922,
+          "excerpt_hash": "fb645d2da598cbfd293693203589f54ab767300475784cce41df6aab93f94f16",
+          "label": "create_app"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "architecture-06.e1",
+          "locator": "backend/src/buildlens/api/main.py",
+          "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+          "start_offset": 2129,
+          "end_offset": 4256,
+          "excerpt_hash": "751199c26a3f9eb2d203e1b5b774191d822846477ddba483a65d5ea136425c79",
+          "label": "create_app.local_mutation_guard"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "unsupported-02",
+      "previous_targets": [
+        {
+          "id": "unsupported-02.e1",
+          "locator": "backend/src/buildlens/core/config.py",
+          "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+          "start_offset": 186,
+          "end_offset": 4908,
+          "excerpt_hash": "1951a88170d0c36d75244ed32aa6c2ae26228dba0a3cdcb9bad52201fe176e86",
+          "label": "Settings"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "unsupported-02.e1",
+          "locator": "backend/src/buildlens/core/config.py",
+          "artifact_fingerprint": "22c30e33af7b38e8a1d0eaff3bdaffbff45de4be9565699466f7234757d6a863",
+          "start_offset": 2370,
+          "end_offset": 2755,
+          "excerpt_hash": "aa796ee35454d87df576d80f58fa1b2402fbe91a82248c187ba8cfc337d798f2",
+          "label": "Worker resource limits; no live GPU measurements"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "unsupported-03",
+      "previous_targets": [
+        {
+          "id": "unsupported-03.e1",
+          "locator": "backend/src/buildlens/api/main.py",
+          "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+          "start_offset": 1138,
+          "end_offset": 4922,
+          "excerpt_hash": "fb645d2da598cbfd293693203589f54ab767300475784cce41df6aab93f94f16",
+          "label": "create_app"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "unsupported-03.e1",
+          "locator": "backend/src/buildlens/api/main.py",
+          "artifact_fingerprint": "f9c53a516eaf07622ef222c85f6e19125030bb2bdf6dc1607407b96a188a4a50",
+          "start_offset": 4542,
+          "end_offset": 4907,
+          "excerpt_hash": "773f5c3d67be4e6703c3f65301f83a1fbba66c9bf745803fcaabfa56a00c4865",
+          "label": "HTTP route registrations; no traffic history"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    },
+    {
+      "case_id": "unsupported-06",
+      "previous_targets": [
+        {
+          "id": "unsupported-06.e1",
+          "locator": "backend/src/buildlens/domain/ask.py",
+          "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+          "start_offset": 831,
+          "end_offset": 2207,
+          "excerpt_hash": "c955a08a2c9c737be17f81888555c3eb58ac0db6bdb0d30c44cc70b3f3768eb0",
+          "label": "GenerationPolicy"
+        }
+      ],
+      "proposed_targets": [
+        {
+          "id": "unsupported-06.e1",
+          "locator": "backend/src/buildlens/domain/ask.py",
+          "artifact_fingerprint": "03492c6f7e2cc349182ae5cb1c3c352536336995fe6969132151db03338bee26",
+          "start_offset": 1349,
+          "end_offset": 1552,
+          "excerpt_hash": "a7cee9829a74e79b1b72539cdf32f27b2f29c480fd57665b56ca6525230b1f5d",
+          "label": "Generation timeout settings; no future-outage telemetry"
+        }
+      ],
+      "reason": "Agent content review: narrow to the required fact or nested declaration, avoid blank residual gaps, retain exact bytes. No human approval or relevance inferred."
+    }
+  ]
+}

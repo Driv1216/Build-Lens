@@ -118,6 +118,16 @@ def test_exact_and_lexical_api_need_no_embeddings(pg_engine: Engine, tmp_path: P
         assert exact_body["hits"][0]["exact_matches"] == [
             {"field": "symbol_name", "value": "getUser"}
         ]
+        exact_context = client.post(
+            scope + "/context",
+            json={
+                "retrieval_mode": "exact",
+                "ranking_policy": "retrieval_order",
+                "query": "getUser",
+            },
+        )
+        assert exact_context.status_code == 200, exact_context.text
+        assert exact_context.json()["retrieval"]["executed_mode"] == "exact"
 
         lexical = client.post(scope + "/search", json={"mode": "lexical", "query": "get user"})
         assert lexical.status_code == 200, lexical.text
@@ -125,6 +135,28 @@ def test_exact_and_lexical_api_need_no_embeddings(pg_engine: Engine, tmp_path: P
         assert lexical_body["hits"]
         assert lexical_body["hits"][0]["lexical"]["field_scores"]
         assert lexical_body["components"]["semantic"]["state"] == "not_requested"
+        assert provider.document_calls == provider.query_calls == 0
+
+        context = client.post(
+            scope + "/context",
+            json={
+                "retrieval_mode": "lexical",
+                "ranking_policy": "retrieval_order",
+                "query": "get user",
+            },
+        )
+        assert context.status_code == 200, context.text
+        context_body = context.json()
+        assert context_body["reranker_state"] == "not_requested"
+        assert context_body["items"]
+        assert context_body["budget"]["measurement"] == {
+            "unit": "utf8_bytes",
+            "policy": "canonical-json-evidence.v1",
+            "exact": True,
+            "tokenizer_id": None,
+            "tokenizer_revision": None,
+        }
+        assert context_body["budget"]["used"] <= context_body["budget"]["limit"]
         assert provider.document_calls == provider.query_calls == 0
 
         path = client.post(scope + "/search", json={"mode": "exact", "query": "a.py"}).json()
@@ -147,12 +179,24 @@ def test_exact_and_lexical_api_need_no_embeddings(pg_engine: Engine, tmp_path: P
         assert hybrid_body["hits"][0]["hybrid"]["lexical_contribution"] > 0
         assert hybrid_body["hits"][0]["hybrid"]["semantic_contribution"] > 0
 
+        for mode in ("semantic", "hybrid"):
+            bounded = client.post(
+                scope + "/context",
+                json={
+                    "retrieval_mode": mode,
+                    "ranking_policy": "retrieval_order",
+                    "query": "customer",
+                },
+            )
+            assert bounded.status_code == 200, bounded.text
+            assert bounded.json()["retrieval"]["executed_mode"] == mode
+
         compatibility = client.post(
             scope + "/semantic-search", json={"query": "customer", "top_k": 1}
         )
         assert compatibility.status_code == 200, compatibility.text
         assert compatibility.json()["hits"][0]["score"] == pytest.approx(1.0)
-        assert provider.query_calls == 2
+        assert provider.query_calls == 4
 
         invalid = client.post(
             scope + "/search",

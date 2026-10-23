@@ -4,6 +4,8 @@ from typing import cast
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session, sessionmaker
 
+from buildlens.application.ask import AskService
+from buildlens.application.context import ContextService
 from buildlens.application.embeddings import EmbeddingService
 from buildlens.application.fingerprinting import SnapshotFingerprinter
 from buildlens.application.processing import ProcessingService
@@ -14,11 +16,15 @@ from buildlens.application.structural import StructuralAnalysisService
 from buildlens.core.config import Settings
 from buildlens.infrastructure.persistence.database import get_session
 from buildlens.infrastructure.persistence.embeddings import SqlAlchemyEmbeddingStore
-from buildlens.infrastructure.persistence.processing import SqlAlchemyProcessingStore
 from buildlens.infrastructure.persistence.repositories import SqlAlchemyProjectRepository
-from buildlens.infrastructure.persistence.retrieval import SqlAlchemyRetrievalStore
 from buildlens.infrastructure.persistence.snapshots import SqlAlchemySnapshotStore
 from buildlens.infrastructure.persistence.structural import SqlAlchemyStructuralAnalysisStore
+from buildlens.infrastructure.runtime import (
+    ask_service,
+    context_service,
+    processing_service,
+    retrieval_service,
+)
 from buildlens.infrastructure.structural.supervisor import (
     SupervisedRepositoryInspector,
     SupervisedSourceReader,
@@ -76,18 +82,7 @@ def get_structural_analysis_service(request: Request) -> StructuralAnalysisServi
 
 
 def get_processing_service(request: Request) -> ProcessingService:
-    settings: Settings = request.app.state.settings
-    return ProcessingService(
-        SqlAlchemyProcessingStore(request.app.state.session_factory),
-        request.app.state.processing_lock,
-        reader=SupervisedSourceReader(),
-        max_source_bytes=settings.processing_max_source_bytes,
-        max_total_bytes=settings.processing_max_total_bytes,
-        max_artifacts=settings.processing_max_artifacts,
-        max_chunks_per_artifact=settings.processing_max_chunks_per_artifact,
-        max_chunks=settings.processing_max_chunks,
-        overall_timeout_seconds=settings.processing_overall_timeout_seconds,
-    )
+    return processing_service(request.app.state)
 
 
 def get_embedding_service(request: Request) -> EmbeddingService:
@@ -108,12 +103,12 @@ def get_embedding_service(request: Request) -> EmbeddingService:
 
 
 def get_retrieval_service(request: Request) -> RetrievalService:
-    settings: Settings = request.app.state.settings
-    session_factory = request.app.state.session_factory
-    return RetrievalService(
-        get_processing_service(request),
-        request.app.state.embedding_runtime,
-        SqlAlchemyEmbeddingStore(session_factory),
-        SqlAlchemyRetrievalStore(session_factory),
-        search_timeout_seconds=settings.embeddings_search_timeout_seconds,
-    )
+    return retrieval_service(request.app.state)
+
+
+def get_context_service(request: Request) -> ContextService:
+    return context_service(request.app.state)
+
+
+def get_ask_service(request: Request) -> AskService:
+    return ask_service(request.app.state)

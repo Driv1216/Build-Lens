@@ -109,3 +109,4 @@ class RetrievalResult:
     semantic: ComponentStatus
     returned_count: int
     hits: tuple[RetrievalHit, ...]
+    final_candidate_cap_truncated: bool = False

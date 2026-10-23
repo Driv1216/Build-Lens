@@ -111,7 +111,41 @@ class RetrievalService:
         top_k: int = 10,
         filters: RetrievalFilters | None = None,
     ) -> RetrievalResult:
-        selected_query = self._validate(mode, query, top_k, filters or RetrievalFilters())
+        return self._search(project_id, snapshot_id, mode, query, top_k, filters, max_top_k=50)
+
+    def context_candidates(
+        self,
+        project_id: UUID,
+        snapshot_id: UUID,
+        mode: RetrievalMode,
+        query: str,
+        filters: RetrievalFilters | None = None,
+    ) -> RetrievalResult:
+        """Return the shared Stage 8 ranking at the bounded Stage 9 depth."""
+        return self._search(
+            project_id,
+            snapshot_id,
+            mode,
+            query,
+            CANDIDATE_DEPTH,
+            filters,
+            max_top_k=CANDIDATE_DEPTH,
+        )
+
+    def _search(
+        self,
+        project_id: UUID,
+        snapshot_id: UUID,
+        mode: RetrievalMode,
+        query: str,
+        top_k: int,
+        filters: RetrievalFilters | None,
+        *,
+        max_top_k: int,
+    ) -> RetrievalResult:
+        selected_query = self._validate(
+            mode, query, top_k, filters or RetrievalFilters(), max_top_k=max_top_k
+        )
         selected_filters = filters or RetrievalFilters()
         deadline = time.monotonic() + self._timeout
         run: EmbeddingRun | None = None
@@ -210,6 +244,7 @@ class RetrievalService:
                 semantic=self._component(semantic_page, requested=mode in {"semantic", "hybrid"}),
                 returned_count=len(hits),
                 hits=hits,
+                final_candidate_cap_truncated=len(ranked) > top_k,
             )
         except (CurrentContentUnavailableError, ProcessingConflictError) as error:
             raise EmbeddingConflictError(
@@ -412,7 +447,14 @@ class RetrievalService:
         )
 
     @staticmethod
-    def _validate(mode: RetrievalMode, query: str, top_k: int, filters: RetrievalFilters) -> str:
+    def _validate(
+        mode: RetrievalMode,
+        query: str,
+        top_k: int,
+        filters: RetrievalFilters,
+        *,
+        max_top_k: int = 50,
+    ) -> str:
         if mode not in {"exact", "lexical", "semantic", "hybrid"}:
             raise EmbeddingInputError("Search mode is invalid.")
         selected = query if mode == "exact" else query.strip()
@@ -420,8 +462,8 @@ class RetrievalService:
             raise EmbeddingInputError("Query must not be empty.")
         if len(selected.encode("utf-8")) > 4096:
             raise EmbeddingInputError("Query exceeds 4,096 UTF-8 bytes.")
-        if not 1 <= top_k <= 50:
-            raise EmbeddingInputError("top_k must be between 1 and 50.")
+        if not 1 <= top_k <= max_top_k:
+            raise EmbeddingInputError(f"top_k must be between 1 and {max_top_k}.")
         for value, limit in (
             (filters.locator_prefix, 2048),
             (filters.language, 64),

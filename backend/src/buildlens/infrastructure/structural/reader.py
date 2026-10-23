@@ -13,6 +13,7 @@ from buildlens.application.source_ports import SecureSourceReader as SecureSourc
 from buildlens.application.source_ports import SourceFingerprint as SourceFingerprint
 from buildlens.application.source_ports import SourceRead as SourceRead
 from buildlens.application.source_ports import SourceReadError as SourceReadError
+from buildlens.domain.eligibility import exclusion_reason
 
 
 def directory_at(root_fd: int, locator: str) -> int:
@@ -72,6 +73,33 @@ class PosixSecureSourceReader(SecureSourceReader):
         )
         return SourceFingerprint("sha256", "artifact-bytes.v1", digest.hexdigest(), size)
 
+    def read_ignore_control(
+        self,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int] | None = None,
+    ) -> SourceRead:
+        """Inventory-only control read; never a source-processing entry point.
+
+        Git's exact ignore-control file lives under excluded VCS metadata. It
+        still uses descriptor-relative path, mount, size and identity checks.
+        Every other locator uses the normal shared source eligibility policy.
+        """
+        if locator != ".git/info/exclude":
+            return self.read(root, locator, max_bytes, expected_root_identity)
+        chunks: list[bytes] = []
+        size = self._consume(
+            root,
+            locator,
+            max_bytes,
+            time.monotonic() + 3,
+            chunks.append,
+            expected_root_identity,
+            ignore_control=True,
+        )
+        return SourceRead(b"".join(chunks), size)
+
     def _consume(
         self,
         root: str,
@@ -80,9 +108,15 @@ class PosixSecureSourceReader(SecureSourceReader):
         deadline: float,
         consume: Callable[[bytes], object],
         expected_root_identity: tuple[int, int] | None,
+        *,
+        ignore_control: bool = False,
     ) -> int:
         if not self._valid_locator(locator):
             raise SourceReadError("UNSAFE_LOCATOR")
+        if exclusion_reason(locator, False) and not (
+            ignore_control and locator == ".git/info/exclude"
+        ):
+            raise SourceReadError("SOURCE_EXCLUDED")
         count = 0
         root_fd = parent_fd = file_fd = None
         try:

@@ -24,6 +24,8 @@ def pg_engine(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -
     """Give integration and real-model tests a migrated database created from template0."""
     url = os.getenv("BUILDLENS_TEST_ADMIN_URL")
     if not url:
+        if request.node.get_closest_marker("real_provider"):
+            pytest.fail("Real-provider gate requires BUILDLENS_TEST_ADMIN_URL")
         if os.getenv("CI"):
             pytest.fail("CI requires BUILDLENS_TEST_ADMIN_URL; integration cannot be skipped")
         pytest.skip("Set BUILDLENS_TEST_ADMIN_URL to enable disposable PostgreSQL tests")

@@ -55,7 +55,7 @@ def _run(value: EmbeddingRunRecord, chunk_count: int = 0) -> EmbeddingRun:
         value.captured_latest_revision,
         value.membership_digest,
         dict(value.limits),
-        {key: int(item) for key, item in value.coverage.items()},
+        {key: int(cast(int | str, item)) for key, item in value.coverage.items()},
         tuple(value.diagnostics),
         chunk_count,
     )
