@@ -1,0 +1,1 @@
+{"contract":"stage12.lab.v1","corpus":{"filters":{"kind":null,"language":null,"locator_prefix":null},"include_unsupported":false,"mode":"native_chunks"},"digest":"0dfc9b2f22c96b71ea6a414e1402b5d79eca59fd7b01c2bb2e372313cfcf6c6e","embedding":{"source":"reuse-stored"},"name":"ls1-lc-pg-custom","params":{"k":32},"pipeline":"langchain.pg_custom"}

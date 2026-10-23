@@ -1,0 +1,1 @@
+{"contract":"stage12.lab.v1","corpus":{"filters":{"kind":null,"language":null,"locator_prefix":null},"include_unsupported":false,"mode":"native_chunks"},"digest":"b57a436b227071c5416c13204dfd033a1e3bf48def45ca1c4208a6d927aa1e1e","embedding":{"source":"reuse-stored"},"name":"ls2-langchain-postgres","params":{"k":32},"pipeline":"langchain_postgres.pgvector"}
