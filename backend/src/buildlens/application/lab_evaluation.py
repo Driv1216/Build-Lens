@@ -281,6 +281,11 @@ class LabBenchmarkRunner:
                     context, dup_c = rows_for(result["context"], corpus)
                     observations = {"retrieval": retrieval, "ranking": ranking, "context": context}
                     context_bytes = sum(int(i.get("text_bytes") or 0) for i in result["context"])
+                    gateway = manifest["builds"][config.name].get("gateway") or {}
+                    available = gateway.get("available_locators")
+                    targets_available = available is None or all(
+                        t.locator in set(available) for t in case.targets
+                    )
                     scored = tiers(config, case, binding, corpus, observations, context_bytes)
                     record = {
                         "case_id": case.id,
@@ -288,6 +293,7 @@ class LabBenchmarkRunner:
                         "answerable": case.answerable,
                         "pipeline": config.name,
                         "outcome": "success",
+                        "targets_available": targets_available,
                         "observations": {
                             name: [
                                 {
@@ -345,7 +351,39 @@ class LabBenchmarkRunner:
 # ---------------------------------------------------------------------------- reporting
 
 
+def matched_cases(records: list[dict[str, Any]], pipelines: list[str]) -> set[str]:
+    """Answerable cases every pipeline ran successfully with all target artifacts available."""
+    by_case: dict[str, dict[str, dict[str, Any]]] = {}
+    for record in records:
+        by_case.setdefault(record["case_id"], {})[record["pipeline"]] = record
+    return {
+        case
+        for case, entries in by_case.items()
+        if set(entries) >= set(pipelines)
+        and all(
+            e.get("outcome") == "success"
+            and e.get("answerable")
+            and e.get("targets_available", True)
+            for e in entries.values()
+        )
+    }
+
+
 def summarize(records: list[dict[str, Any]], pipelines: list[str]) -> dict[str, Any]:
+    matched = matched_cases(records, pipelines)
+    full = _summarize(records, pipelines)
+    subset = _summarize([r for r in records if r["case_id"] in matched], pipelines)
+    return {
+        **full,
+        "matched": {
+            "cases": sorted(matched),
+            "means": subset["means"],
+            "categories": subset["categories"],
+        },
+    }
+
+
+def _summarize(records: list[dict[str, Any]], pipelines: list[str]) -> dict[str, Any]:
     by_pipeline: dict[str, dict[str, list[float]]] = {p: {} for p in pipelines}
     by_category: dict[str, dict[str, dict[str, list[float]]]] = {p: {} for p in pipelines}
     latency: dict[str, list[float]] = {p: [] for p in pipelines}

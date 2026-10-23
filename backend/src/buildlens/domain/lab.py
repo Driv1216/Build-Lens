@@ -130,6 +130,9 @@ _OVERLAP = Param("int", 0, 0, 2048, help="Splitter chunk overlap")
 _RERANK = Param("bool", False, help="Rerank through the BuildLens cross-encoder bridge")
 _MODE = Param("choice", "hybrid", choices=("exact", "lexical", "semantic", "hybrid"))
 _SYNTH = Param("bool", True, help="Run the offline synthesis chain (mechanics only)")
+_MAX_SENTENCE = Param(
+    "int", 4000, 200, 50_000, help="Drop sentence nodes longer than this (embedding window limit)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +264,7 @@ PIPELINES: dict[str, PipelineSpec] = {
             "Hand-built LCEL sentence-window expansion",
             "AR-4",
             _SOURCES,
-            {"k": _K, "window_size": Param("int", 3, 0, 20)},
+            {"k": _K, "window_size": Param("int", 3, 0, 20), "max_sentence_chars": _MAX_SENTENCE},
             extra="lab-langchain",
         ),
         PipelineSpec(
@@ -418,7 +421,7 @@ PIPELINES: dict[str, PipelineSpec] = {
             "LlamaIndex SentenceWindowNodeParser + MetadataReplacementPostProcessor",
             "AR-4",
             _SOURCES,
-            {"k": _K, "window_size": Param("int", 3, 0, 20)},
+            {"k": _K, "window_size": Param("int", 3, 0, 20), "max_sentence_chars": _MAX_SENTENCE},
             extra="lab-llamaindex",
         ),
         PipelineSpec(

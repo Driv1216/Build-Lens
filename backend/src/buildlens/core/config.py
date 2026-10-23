@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     lab_root: str | None = None
     lab_database_url: SecretStr | None = None
     lab_generation_enabled: bool = False
+    lab_allow_root_device_renumbering: bool = False
     lab_build_timeout_seconds: float = 900
     lab_query_timeout_seconds: float = 120
     lab_worker_max_rss_bytes: int = 3 * 1024 * 1024 * 1024

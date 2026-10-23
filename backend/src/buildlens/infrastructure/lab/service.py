@@ -255,7 +255,10 @@ def build_lab_service(state: Any) -> LabService:
     service = getattr(state, "lab_service_instance", None)
     if service is None:
         service = LabService(
-            corpus=CorpusGateway(state.session_factory),
+            corpus=CorpusGateway(
+                state.session_factory,
+                allow_device_renumbering=settings.lab_allow_root_device_renumbering,
+            ),
             workers=pool,
             store=pool.store,
             bridges=bridge_factory(state),

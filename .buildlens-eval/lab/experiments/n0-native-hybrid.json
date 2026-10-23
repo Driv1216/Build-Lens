@@ -1,0 +1,1 @@
+{"contract":"stage12.lab.v1","corpus":{"filters":{"kind":null,"language":null,"locator_prefix":null},"include_unsupported":false,"mode":"native_chunks"},"digest":"58ec8a530739c08a4b015c834c326e216b70faebfc745bd973a6996d3536d79d","embedding":{"source":"reuse-stored"},"name":"n0-native-hybrid","params":{"mode":"hybrid","rerank":false},"pipeline":"native.context"}

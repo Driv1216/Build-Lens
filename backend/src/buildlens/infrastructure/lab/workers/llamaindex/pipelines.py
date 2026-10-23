@@ -382,8 +382,11 @@ def _build_window(session: WorkerSession, state: IndexState, params: dict[str, A
     with session.tracer.step(
         "split", "SentenceWindowNodeParser", "llama_index.node_parser"
     ) as attrs:
-        nodes = parser.get_nodes_from_documents(_documents(state))
-        attrs["sentences"] = len(nodes)
+        parsed = parser.get_nodes_from_documents(_documents(state))
+        limit = params["max_sentence_chars"]
+        nodes = [n for n in parsed if len(n.get_content(metadata_mode=MetadataMode.NONE)) <= limit]
+        attrs.update({"sentences": len(parsed), "dropped_oversized": len(parsed) - len(nodes)})
+        state.manifest["dropped_oversized_sentences"] = len(parsed) - len(nodes)
     for node in nodes:
         # Embed the sentence itself only; the window is delivered later by the postprocessor.
         node.excluded_embed_metadata_keys = sorted(node.metadata)

@@ -157,6 +157,24 @@ def render(manifest: dict[str, Any], scores: dict[str, Any]) -> str:
             + " | ".join(_cell(means.get(p, {}).get(metric)) for p in pipelines)
             + " |"
         )
+    matched = scores["summary"].get("matched") or {}
+    if matched.get("cases") is not None:
+        lines += [
+            "",
+            f"## Matched subset ({len(matched['cases'])} answerable cases seen by every pipeline)",
+            "",
+            "Excludes cases whose target artifacts were unavailable to an artifact-source pipeline "
+            "(bytes changed after the frozen snapshot).",
+            "",
+            "| Metric | " + " | ".join(pipelines) + " |",
+            "| --- | " + " | ".join("---" for _ in pipelines) + " |",
+        ]
+        for metric in KEY_METRICS:
+            lines.append(
+                f"| {metric} | "
+                + " | ".join(_cell(matched["means"].get(p, {}).get(metric)) for p in pipelines)
+                + " |"
+            )
     latency = scores["summary"]["latency"]
     lines.append(
         "| latency p50 ms | " + " | ".join(str(latency[p]["p50_ms"]) for p in pipelines) + " |"

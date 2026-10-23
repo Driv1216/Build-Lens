@@ -15,7 +15,11 @@ from typing import Any
 from uuid import UUID
 
 from buildlens.application.context import ContextService, RerankerRuntime
-from buildlens.application.embeddings import EmbeddingRuntime
+from buildlens.application.embeddings import (
+    EmbeddingInputError,
+    EmbeddingLimitError,
+    EmbeddingRuntime,
+)
 from buildlens.application.retrieval import RetrievalService
 from buildlens.domain.evaluation import CorpusEvidence
 from buildlens.domain.lab import LabError, sha256_hex
@@ -170,6 +174,12 @@ class CapabilityBridge:
             raise LabError("LAB_EMBEDDING_BUSY")
         try:
             vectors = self.embedding.provider.embed_documents(list(texts))
+        except EmbeddingLimitError as error:
+            raise LabError(
+                "LAB_EMBEDDING_WINDOW_LIMIT", "A text exceeds the embedding window limit"
+            ) from error
+        except EmbeddingInputError as error:
+            raise LabError("LAB_EMBEDDING_INPUT_REJECTED") from error
         finally:
             self.embedding.lock.release()
         self.ledger.texts_embedded += len(texts)

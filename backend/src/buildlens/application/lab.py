@@ -200,13 +200,18 @@ class LabService:
     # ------------------------------------------------------------------ build
 
     def index_identity(
-        self, config: ExperimentConfig, session: CorpusSession, versions: dict[str, Any]
+        self,
+        config: ExperimentConfig,
+        session: CorpusSession,
+        versions: dict[str, Any],
+        documents_digest: str | None = None,
     ) -> str:
         return lab_digest(
             {
                 "contract": LAB_CONTRACT_VERSION,
                 "ingestion": config.ingestion_identity(),
                 "corpus_digest": session.digest,
+                "documents_digest": documents_digest,
                 "framework_versions": versions,
             }
         )
@@ -234,6 +239,8 @@ class LabService:
             "documents": len(documents),
             "bytes": total,
             "skipped": dict(sorted(report.skipped.items())),
+            "root_identity": getattr(report, "root_identity", None),
+            "available_locators": sorted(getattr(report, "available_locators", []) or []) or None,
         }
 
     def build(
@@ -247,15 +254,19 @@ class LabService:
         if worker.hello is None:
             worker.request("drop", {"index_id": ""}, timeout_seconds=60)
         versions = dict((worker.hello or {}).get("versions") or {})
-        index_id = self.index_identity(config, session, versions)
-        if index_id in self._loaded.get(spec.family, set()) and self.store.index_exists(index_id):
-            manifest = self.store.read_index(index_id, "index.json")
-            return {**manifest, "reused_loaded_index": True}
         started = time.perf_counter()
         if spec.consumes_documents:
             documents, gateway = self._documents(config, session)
+            if not documents:
+                raise LabError("LAB_INDEX_EMPTY", f"Gateway delivered no documents: {gateway}")
         else:
             documents, gateway = [], {"mode": "none", "documents": 0, "bytes": 0, "skipped": {}}
+        # Artifact sources depend on current verified bytes, so the documents are identity.
+        documents_digest = lab_digest([[d.ref, sha256_hex(d.text)] for d in documents])
+        index_id = self.index_identity(config, session, versions, documents_digest)
+        if index_id in self._loaded.get(spec.family, set()) and self.store.index_exists(index_id):
+            manifest = self.store.read_index(index_id, "index.json")
+            return {**manifest, "reused_loaded_index": True}
         directory = self.store.index_dir(index_id, create=True)
         include_vectors = spec.consumes_documents and config.embedding_source in {
             "reuse-stored",

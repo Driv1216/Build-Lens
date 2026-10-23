@@ -57,6 +57,8 @@ class GatewayReport:
     bytes: int = 0
     skipped: dict[str, int] = field(default_factory=dict)
     vectors_verified: int = 0
+    root_identity: dict[str, Any] = field(default_factory=dict)
+    available_locators: list[str] = field(default_factory=list)
 
     def skip(self, code: str) -> None:
         self.skipped[code] = self.skipped.get(code, 0) + 1
@@ -90,10 +92,21 @@ def chunk_document(
 
 
 class CorpusGateway:
-    def __init__(self, session_factory: Any, reader: Any | None = None) -> None:
+    def __init__(
+        self,
+        session_factory: Any,
+        reader: Any | None = None,
+        *,
+        allow_device_renumbering: bool = False,
+    ) -> None:
         self._session_factory = session_factory
         self._evaluation = SqlAlchemyEvaluationCorpus(session_factory)
         self._reader = reader
+        # Lab-only, explicit opt-in. macOS may renumber st_dev for the same APFS volume
+        # across reboots; the production reader then (correctly) refuses with ROOT_CHANGED.
+        # Tolerance requires the recorded inode to match AND every file to match its frozen
+        # sha256 fingerprint, so content authority is preserved; it is always reported.
+        self._allow_device_renumbering = allow_device_renumbering
 
     # ------------------------------------------------------------------ authority
 
@@ -191,6 +204,26 @@ class CorpusGateway:
             raise LabError("LAB_SNAPSHOT_ROOT_MISSING")
         observed = snapshot.root_observation
         expected = (int(str(observed["device"])), int(str(observed["inode"]))) if observed else None
+        report.root_identity = {
+            "recorded": list(expected) if expected else None,
+            "policy": "strict",
+        }
+        if expected is not None:
+            import os
+            import stat as stat_module
+
+            current = os.lstat(snapshot.canonical_root)
+            report.root_identity["current"] = [current.st_dev, current.st_ino]
+            if (current.st_dev, current.st_ino) != expected:
+                if (
+                    self._allow_device_renumbering
+                    and stat_module.S_ISDIR(current.st_mode)
+                    and current.st_ino == expected[1]
+                ):
+                    report.root_identity["policy"] = "inode-match-device-renumbered+per-file-sha256"
+                    expected = (current.st_dev, current.st_ino)
+                else:
+                    report.root_identity["policy"] = "strict-root-changed"
         outcomes = {
             row["artifact_id"]: row["outcome"] for row in corpus.manifest["processing_artifacts"]
         }
@@ -247,6 +280,7 @@ class CorpusGateway:
                 if not text:
                     report.skip("EMPTY")
                     continue
+                report.available_locators.append(artifact.locator)
                 documents.append(
                     LabDocument(
                         ref=str(artifact.id),

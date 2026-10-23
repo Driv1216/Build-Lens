@@ -171,7 +171,11 @@ def build(session: WorkerSession, state: IndexState, directory: str) -> dict[str
         elif pipeline == "langchain.auto_merge":
             documents = _hierarchy(state, params["chunk_sizes"])
         elif pipeline == "langchain.sentence_window":
-            documents = _sentences(state)
+            sentences = _sentences(state)
+            documents = [
+                d for d in sentences if len(d.page_content) <= params["max_sentence_chars"]
+            ]
+            state.manifest["dropped_oversized_sentences"] = len(sentences) - len(documents)
         else:
             raise LabError("WORKER_PIPELINE_UNSUPPORTED", pipeline)
         attrs["documents"] = len(documents)
