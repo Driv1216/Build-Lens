@@ -176,6 +176,12 @@ def build(session: WorkerSession, state: IndexState, directory: str) -> dict[str
                 d for d in sentences if len(d.page_content) <= params["max_sentence_chars"]
             ]
             state.manifest["dropped_oversized_sentences"] = len(sentences) - len(documents)
+            # Windows expand over indexed sentences only; dropped ones must not be looked up.
+            kept = {str(d.id) for d in documents}
+            state.extra["ordered"] = {
+                artifact: [ref for ref in refs if ref in kept]
+                for artifact, refs in state.extra["ordered"].items()
+            }
         else:
             raise LabError("WORKER_PIPELINE_UNSUPPORTED", pipeline)
         attrs["documents"] = len(documents)
@@ -738,7 +744,7 @@ def _query_window(
         for rank, hit in enumerate(hits, 1):
             artifact = str(hit.metadata["artifact_ref"])
             sequence = ordered[artifact]
-            position = hit.metadata["position"]
+            position = sequence.index(str(hit.id))
             refs = sequence[max(0, position - window) : position + window + 1]
             members = [state.nodes[r] for r in refs]
             start = members[0].metadata["start_hint"]

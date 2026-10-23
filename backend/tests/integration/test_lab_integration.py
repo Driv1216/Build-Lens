@@ -289,3 +289,13 @@ def test_lab_http_api_contract(lab: dict[str, Any]) -> None:
     assert (
         ".env" in summary["llamaindex.reader_hidden"]["loaded_but_buildlens_excluded_or_rejected"]
     )
+
+
+def test_sentence_windows_survive_dropped_oversized_sentences(lab: dict[str, Any]) -> None:
+    service, project, snapshot = lab["service"], lab["project"], lab["snapshot"]
+    for pipeline in ("langchain.sentence_window", "llamaindex.sentence_window"):
+        config = _config(pipeline, max_sentence_chars=200, window_size=2)
+        build = service.build(config, project, snapshot)
+        assert build["worker_manifest"]["dropped_oversized_sentences"] > 0, pipeline
+        result = service.query(config, project, snapshot, QUESTION)
+        assert result["context"] and result["verification"]["rejected_anchors"] == 0, pipeline
