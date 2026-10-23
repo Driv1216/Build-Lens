@@ -20,7 +20,7 @@ from buildlens.core.config import Settings
 from buildlens.domain.lab import PIPELINES, LabError, parse_config
 from tests.lab_support import install_fakes, lab_service, onboard, write_repository
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.lab]
 
 QUESTION = "How is the monthly invoice total computed?"
 NATIVE_POLICIES = [("semantic", False), ("hybrid", False), ("hybrid", True)]

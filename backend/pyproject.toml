@@ -84,6 +84,7 @@ markers = [
   "integration: requires a running PostgreSQL database and applies real migrations",
   "real_model: requires the explicitly downloaded pinned embedding model",
   "real_provider: explicitly enabled paid Gemini and disposable PostgreSQL verification",
+  "lab: Stage 12 tests that spawn LangChain/LlamaIndex worker processes (lab extras required)",
 ]
 
 [tool.ruff]

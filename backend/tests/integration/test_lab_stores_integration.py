@@ -27,7 +27,7 @@ from buildlens.infrastructure.lab.service import (
 from buildlens.infrastructure.lab.store import LabStore
 from tests.lab_support import install_fakes, onboard, write_repository
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.lab]
 LAB_URL = os.environ.get("BUILDLENS_TEST_LAB_DATABASE_URL")
 QUESTION = "How is a customer user record loaded?"
 
