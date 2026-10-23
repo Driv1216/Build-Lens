@@ -33,6 +33,24 @@ FORBIDDEN = re.compile(
     r"(^|/)(\.env($|\.)(?!example)|node_modules/|\.venv/|__pycache__/|indexes/|sandboxes/|workers/|authorizations/)"
 )
 MAX_FILE = 12 * 1024 * 1024
+# Pre-existing (not Stage 12) files whose literals are redacted in the bundle, with reasons.
+REDACTIONS = {
+    "backend/alembic.ini": (
+        re.compile(r"(postgresql\+psycopg://[^:@/]+:)[^@]+(@)"),
+        r"\1<REDACTED>\2",
+        "local default database password in the Alembic config",
+    ),
+    "backend/tests/unit/test_foundation_security.py": (
+        re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
+        "ghp_<REDACTED-SYNTHETIC-TEST-TOKEN>",
+        "GitHub-token-shaped secret-screen test literal (test semantics no longer hold)",
+    ),
+    "backend/tests/unit/test_processing_processors.py": (
+        re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
+        "ghp_<REDACTED-SYNTHETIC-TEST-TOKEN>",
+        "GitHub-token-shaped secret-screen test literal (test semantics no longer hold)",
+    ),
+}
 CONTEXT_FILES = [
     "backend/src/buildlens/application/retrieval.py",
     "backend/src/buildlens/application/context.py",
@@ -142,8 +160,8 @@ def _reviewed(rule: str, matched: str, path: str) -> str | None:
     """Content-based review of known non-secrets (never a blanket path exemption)."""
     if rule != "pg_url_with_password":
         return None
-    tail = matched.split("@", 1)[1] if "@" in matched else ""
-    password = matched.rsplit(":", 1)[-1].split("@", 1)[0] if matched.count(":") >= 2 else ""
+    parts = re.match(r"[^:]+://[^:@]+:([^@]*)@(.*)", matched)
+    password, tail = (parts.group(1), parts.group(2)) if parts else ("", "")
     if password.startswith("<"):
         return "documentation placeholder"
     if path.endswith(".env.example"):
@@ -293,6 +311,12 @@ def main() -> int:
     }
     files, notes, info = collect(args)
     hits, substituted = [], {}
+    for path, (pattern, replacement, reason) in REDACTIONS.items():
+        if path in files:
+            text = files[path].decode()
+            count = len(pattern.findall(text))
+            files[path] = pattern.sub(replacement, text).encode()
+            substituted[path] = f"redacted {count} literal(s): {reason}"
     for path in list(files):
         data = files[path]
         if len(data) > MAX_FILE:
