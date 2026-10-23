@@ -29,9 +29,12 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[2]
 BASE_REF = "stage12-base"
 EXCLUDED_DOCS = {"PROJECT_BLUEPRINT.md", "CURRENT_STATE.md", "README.md", "docs/ARCHITECTURE.md"}
-FORBIDDEN = re.compile(
-    r"(^|/)(\.env($|\.)(?!example)|node_modules/|\.venv/|__pycache__/|indexes/|sandboxes/|workers/|authorizations/)"
-)
+# Secrets and generated dependencies/caches, wherever they appear.
+GENERATED = r"(^|/)(\.env($|\.)(?!example)|node_modules/|\.venv/|__pycache__/)"
+# Lab runtime state (see infrastructure/lab/store.py AREAS). Anchored to the lab root so
+# same-named source packages (e.g. infrastructure/lab/workers/) are never excluded.
+LAB_STATE = r"^\.buildlens-eval/lab/(indexes|sandboxes|workers|authorizations)/"
+FORBIDDEN = re.compile(f"{GENERATED}|{LAB_STATE}")
 MAX_FILE = 12 * 1024 * 1024
 # Pre-existing (not Stage 12) files whose literals are redacted in the bundle, with reasons.
 REDACTIONS = {
@@ -181,8 +184,13 @@ def collect(args: argparse.Namespace) -> tuple[dict[str, bytes], dict[str, str],
     changed = {p for p in git("diff", "--name-only", f"{BASE_REF}..HEAD").split("\n") if p}
     files: dict[str, bytes] = {}
     notes: dict[str, str] = {}
+    tracked = set(git("ls-files").split("\n")) - {""}
     for path in sorted(changed | set(CONTEXT_FILES) | set(DATASET_FILES)):
-        if path in EXCLUDED_DOCS or FORBIDDEN.search(path):
+        if path in EXCLUDED_DOCS:
+            continue
+        if FORBIDDEN.search(path):
+            if path in tracked:
+                raise SystemExit(f"tracked file matches an exclusion rule: {path}")
             continue
         data = head_file(path)
         if data is None:
@@ -249,6 +257,19 @@ def collect(args: argparse.Namespace) -> tuple[dict[str, bytes], dict[str, str],
     ).encode()
     for name, value in args.generated.items():
         files[name] = value
+    # Fail closed: every file changed since the base is bundled verbatim, deleted, or one of
+    # the separately-supplied documents.
+    present = changed - EXCLUDED_DOCS - set(notes)
+    missing = sorted(p for p in present if files.get(p) != head_file(p))
+    if missing:
+        raise SystemExit(f"changed files missing from bundle: {missing}")
+    inventory = {
+        "changed_since_base": len(changed),
+        "bundled_verbatim_from_head": len(present),
+        "deleted_in_head": sorted(notes),
+        "excluded_documents": sorted(changed & EXCLUDED_DOCS),
+        "missing": missing,
+    }
     environment = {
         "base_ref": BASE_REF,
         "base_commit": base,
@@ -262,7 +283,15 @@ def collect(args: argparse.Namespace) -> tuple[dict[str, bytes], dict[str, str],
         ).hexdigest(),
         "package_lock_sha256": hashlib.sha256(files["frontend/package-lock.json"]).hexdigest(),
     }
-    return files, notes, {"environment": environment, "changed": sorted(changed)}
+    return (
+        files,
+        notes,
+        {
+            "environment": environment,
+            "changed": sorted(changed),
+            "inventory": inventory,
+        },
+    )
 
 
 def build_zip(files: dict[str, bytes], manifest: dict[str, Any]) -> bytes:
@@ -346,13 +375,15 @@ def main() -> int:
         for p, d in sorted(files.items())
     ]
     manifest = {
-        "version": "stage12.review-bundle.v1",
+        "version": "stage12.review-bundle.v2",
         **info["environment"],
         "excluded_documents_supplied_separately": sorted(EXCLUDED_DOCS),
         "exclusions": (
             "secrets, .env, credentials, persisted lab indexes/vectors, sandboxes, "
             "model caches/weights, venvs, node_modules, caches"
         ),
+        "exclusion_rules": {"anywhere": GENERATED, "lab_runtime_state": LAB_STATE},
+        "inventory": info["inventory"],
         "omitted_or_substituted": {**notes, **substituted},
         "files": entries,
     }
