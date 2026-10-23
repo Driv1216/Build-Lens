@@ -84,6 +84,7 @@ def test_deadline_reader_handles_partial_frames_and_deadlines() -> None:
 # ------------------------------------------------------------------ supervision
 
 
+@pytest.mark.lab  # needs psutil (lab extras) for RSS supervision
 def test_supervisor_rpc_callbacks_budget_and_allow_list(tmp_path: Path) -> None:
     worker = _worker(tmp_path)
     try:
@@ -144,6 +145,20 @@ def test_supervisor_rpc_callbacks_budget_and_allow_list(tmp_path: Path) -> None:
         worker.close()
 
 
+def test_memory_supervision_fails_closed_without_rss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from buildlens.infrastructure.lab import supervisor
+
+    monkeypatch.setattr(supervisor, "_rss", lambda pid: None)
+    worker = _worker(tmp_path)
+    with pytest.raises(LabError) as caught:
+        worker.request("echo", {}, timeout_seconds=30)
+    assert caught.value.code == "LAB_MEMORY_SUPERVISION_UNAVAILABLE"
+    assert not worker.alive()
+
+
+@pytest.mark.lab  # needs psutil (lab extras) for RSS supervision
 def test_supervisor_failures_kill_and_replace(tmp_path: Path) -> None:
     worker = _worker(tmp_path, max_rss_bytes=400 * 1024 * 1024)
     try:
@@ -174,6 +189,7 @@ def test_supervisor_failures_kill_and_replace(tmp_path: Path) -> None:
     assert not worker.alive()
 
 
+@pytest.mark.lab  # needs psutil (lab extras) for RSS supervision
 def test_guard_and_environment_scrubbing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BUILDLENS_DATABASE_URL", "postgresql+psycopg://x:y@127.0.0.1/db")
     monkeypatch.setenv("BUILDLENS_GEMINI_API_KEY", "not-a-real-key")

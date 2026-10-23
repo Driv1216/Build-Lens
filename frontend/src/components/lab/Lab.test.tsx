@@ -114,6 +114,9 @@ describe('Stage 12 laboratory UI', () => {
     fireEvent.change(screen.getByLabelText('Probe question'), { target: { value: 'q2' } })
     fireEvent.click(screen.getByRole('button', { name: 'Probe' }))
     expect(await screen.findByRole('heading', { name: 'langchain.vector' })).toBeInTheDocument()
+    const probeCall = mocked.mock.calls.filter(([path]) => String(path).endsWith('/probe')).at(-1)!
+    const sent = JSON.parse(String(probeCall[1]?.body)).configs as Record<string, unknown>[]
+    expect(sent.every((config) => !('valid' in config) && !('digest' in config))).toBe(true)
     expect(screen.getAllByRole('img', { name: 'Pipeline step waterfall' })).toHaveLength(2)
     expect(screen.getByRole('img', { name: 'Rank alignment' })).toBeInTheDocument()
     await act(async () => late.resolve({ question: 'q1', results: [{ ok: false, pipeline: 'x', error: { code: 'STALE', message: '' } }], overlap: {} }))

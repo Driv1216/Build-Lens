@@ -91,7 +91,10 @@ export function ProbeWorkbench() {
     setBusy(true)
     setError(null)
     try {
-      const configs = experiments.filter((e) => selected.includes(e.name))
+      // Send only contract fields: listings carry `valid`/`digest`, which the strict schema rejects.
+      const configs = experiments
+        .filter((e) => selected.includes(e.name))
+        .map(({ name, pipeline, corpus, embedding, params, contract }) => ({ name, pipeline, corpus, embedding, params, contract }))
       const value = await probe(scope.projectId, scope.snapshotId, question, configs)
       if (current === sequence.current) setResponse(value)
     } catch (reason) {

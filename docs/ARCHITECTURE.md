@@ -1,6 +1,6 @@
 # BuildLens architecture
 
-BuildLens is a modular monolith through **Phase 2, Stage 8 — Lexical & Hybrid Retrieval**.
+BuildLens is a modular monolith through **Phase 2, Stage 12 — LangChain / LlamaIndex Laboratory**.
 React/Vite calls FastAPI; PostgreSQL is authoritative. Snapshots, structural analysis, and
 processing are explicit user operations; embedding preparation is a separate persistent operation.
 No repository modules are imported or executed.
@@ -344,3 +344,35 @@ was run. Stage 11 closure records retain partial/inconclusive provider verificat
 from passed infrastructure and approved retrieval/human-review states. No Stage 12 work or
 production retrieval/reranking policy change was made. See [evaluation workflow and actual
 measurements](EVALUATION.md) and `CURRENT_STATE.md` for retained identities, results and limitations.
+
+
+## Stage 12 framework laboratory
+
+The laboratory is a separate bounded context; no production table, migration or Stage 5–11
+behaviour changed. `domain/lab.py` holds framework-free contracts (strict experiment schemas,
+canonical digests, pipeline catalogue, LabItem/LabStep, shared packing, anchoring);
+`application/lab.py` and `application/lab_evaluation.py` orchestrate builds, queries and tiered
+scoring through ports. **Framework code runs only in supervised worker processes**
+(`infrastructure/lab/workers/{langchain,llamaindex}`, plus an isolated `langchain-postgres`
+environment under `backend/lab_envs/`). An architecture test asserts no module outside the worker
+packages imports a framework, and the API process never loads one.
+
+```text
+API / CLI process ── LabService ──► Corpus Gateway (authoritative chunks, verified vectors,
+      │                               secure-reader artifacts with fingerprints + screen)
+      │                         └──► NativePipeline (unchanged ContextService + observation hooks)
+      │  stage12.worker.v1 (bounded frames, deadlines, callback allow-list + budget)
+      ├──► LangChain worker   ─┐  callbacks: embed, rerank, native candidates, neighbours,
+      ├──► LlamaIndex worker  ─┼─ read-only tools ──► CapabilityBridge (BuildLens locks,
+      └──► langchain-postgres ─┘                     contracts, budgets, authority)
+```
+
+Workers receive a scrubbed environment (no database URL or provider key), private HOME/TMPDIR
+and an audit-hook guard (network, process creation, writes and protected reads). This is process
+isolation plus defense in depth, **not** an OS sandbox: C extensions and ctypes bypass audit
+hooks. The parent re-verifies every returned item against authoritative evidence, and accepts
+precomputed-vector reuse only when zero document texts were embedded and the framework's own
+persisted vectors match the stored digests. pgvector experiments use a separate server and
+least-privilege role. Lab state lives under the already-excluded `.buildlens-eval/lab/`, so the
+`stage2.v3` policy and the frozen Stage 11 corpus binding are unchanged. Design and measured
+findings: [FRAMEWORK_LAB.md](FRAMEWORK_LAB.md).

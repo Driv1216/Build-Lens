@@ -1,6 +1,62 @@
 # BuildLens current state
 
-**Implemented scope:** Phase 2, Stage 11 native CLI evaluation infrastructure over the Stage 10 production RAG services.
+**Implemented scope:** Phase 2, Stage 12 — LangChain / LlamaIndex engineering laboratory, on top
+of the closed Stage 11 native evaluation (unchanged).
+
+**Stage 12 implementation and verification, 2026-10-24.** Baseline: Stages 9–11 committed as
+`8c7fad5` (tag `stage11-closed`), Stage 12 diff base `stage12-base` (`e326126`), work on branch
+`stage12/framework-lab`. No production tables, migrations or Stage 5–11 behaviour changed; no
+framework was adopted into production. Design: [docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md).
+
+| Stage 12 dimension | Actual state |
+| --- | --- |
+| Harness parity (real models, retained corpus `03c559c4…`) | **Passed**: lab-native reproduced Stage 11 run `7e93df61` for 90/90 case×variant pairs (retrieval, ranking, packed context) |
+| Real benchmark `bench-r1-20261024b` | **Completed**: 30 pipelines × 30 approved R1 cases, 900/900 successful, authority stable; 19-case matched subset |
+| Framework-over-native adapters (LC-A, LI-A, LI Workflow) | Identical rankings to native in 30/30 cases (unreranked and reranked) |
+| Stored-vector reuse | Verified genuine for all 9 native-chunk indexes: 2,099 reused, 0 computed, digests read back from each store |
+| Stores (InMemory, SimpleVectorStore, LS-1/2/3 pgvector) | Same top-32 set as native on 30/30; identical order 24–28/30 (tie reorderings only); no metric differed |
+| Generation | **Not authorized, not executed.** `generate` is a gated stub; offline models exercise mechanics only; no answer-quality claim |
+| Loader safety (LD-1, synthetic sandbox) | Default LangChain/LlamaIndex loaders followed an escaping symlink and loaded synthetic key/token bait; BuildLens excluded/rejected them |
+| Unsupported languages (LD-2, constructed, 12 questions) | Native 0/8 vs framework ingestion 8/8 at covered@5; capability only, tiny synthetic corpus |
+
+**Measured highlights (24 answerable cases; approved tier unless stated).** Native hybrid MRR@32
+0.4560 / Recall@5 0.2064; reranked 0.5972 / 0.4294; LangChain `EnsembleRetriever` (vector + BM25)
+0.5552 / 0.3615 (paired MRR Δ +0.099, 9/4/11, bootstrap −0.039…0.237, not conclusive); span
+context coverage 0.4236 vs 0.2708 native hybrid with ~2× context (15.96 vs 8.09 KiB). LlamaIndex
+BM25 alone: best unreranked Precision@5 (0.300). Framework re-chunking pipelines scored below native
+chunks on approved span coverage in the matched subset (evidence coverage@5 native 0.132 vs
+0.000–0.088), except LlamaIndex parent-child (0.211) at 3.3× context. Full tables:
+`.buildlens-eval/lab/runs/bench-r1-20261024b/summary.md`; findings in `docs/FRAMEWORK_LAB.md`.
+
+**Verification, 2026-10-24.** Backend default suite incl. lab and lab-database tests passed on
+Python 3.14.6 and 3.11.15 (disposable PostgreSQL 16.15/pgvector 0.8.6 at 127.0.0.1:55439; separate
+least-privilege lab database at 127.0.0.1:55412). Real-model gate (pinned MiniLM `1110a243…`,
+cross-encoder `233902d2…`, re-acquired with the official CLI on approval) passed 4/4 incl. the new
+lab gate (recompute parity < 1e-5). Ruff, format and mypy passed on both versions. Genuine base
+install (dev + generation extras only) passes the base selection and serves `/lab/status` with
+frameworks reported missing. Frontend: 21 tests, lint, TypeScript and build passed; `npm audit`
+reports the same 5 pre-existing toolchain advisories as the baseline lockfile (new dependencies add
+none; not fixed in Stage 12). Browser check of `/lab`, `/lab/probe` (three pipelines on the real
+corpus) and `/lab/runs` passed after fixing a workbench bug it exposed. Re-scoring is
+byte-deterministic; the retained Stage 11 database is unchanged (all 15 tables, row counts + md5).
+Exact gate outputs are in the Stage 12 review bundle.
+
+**Problems found and fixed during verification:** sentence-window expansion after dropping
+oversized sentences (23 errors in the first full run `bench-r1-20261024`, retained); framework
+default-path builds over artifacts produced 0 nodes until the root-identity cause was found;
+react-table re-render loop; stale-probe lock; probe sending listing-only fields; provisioning
+error echoing a (never-used) generated password; RSS supervision silently skipped without psutil
+(now fails closed).
+
+**Limitations and deviations.** (1) macOS renumbered the repository volume's `st_dev`; the
+production secure reader refuses the original snapshot root (`ROOT_CHANGED`). Lab artifact
+experiments used an explicit lab-only opt-in that requires the recorded inode and per-file sha256
+fingerprints; 16 snapshot files changed on disk since 2026-10-01 and 2 were removed, so artifact
+pipelines saw 138/157 artifacts and are compared on a 19-case matched subset. (2) Audit hooks are
+defense in depth, not a sandbox. (3) Offline models are mechanics only. (4) `GenericLoader` +
+`LanguageParser` could not run (`ImportError`). (5) Latencies are indicative (single machine).
+(6) `@tanstack/react-table` pinned to 8.21.3 instead of the planned 9.x (v9 API redesign).
+(7) Derived and constructed tiers are not human-approved. Hosted CI has not been run.
 
 **Stage 11 closed, 2026-10-02:** implementation, verification, approved retrieval scoring,
 authorized provider execution and human review are finalized. The real-provider benchmark is
@@ -137,7 +193,7 @@ approved dataset, sharing scope and retrieval scores are unchanged. No new provi
 or full gate was run. Stage 11 is **closed with the inconclusive provider result retained**;
 final gates, evidence and limitations are in
 `.buildlens-eval/runs/stage11-closure-20261002/{closure.json,REPORT.md,verification.json}`.
-No Stage 12 work was started.
+Stage 12 work started after this closure (see above).
 
 See [evaluation workflow and measured results](docs/EVALUATION.md), the retained run summary,
 and `.buildlens-eval/runs/preparation-20261002/verification.json` for separate verification evidence.

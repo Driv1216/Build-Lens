@@ -83,6 +83,12 @@ records the transformation and recomputes. Queries are always embedded live thro
 | LI-WF | `llamaindex.workflow` | Stage 9 retrieval re-expressed as a LlamaIndex Workflow |
 | LS-1/2/3 | `langchain.pg_custom`, `langchain_postgres.pgvector`, `llamaindex.pgvector` | Custom `VectorStore` on pgvector 0.4.1; official `PGVectorStore` in an isolated env; LlamaIndex `PGVectorStore` |
 
+**Real generation is not implemented.** The bridge `generate` callback refuses unless authorized
+and raises `LAB_GENERATION_NOT_IMPLEMENTED` even then; `langchain-google-genai` and
+`llama-index-llms-google-genai` (extra `lab-providers`) are installed but unused. Building the
+authorized path (bridge to the existing Gemini adapter and framework-native provider classes with
+zero retries) requires an explicit authorization scope and is left for a follow-up.
+
 Offline models (`OfflineChatModel`, `OfflineLLM`) are deterministic extractive stand-ins that
 implement the real framework interfaces (tool binding, structured output, synthesizer calls).
 They exercise **mechanics only** and are never evidence of answer quality.
@@ -117,3 +123,87 @@ uv run --no-sync buildlens lab db provision --credentials <0600 file>   # separa
 The UI is under `/lab` (overview, experiment builder, probe workbench, index inspector, benchmark
 runs, loader safety). Index builds and probes are synchronous and deadline-bounded; benchmarks run
 from the CLI.
+
+## 8. Measured findings (2026-10-24)
+
+All numbers come from retained artifacts under `.buildlens-eval/lab/runs/` (see `CURRENT_STATE.md`
+for identities). Offline runs: no generative model was called, so **no answer-quality claim** is
+made. Dataset `4-r1-reviewed` (30 cases, 24 answerable) on frozen corpus `03c559c4…`.
+
+**Harness validity.** Lab-native reproduced the retained Stage 11 run `7e93df61` exactly for
+90/90 case×variant pairs (retrieval, pre-seed ranking and packed context) with the real pinned
+models. LangChain and LlamaIndex adapters over native retrieval (LC-A, LI-A) and the LlamaIndex
+Workflow re-expression returned identical rankings to native in every case (MRR@32 0.4560
+unreranked, 0.5972 reranked, over all 24 answerable cases).
+
+**Stores and reuse.** `InMemoryVectorStore`, `VectorStoreIndex`/`SimpleVectorStore`, the custom
+LangChain pgvector store (LS-1), the official `langchain-postgres` `PGVectorStore` (LS-2, isolated
+environment) and LlamaIndex `PGVectorStore` (LS-3) all returned the **same top-32 set** as native
+exact semantic search on all 30 questions, with identical order in 24–28/30 cases; every
+difference is a reordering inside that set (first divergence at rank 24–30, except one
+unanswerable case at rank 2), consistent with different tie-breaking among equal similarities
+(native breaks ties by stable key). No reported metric differed (MRR@32 0.4560 for all). All five
+showed **verified genuine reuse**: 2,099 vectors reused, 0 computed, every digest read back from the
+store equal to the stored vector.
+
+**Fusion is the clearest measured gain.** LangChain `EnsembleRetriever` (vector + bm25s BM25,
+weighted RRF) vs native hybrid, 24 answerable cases: MRR@32 0.5552 vs 0.4560 (paired Δ +0.099,
+9 wins / 4 losses / 11 ties, bootstrap 95% −0.039…0.237 — not conclusive), approved Recall@5
+0.3615 vs 0.2064, span context coverage 0.4236 vs 0.2708 (Δ +0.153, 6/1/17, bootstrap
+0.021…0.306) but with ~2× delivered context (15.96 vs 8.09 KiB; coverage per KiB 0.035 vs 0.042).
+BM25 alone has the best approved Precision@5 among unreranked pipelines (0.300) but lower MRR
+(0.367). Mechanism: the native PostgreSQL lexical branch requires every query term in one field
+group and returns **zero** candidates for these full-sentence questions (Stage 11 finding); BM25
+scores partial matches. Content-vs-id dedupe in `EnsembleRetriever` made no measurable difference
+on this corpus. Cross-encoder reranking remains the strongest single change (MRR@32 0.5972,
+Δ +0.141, 8/4/12, bootstrap 0.008…0.297).
+
+**Re-chunking is not free.** Framework-native ingestion (LC-C, LI-C, AR-3, AR-4) over the 138
+artifacts whose bytes still match the frozen snapshot scored *below* native chunks on approved
+span coverage in the 19-case matched subset (evidence coverage@5: native 0.132; LC-C 0.070;
+LI-C 0.088; LlamaIndex auto-merging 0.053; LlamaIndex sentence window 0.000). Parent/child
+retrieval was the exception (LI parent-child 0.211 @5, 0.404 packed coverage) but delivered
+28.7 KiB of context vs 8.8 KiB native (coverage per KiB 0.015 vs 0.031). Auto-merging with
+128-token leaves retrieved fragments (3.4–8.8 KiB context, coverage ≤0.07): leaf size dominates.
+
+**Framework behaviours made visible.**
+* LlamaIndex embeds `metadata + text` by default; under strict reuse this fails loudly
+  (`VECTOR_REUSE_MISS`); `reuse-or-compute` recorded every node as `metadata_prefixed`/`rewritten`.
+* LlamaIndex counts metadata against `chunk_size` (113 tiny children before metadata was excluded
+  from both views in the parent-child fixture).
+* LlamaIndex hierarchical node offsets are relative to the parent node; anchoring requires summing
+  along `PARENT` links. Sentence-window text is joined with extra spaces, so windows are only
+  anchorable as composite spans.
+* `MarkdownHeaderTextSplitter` discards offsets (2 of 4 fixture nodes unanchorable).
+* `SentenceWindowNodeParser` treats code regions without sentence punctuation as giant
+  "sentences": 57 exceeded the embedding window contract and were dropped
+  (`max_sentence_chars=4000`); the LCEL equivalent dropped 24.
+* `IngestionPipeline` docstore dedupe: a second run over unchanged documents produced 0 new nodes.
+* `PrevNextNodePostprocessor` expands by document order, not BuildLens logical-unit parts; it
+  lowered packed coverage here (0.194 vs 0.382) by spending budget on neighbours.
+* `langchain-community` emits a sunset/deprecation warning on import.
+
+**Loaders (LD-1, synthetic sandbox).** Default `DirectoryLoader` (20 files) and
+`SimpleDirectoryReader` (23 files) both **followed an escaping symlink**, loaded a PEM key and a
+GitHub-token-shaped file (both synthetic), loaded a gitignored file and `node_modules`, and put
+absolute paths in metadata. Hidden-file variants additionally loaded `.env` and
+`.buildlens-eval/answers.md`. BuildLens processed 8 files, excluded 3, secret-rejected 1,
+decode-rejected 1, size-rejected 1, did not follow the symlink, and marked 10 unsupported.
+`GenericLoader`+`LanguageParser` failed (`ImportError`, optional parser dependency absent).
+
+**Unsupported languages (LD-2, constructed, tiny).** Native: 0/8 TS/TSX/JS/Go/Rust/SQL/shell
+questions covered@5 (BuildLens produces no chunks for them); all four framework ingestion
+pipelines 8/8; 4/4 for languages BuildLens processes. A 12-question synthetic corpus shows
+capability, not retrieval quality.
+
+**Engineering.** Cold import (median of 5, incl. ~38 ms interpreter start): langchain-core 231 ms,
+langchain (`create_agent`) 1,998 ms, langchain-classic retrievers 1,649 ms, llama-index-core
+2,943 ms, llama-index BM25 3,095 ms. Dependency closure beyond base: lab-langchain 45 packages,
+lab-llamaindex 51, lab-providers 73. Adapter SLOC: LangChain worker 1,624; LlamaIndex worker
+1,361; shared worker runtime 761; parent orchestration 1,762. Query p50 with the worker+RPC+
+verification path is ~0.9–1.5 s vs native 0.48–0.80 s (same embedding worker); latencies are
+indicative only (single machine, sequential, includes parent re-verification).
+
+**Not established.** Answer quality or citation quality of any framework (no generation was
+authorized); generalization beyond this corpus; statistical significance (24 cases, descriptive
+bootstrap only); production adoption value. Derived-tier numbers are not human-approved.

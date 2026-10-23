@@ -154,6 +154,13 @@ class SupervisedFrameworkWorker:
         if not (hello.get("guard") or {}).get("installed"):
             self.kill()
             raise LabError("LAB_WORKER_GUARD_MISSING")
+        if _rss(self._process.pid) is None:
+            # Fail closed: never run a framework worker whose memory cannot be supervised.
+            self.kill()
+            raise LabError(
+                "LAB_MEMORY_SUPERVISION_UNAVAILABLE",
+                "Worker RSS cannot be measured (psutil missing); refusing to run unsupervised",
+            )
         self.hello = hello
         self.spawn_ms = (time.perf_counter() - started) * 1000
 
