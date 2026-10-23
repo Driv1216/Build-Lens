@@ -37,3 +37,6 @@ postgres-data/
 .buildlens-eval/lab/workers/
 .buildlens-eval/lab/authorizations/
 backend/lab_envs/*/.venv/
+
+# Stage 12 review deliverable (generated)
+STAGE12_TECHNICAL_REVIEW.zip
