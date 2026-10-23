@@ -176,7 +176,7 @@ def _reviewed(rule: str, matched: str, path: str) -> str | None:
 def collect(args: argparse.Namespace) -> tuple[dict[str, bytes], dict[str, str], dict[str, Any]]:
     if git("status", "--porcelain").strip():
         raise SystemExit("working tree must be clean (bundle reads committed HEAD)")
-    base = git("rev-parse", BASE_REF).strip()
+    base = git("rev-parse", BASE_REF + "^{commit}").strip()
     head = git("rev-parse", "HEAD").strip()
     changed = {p for p in git("diff", "--name-only", f"{BASE_REF}..HEAD").split("\n") if p}
     files: dict[str, bytes] = {}
@@ -253,7 +253,7 @@ def collect(args: argparse.Namespace) -> tuple[dict[str, bytes], dict[str, str],
         "base_ref": BASE_REF,
         "base_commit": base,
         "head_commit": head,
-        "stage11_closed_commit": git("rev-parse", "stage11-closed").strip(),
+        "stage11_closed_commit": git("rev-parse", "stage11-closed^{commit}").strip(),
         "python": platform.python_version(),
         "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
         "uv_lock_sha256": hashlib.sha256(files["backend/uv.lock"]).hexdigest(),
