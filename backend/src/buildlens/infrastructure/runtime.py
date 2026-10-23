@@ -109,6 +109,9 @@ class LocalRuntime:
                 max_rss_bytes=settings.reranker_worker_max_rss_bytes,
             )
         )
+        # Stage 12: the lab store and framework workers are created lazily on first lab use.
+        self.lab_workers: Any = None
+        self.lab_service_instance: Any = None
         self.generation_provider = (
             GeminiProvider(
                 settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
@@ -121,6 +124,11 @@ class LocalRuntime:
 
     async def close(self) -> None:
         # Release every owner even when one cleanup fails.
+        try:
+            if self.lab_workers is not None:
+                self.lab_workers.close()
+        except Exception:
+            pass
         try:
             self.embedding_runtime.close()
         finally:

@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     generation_provider: Literal["gemini", "openai"] = "gemini"
     gemini_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
+    # Stage 12 framework laboratory. Lab state defaults to <repo>/.buildlens-eval/lab.
+    lab_root: str | None = None
+    lab_database_url: SecretStr | None = None
+    lab_generation_enabled: bool = False
+    lab_build_timeout_seconds: float = 900
+    lab_query_timeout_seconds: float = 120
+    lab_worker_max_rss_bytes: int = 3 * 1024 * 1024 * 1024
+    lab_max_index_documents: int = 50_000
+    lab_max_index_bytes: int = 256 * 1024 * 1024
 
     @model_validator(mode="after")
     def valid_limits(self) -> Self:
@@ -98,6 +107,20 @@ class Settings(BaseSettings):
             raise ValueError("Context payload budget exceeds response budget")
         if not self.database_url.startswith("postgresql+psycopg://"):
             raise ValueError("A PostgreSQL psycopg database URL is required")
+        if self.lab_database_url is not None:
+            from sqlalchemy.engine import make_url
+
+            lab = make_url(self.lab_database_url.get_secret_value())
+            production = make_url(self.database_url)
+            if not lab.drivername.startswith("postgresql"):
+                raise ValueError("The lab database URL must be PostgreSQL")
+            same_server = (lab.host, lab.port) == (production.host, production.port)
+            if same_server and (
+                lab.database == production.database or lab.username == production.username
+            ):
+                raise ValueError(
+                    "The lab database must be separate from production (database and role)"
+                )
         return self
 
 
