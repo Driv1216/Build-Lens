@@ -305,6 +305,7 @@ class LabService:
         )
         manifest = dict(call.value)
         records = manifest.pop("embedding_records", [])
+        node_spans = manifest.pop("node_spans", {})
         vector_digests = manifest.pop("vector_digests", {})
         verification = self._verify_reuse(
             config, session, documents, manifest, vector_digests, bridge.ledger.as_dict()
@@ -339,6 +340,25 @@ class LabService:
         self.store.write_index(index_id, "embedding-transformations.json", {"records": records})
         if sources:
             self.store.write_index(index_id, "sources.json", sources)
+        native_spans: dict[str, list[list[Any]]] = {}
+        for chunk in session.corpus.chunks:
+            if chunk.locator is not None and chunk.locator in node_spans:
+                native_spans.setdefault(chunk.locator, []).append(
+                    [chunk.span.start_offset, chunk.span.end_offset, "native", str(chunk.id)]
+                )
+        self.store.write_index(
+            index_id,
+            "node-spans.json",
+            {
+                "by_locator": node_spans,
+                "native": {k: sorted(v) for k, v in native_spans.items()},
+                "artifacts": {
+                    d.metadata.get("locator"): d.ref
+                    for d in documents
+                    if config.corpus_mode != "native_chunks"
+                },
+            },
+        )
         self._loaded.setdefault(spec.family, set()).add(index_id)
         return result
 

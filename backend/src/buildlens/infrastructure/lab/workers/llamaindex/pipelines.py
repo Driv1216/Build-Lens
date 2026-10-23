@@ -224,6 +224,8 @@ def build(session: WorkerSession, state: IndexState) -> dict[str, Any]:
         state.nodes = {n.node_id: n for n in nodes}
         state.extra["bm25_nodes"] = nodes
         _persist(state, state.index, "storage")
+    elif pipeline == "llamaindex.pgvector":
+        _build_pgvector(session, state)
     elif pipeline == "llamaindex.ingest":
         _build_ingest(session, state, params)
     elif pipeline == "llamaindex.parent_child":
@@ -237,6 +239,50 @@ def build(session: WorkerSession, state: IndexState) -> dict[str, Any]:
     state.manifest["nodes"] = len(state.nodes)
     state.manifest["anchor_methods"] = _census(state)
     return state.manifest
+
+
+def _build_pgvector(session: WorkerSession, state: IndexState) -> None:
+    from llama_index.vector_stores.postgres import PGVectorStore
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    url = make_url(os.environ.get("BUILDLENS_LAB_PG_URL") or "")
+    if not url.host:
+        raise LabError("LAB_DATABASE_NOT_CONFIGURED")
+    table = f"li_{state.index_id[:16]}"
+    store = PGVectorStore.from_params(
+        connection_string=url.set(drivername="postgresql+psycopg2").render_as_string(
+            hide_password=False
+        ),
+        async_connection_string=url.set(drivername="postgresql+asyncpg").render_as_string(
+            hide_password=False
+        ),
+        table_name=table,
+        schema_name="lab",
+        embed_dim=len(next(iter(state.documents.reuse.values()), [0.0] * 384)),
+        perform_setup=True,
+    )
+    nodes = _text_nodes(state, False)
+    with session.tracer.step(
+        "store", "PGVectorStore + VectorStoreIndex", "llama_index.vector_stores.postgres"
+    ) as attrs:
+        engine = create_engine(url)
+        with engine.begin() as connection:
+            connection.execute(text(f'DROP TABLE IF EXISTS lab."data_{table}"'))
+        state.index = _vector_index(
+            state, list(nodes), StorageContext.from_defaults(vector_store=store)
+        )
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(f'SELECT node_id, embedding::text FROM lab."data_{table}"')
+            )
+            state.manifest["vector_digests"] = {
+                r[0]: float32_digest([float(v) for v in r[1].strip("[]").split(",")]) for r in rows
+            }
+        engine.dispose()
+        attrs["rows"] = len(state.manifest["vector_digests"])
+    state.nodes = {n.node_id: n for n in nodes}
+    state.manifest["table"] = f'lab."data_{table}"'
 
 
 def _build_ingest(session: WorkerSession, state: IndexState, params: dict[str, Any]) -> None:
@@ -436,9 +482,17 @@ def _item(
 
 def _census(state: IndexState) -> dict[str, int]:
     census: dict[str, int] = {}
+    spans: dict[str, list[list[Any]]] = {}
     for node in list(state.nodes.values())[:20000]:
-        method = _item(state, node, 0, None, "none")["detail"]["anchor_method"]
+        lab = _item(state, node, 0, None, "none")
+        method = lab["detail"]["anchor_method"]
         census[method] = census.get(method, 0) + 1
+        span = lab.get("span") or {}
+        if lab.get("locator"):
+            spans.setdefault(str(lab["locator"]), []).append(
+                [span.get("start_offset"), span.get("end_offset"), method, lab["ref"]]
+            )
+    state.manifest["node_spans"] = spans
     TEXTS.clear()
     return census
 
@@ -467,6 +521,21 @@ def query(
     if state.index is None:
         raise LabError("LAB_INDEX_NOT_LOADED")
     k = params["k"]
+    if pipeline == "llamaindex.pgvector":
+        nodes = state.index.as_retriever(similarity_top_k=k).retrieve(bundle)
+        ranked = _items(state, nodes, "cosine")
+        return _finish(
+            session,
+            state,
+            question,
+            ranked,
+            ranked,
+            ranked,
+            nodes,
+            params,
+            llm,
+            {"store": "lab pgvector (llama-index-vector-stores-postgres)"},
+        )
     if pipeline == "llamaindex.vector":
         retriever: Any = (
             BM25Retriever.from_defaults(nodes=state.extra["bm25_nodes"], similarity_top_k=k)

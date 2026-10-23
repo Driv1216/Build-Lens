@@ -255,3 +255,18 @@ def test_framework_file_loaders_appear_only_in_sandbox_gated_modules() -> None:
         if any(name in text for name in loaders):
             assert path.name == "loaders.py", path
             assert "require_sandbox" in text, path
+
+
+def test_isolated_environment_vendors_protocol_and_guard_byte_for_byte() -> None:
+    vendored = (
+        Path(__file__).resolve().parents[2]
+        / "lab_envs"
+        / "langchain_postgres"
+        / "src"
+        / "buildlens_lab_pg_worker"
+    )
+    common = SRC / "infrastructure" / "lab" / "workers" / "common"
+    for name in ("wire.py", "guard.py"):
+        assert (vendored / name).read_bytes() == (common / name).read_bytes(), name
+    pyproject = (vendored.parents[1] / "pyproject.toml").read_text()
+    assert "buildlens" not in pyproject.split("dependencies", 1)[1].split("]", 1)[0]

@@ -166,7 +166,7 @@ def build(session: WorkerSession, state: IndexState, directory: str) -> dict[str
             documents = _split_sources(
                 state, params["chunk_size"], params["chunk_overlap"], params["splitter"]
             )
-        elif pipeline == "langchain.parent_document":
+        elif pipeline in {"langchain.parent_document", "langchain.pg_custom"}:
             documents = []  # handled below
         elif pipeline == "langchain.auto_merge":
             documents = _hierarchy(state, params["chunk_sizes"])
@@ -177,6 +177,8 @@ def build(session: WorkerSession, state: IndexState, directory: str) -> dict[str
         attrs["documents"] = len(documents)
     if pipeline == "langchain.parent_document":
         return _build_parent_document(session, state, params, directory)
+    if pipeline == "langchain.pg_custom":
+        return _build_pg_custom(session, state, _documents(state))
     if documents:
         with session.tracer.step(
             "embed", "InMemoryVectorStore.add_documents", "langchain.vectorstore"
@@ -199,6 +201,40 @@ def build(session: WorkerSession, state: IndexState, directory: str) -> dict[str
     return state.manifest
 
 
+def _build_pg_custom(
+    session: WorkerSession, state: IndexState, documents: list[Document]
+) -> dict[str, Any]:
+    from sqlalchemy import select
+
+    from buildlens.infrastructure.lab.workers.langchain.pg_store import BuildLensLabPgVectorStore
+
+    dimensions = len(next(iter(state.documents.reuse.values()), [0.0] * 384))
+    store = BuildLensLabPgVectorStore(
+        BuildLensEmbeddings(state.ledger), f"lc_custom_{state.index_id[:16]}", dimensions
+    )
+    with session.tracer.step(
+        "store", "BuildLensLabPgVectorStore.add_documents", "langchain.vectorstore.pgvector"
+    ) as attrs:
+        store.delete()
+        store.add_documents(documents, ids=[str(d.id) for d in documents])
+        attrs["rows"] = store.count()
+    with store._engine.connect() as connection:  # read back what PostgreSQL actually stored
+        rows = connection.execute(select(store._table.c.id, store._table.c.embedding))
+        state.manifest["vector_digests"] = {
+            r.id: float32_digest([float(v) for v in r.embedding]) for r in rows
+        }
+    state.extra["pg_store"] = store
+    state.nodes = {str(d.id): d for d in documents}
+    state.manifest.update(
+        {
+            "nodes": len(documents),
+            "table": f"lab.lc_custom_{state.index_id[:16]}",
+            "anchor_methods": {"native": len(documents)},
+        }
+    )
+    return state.manifest
+
+
 def _dumped_digests(path: str) -> dict[str, str]:
     """Vector digests read back from LangChain's own public dump (not private state)."""
     with open(path, encoding="utf-8") as stream:
@@ -214,10 +250,17 @@ def _dumped_digests(path: str) -> dict[str, str]:
 
 def _anchor_census(state: IndexState, documents: list[Document]) -> dict[str, int]:
     census: dict[str, int] = {}
+    spans: dict[str, list[list[Any]]] = {}
     for document in documents:
         lab = _item(state, document, 0, None, "none")
         method = lab["detail"]["anchor_method"]
         census[method] = census.get(method, 0) + 1
+        span = lab.get("span") or {}
+        if lab.get("locator") and sum(len(v) for v in spans.values()) < 20_000:
+            spans.setdefault(str(lab["locator"]), []).append(
+                [span.get("start_offset"), span.get("end_offset"), method, lab["ref"]]
+            )
+    state.manifest["node_spans"] = spans
     return census
 
 
@@ -396,6 +439,32 @@ def query(
         from buildlens.infrastructure.lab.workers.langchain.agent import run_agent
 
         return run_agent(session, question, params, run_config)
+    if pipeline == "langchain.pg_custom":
+        store = state.extra.get("pg_store")
+        if store is None:
+            raise LabError("LAB_INDEX_NOT_LOADED")
+        with session.tracer.step(
+            "retrieve",
+            "BuildLensLabPgVectorStore.similarity_search_with_score",
+            "langchain.vectorstore.pgvector",
+        ) as attrs:
+            hits = store.similarity_search_with_score(question, k=params["k"])
+            attrs["_refs"] = [str(d.id) for d, _ in hits]
+        documents = [
+            Document(page_content=d.page_content, metadata={**d.metadata, "similarity": s}, id=d.id)
+            for d, s in hits
+        ]
+        ranked = _items(state, documents, "similarity", "cosine")
+        return _finish(
+            session,
+            question,
+            ranked,
+            ranked,
+            ranked,
+            params,
+            run_config,
+            {"store": "lab pgvector (custom)"},
+        )
     if state.store is None and pipeline != "langchain.parent_document":
         raise LabError("LAB_INDEX_NOT_LOADED")
     if pipeline in {"langchain.vector", "langchain.ingest"}:

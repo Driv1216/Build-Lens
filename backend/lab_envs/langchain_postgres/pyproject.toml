@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "buildlens-lab-pg-worker"
+version = "0.1.0"
+description = "Stage 12 isolated worker for the official langchain-postgres PGVectorStore (LS-2)."
+requires-python = ">=3.11"
+# Isolated because langchain-postgres requires pgvector<0.4 while BuildLens pins 0.4.1.
+# It must never depend on `buildlens`; wire.py and guard.py are vendored byte-for-byte.
+dependencies = [
+  "langchain-postgres==0.0.19",
+  "langchain-core==1.7.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/buildlens_lab_pg_worker"]

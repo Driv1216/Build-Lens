@@ -79,6 +79,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "/search",
                         "/context",
                         "/ask",
+                        "/lab/experiments",
+                        "/lab/validate",
+                        "/lab/indexes",
+                        "/lab/probe",
+                        "/lab/loader-diff",
                     )
                 )
             ) and request.headers.get("content-type", "").split(";", 1)[
@@ -118,6 +123,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(context_runtime_router)
     app.include_router(ask_router)
     app.include_router(ask_runtime_router)
+    from buildlens.api.lab_routes import router as lab_router
+    from buildlens.api.lab_routes import runtime_router as lab_runtime_router
+
+    app.include_router(lab_router)
+    app.include_router(lab_runtime_router)
     return app
 
 

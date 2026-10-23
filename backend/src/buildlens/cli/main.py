@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from buildlens import __version__
 from buildlens.cli.evaluation import app as evaluation_app
+from buildlens.cli.lab import app as lab_app
 from buildlens.core.config import get_settings
 from buildlens.infrastructure.embeddings.model_cache import download_snapshot
 from buildlens.infrastructure.persistence.database import create_database_engine
@@ -13,6 +14,7 @@ from buildlens.infrastructure.reranking.model_cache import download_snapshot as 
 
 app = typer.Typer(add_completion=False, help="BuildLens command-line interface.")
 app.add_typer(evaluation_app, name="eval")
+app.add_typer(lab_app, name="lab")
 embeddings_app = typer.Typer(help="Manage the pinned local embedding model.")
 app.add_typer(embeddings_app, name="embeddings")
 reranking_app = typer.Typer(help="Manage the pinned local cross-encoder reranker.")

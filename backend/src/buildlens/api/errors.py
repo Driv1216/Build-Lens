@@ -57,6 +57,34 @@ from buildlens.application.structural import (
     AnalysisUnavailableError,
 )
 
+LAB_STATUS = {
+    "LAB_CORPUS_CHANGED": 409,
+    "LAB_EMBEDDING_BUSY": 409,
+    "LAB_RERANKER_BUSY": 409,
+    "LAB_GENERATION_NOT_AUTHORIZED": 403,
+    "LAB_SANDBOX_REQUIRED": 403,
+    "LAB_INDEX_NOT_FOUND": 404,
+    "LAB_RUN_NOT_FOUND": 404,
+    "LAB_EXPERIMENT_NOT_FOUND": 404,
+    "LAB_ISOLATED_ENV_MISSING": 503,
+    "LAB_DATABASE_NOT_CONFIGURED": 503,
+    "LAB_WORKER_TIMEOUT": 504,
+}
+
+
+def _lab_status(code: str) -> int:
+    if code in LAB_STATUS:
+        return LAB_STATUS[code]
+    if code.startswith(("CONFIG_", "LAB_QUESTION", "LAB_TRANSFER", "LAB_BUDGET", "LAB_RUN_FILE")):
+        return 422
+    if code.startswith(("LAB_WORKER", "WORKER_", "LAB_FRAMEWORK", "LAB_CALLBACK")):
+        return 503
+    if code.startswith(
+        ("VECTOR_REUSE", "LAB_VECTOR_REUSE", "LAB_STORED_VECTOR", "LAB_EMBEDDING_CONTRACT")
+    ):
+        return 409
+    return 422
+
 
 def register_errors(app: FastAPI) -> None:
     mapping: dict[type[Exception], tuple[int, str, str]] = {
@@ -211,3 +239,16 @@ def register_errors(app: FastAPI) -> None:
         )
 
     app.add_exception_handler(RequestValidationError, validation_handler)
+
+    from buildlens.domain.lab import LabError
+
+    async def lab_handler(request: Request, error: Exception) -> JSONResponse:
+        assert isinstance(error, LabError)
+        message = error.message if error.message != error.code else "Laboratory operation failed."
+        return JSONResponse(
+            status_code=_lab_status(error.code),
+            content={"detail": {"code": error.code, "message": message[:500]}},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    app.add_exception_handler(LabError, lab_handler)

@@ -233,3 +233,59 @@ def test_persisted_llamaindex_storage_reloads_identically(lab: dict[str, Any]) -
     reloaded = service.query(config, project, snapshot, QUESTION, reload_from_storage=True)
     assert [i["ref"] for i in first["ranked"]] == [i["ref"] for i in reloaded["ranked"]]
     assert any(step["name"] == "load_index_from_storage" for step in reloaded["steps"])
+
+
+def test_lab_http_api_contract(lab: dict[str, Any]) -> None:
+    client: TestClient = lab["client"]
+    scope = f"/api/v1/projects/{lab['project']}/snapshots/{lab['snapshot']}/lab"
+    status = client.get("/api/v1/lab/status").json()
+    assert {p["id"] for p in status["pipelines"]} == set(PIPELINES)
+    assert status["generation"]["enabled"] is False
+    pg = next(p for p in status["pipelines"] if p["id"] == "langchain.pg_custom")
+    assert pg["available"] is False and pg["reasons"]  # UI never offers what is missing
+    bad = client.post("/api/v1/lab/validate", json={"config": {"name": "x", "pipeline": "nope"}})
+    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "CONFIG_PIPELINE_UNKNOWN"
+    assert (
+        client.post(
+            scope + "/probe", content="{}", headers={"content-type": "text/plain"}
+        ).status_code
+        == 415
+    )
+    foreign = client.post(
+        "/api/v1/lab/experiments", json={"config": {}}, headers={"origin": "http://evil.test"}
+    )
+    assert foreign.status_code == 403
+    config = {
+        "name": "api-vector",
+        "pipeline": "llamaindex.ingest",
+        "corpus": {"mode": "artifact_sources"},
+        "params": {"response_mode": "no_text"},
+    }
+    saved = client.post("/api/v1/lab/experiments", json={"config": config})
+    assert saved.status_code == 200
+    built = client.post(scope + "/indexes", json={"config": config})
+    assert built.status_code == 200, built.text
+    index_id = built.json()["index_id"]
+    assert client.get(f"/api/v1/lab/indexes/{index_id}").json()["index_id"] == index_id
+    spans = client.get(
+        f"/api/v1/lab/indexes/{index_id}/boundaries", params={"locator": "billing/invoices.py"}
+    ).json()
+    assert spans["framework_spans"] and spans["native_spans"] and spans["text"]
+    probe = client.post(
+        scope + "/probe",
+        json={
+            "question": QUESTION,
+            "configs": [{"name": "n", "pipeline": "native.context"}, config],
+        },
+    )
+    assert probe.status_code == 200 and probe.headers["cache-control"] == "no-store"
+    body = probe.json()
+    assert all(r["ok"] for r in body["results"]) and "0-1" in body["overlap"]
+    assert all(len(t) <= 8192 for r in body["results"] for t in r["result"]["texts"].values())
+    diff = client.post("/api/v1/lab/loader-diff", json={"seed": 3})
+    assert diff.status_code == 200
+    summary = diff.json()["summary"]
+    assert summary["llamaindex.reader_default"]["symlink_escape_followed"] is True
+    assert (
+        ".env" in summary["llamaindex.reader_hidden"]["loaded_but_buildlens_excluded_or_rejected"]
+    )
