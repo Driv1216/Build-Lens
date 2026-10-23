@@ -49,7 +49,9 @@ class Session:
 
     def call(self, method: str, params: dict[str, Any]) -> Any:
         self.call_id += 1
-        write_frame(self.out, {"kind": "call", "id": self.call_id, "method": method, "params": params})
+        write_frame(
+            self.out, {"kind": "call", "id": self.call_id, "method": method, "params": params}
+        )
         frame = read_frame(self.inp)
         if frame.get("kind") != "reply" or frame.get("id") != self.call_id:
             raise WireError("WIRE_SEQUENCE_INVALID")
@@ -58,7 +60,18 @@ class Session:
         return frame["result"]
 
     def step(self, kind: str, name: str, started: float, attributes: dict[str, Any]) -> None:
-        self.steps.append({"seq": len(self.steps) + 1, "kind": kind, "name": name, "framework_event": "langchain_postgres", "duration_ms": round((time.perf_counter() - started) * 1000, 3), "attributes": attributes, "item_refs": [], "parent": None})
+        self.steps.append(
+            {
+                "seq": len(self.steps) + 1,
+                "kind": kind,
+                "name": name,
+                "framework_event": "langchain_postgres",
+                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                "attributes": attributes,
+                "item_refs": [],
+                "parent": None,
+            }
+        )
 
 
 class ReusedEmbeddings(Embeddings):
@@ -107,24 +120,43 @@ def build_commit(session: Session, params: dict[str, Any]) -> Any:
     embeddings = ReusedEmbeddings(session, pending["reuse"])
     started = time.perf_counter()
     engine = PGEngine.from_connection_string(url=url)
-    engine.init_vectorstore_table(table, len(next(iter(pending["reuse"].values()))), schema_name="lab", overwrite_existing=True)
+    engine.init_vectorstore_table(
+        table,
+        len(next(iter(pending["reuse"].values()))),
+        schema_name="lab",
+        overwrite_existing=True,
+    )
     store = PGVectorStore.create_sync(engine, embeddings, table, schema_name="lab")
-    documents = [Document(page_content=d["text"], metadata=d["metadata"], id=None) for d in pending["documents"]]
+    documents = [
+        Document(page_content=d["text"], metadata=d["metadata"], id=None)
+        for d in pending["documents"]
+    ]
     ids = [d["ref"] for d in pending["documents"]]
     for start in range(0, len(documents), 256):
         store.add_documents(documents[start : start + 256], ids=ids[start : start + 256])
     session.step("store", "PGVectorStore.add_documents", started, {"rows": len(ids)})
     raw = create_engine(make_url(url))
     with raw.connect() as connection:
-        rows = connection.execute(text(f'SELECT langchain_id::text, embedding::text FROM lab."{table}"'))
+        rows = connection.execute(
+            text(f'SELECT langchain_id::text, embedding::text FROM lab."{table}"')
+        )
         digests = {r[0]: digest([float(v) for v in r[1].strip("[]").split(",")]) for r in rows}
     raw.dispose()
-    STATE["indexes"][pending["index_id"]] = {"store": store, "documents": {d["ref"]: d for d in pending["documents"]}}
+    STATE["indexes"][pending["index_id"]] = {
+        "store": store,
+        "documents": {d["ref"]: d for d in pending["documents"]},
+    }
     return {
         "nodes": len(ids),
         "table": f"lab.{table}",
         "vector_digests": digests,
-        "embedding": {"source": "reuse-stored", "reused": embeddings.reused, "computed_via_bridge": 0, "reuse_misses": 0, "transformations": {"identity": len(ids)}},
+        "embedding": {
+            "source": "reuse-stored",
+            "reused": embeddings.reused,
+            "computed_via_bridge": 0,
+            "reuse_misses": 0,
+            "transformations": {"identity": len(ids)},
+        },
         "embedding_records": [],
         "anchor_methods": {"native": len(ids)},
     }
@@ -137,22 +169,50 @@ def query(session: Session, params: dict[str, Any]) -> Any:
     k = int(params["config"]["params"]["k"])
     started = time.perf_counter()
     hits = index["store"].similarity_search_with_score(params["question"], k=k)
-    session.step("retrieve", "PGVectorStore.similarity_search_with_score", started, {"hits": len(hits)})
+    session.step(
+        "retrieve", "PGVectorStore.similarity_search_with_score", started, {"hits": len(hits)}
+    )
     items = []
     for rank, (document, distance) in enumerate(hits, 1):
         meta = document.metadata
         value = document.page_content
-        items.append({
-            "ref": str(document.id or meta.get("chunk_id")), "rank": rank, "text_sha256": sha(value), "text_bytes": len(value.encode()),
-            "locator": meta.get("locator"), "artifact_fingerprint": meta.get("artifact_fingerprint"),
-            "span": {"start_offset": meta.get("start_offset"), "end_offset": meta.get("end_offset")}, "anchored": True,
-            "chunk_id": meta.get("chunk_id"), "score": 1.0 - float(distance), "score_kind": "cosine (1 - distance)",
-            "detail": {"anchor_method": "native", "raw_distance": float(distance)},
-        })
-    return {"retrieved": items, "ranked": items, "candidates": items, "packed_refs": [], "info": {"store": "langchain-postgres PGVectorStore"}, "answer": None, "texts": {}}
+        items.append(
+            {
+                "ref": str(document.id or meta.get("chunk_id")),
+                "rank": rank,
+                "text_sha256": sha(value),
+                "text_bytes": len(value.encode()),
+                "locator": meta.get("locator"),
+                "artifact_fingerprint": meta.get("artifact_fingerprint"),
+                "span": {
+                    "start_offset": meta.get("start_offset"),
+                    "end_offset": meta.get("end_offset"),
+                },
+                "anchored": True,
+                "chunk_id": meta.get("chunk_id"),
+                "score": 1.0 - float(distance),
+                "score_kind": "cosine (1 - distance)",
+                "detail": {"anchor_method": "native", "raw_distance": float(distance)},
+            }
+        )
+    return {
+        "retrieved": items,
+        "ranked": items,
+        "candidates": items,
+        "packed_refs": [],
+        "info": {"store": "langchain-postgres PGVectorStore"},
+        "answer": None,
+        "texts": {},
+    }
 
 
-HANDLERS = {"build_begin": build_begin, "add_documents": add_documents, "build_commit": build_commit, "query": query, "drop": lambda s, p: {}}
+HANDLERS = {
+    "build_begin": build_begin,
+    "add_documents": add_documents,
+    "build_commit": build_commit,
+    "query": query,
+    "drop": lambda s, p: {},
+}
 
 
 def main() -> None:
@@ -160,9 +220,22 @@ def main() -> None:
     out = os.fdopen(os.dup(1), "wb", buffering=0)
     os.dup2(2, 1)
     sys.stdout = sys.stderr
-    versions = {p: importlib.metadata.version(p) for p in ("langchain-postgres", "langchain-core", "pgvector", "psycopg")}
+    versions = {
+        p: importlib.metadata.version(p)
+        for p in ("langchain-postgres", "langchain-core", "pgvector", "psycopg")
+    }
     versions["python"] = sys.version.split()[0]
-    write_frame(out, {"kind": "hello", "protocol": PROTOCOL, "framework": "langchain_postgres", "versions": versions, "pid": os.getpid(), "guard": guard.policy()})
+    write_frame(
+        out,
+        {
+            "kind": "hello",
+            "protocol": PROTOCOL,
+            "framework": "langchain_postgres",
+            "versions": versions,
+            "pid": os.getpid(),
+            "guard": guard.policy(),
+        },
+    )
     session = Session(inp, out)
     while True:
         try:
@@ -178,14 +251,42 @@ def main() -> None:
             return
         try:
             value = HANDLERS[op](session, dict(frame.get("params") or {}))
-            response = {"kind": "response", "id": request_id, "ok": True, "result": {"value": value, "steps": session.steps, "bridge_calls": {}, "guard_denials": guard.denials()}}
+            response = {
+                "kind": "response",
+                "id": request_id,
+                "ok": True,
+                "result": {
+                    "value": value,
+                    "steps": session.steps,
+                    "bridge_calls": {},
+                    "guard_denials": guard.denials(),
+                },
+            }
         except Failure as error:
-            response = {"kind": "response", "id": request_id, "ok": False, "error": {"code": error.code, "message": ""}, "result": {}}
+            response = {
+                "kind": "response",
+                "id": request_id,
+                "ok": False,
+                "error": {"code": error.code, "message": ""},
+                "result": {},
+            }
         except KeyError:
-            response = {"kind": "response", "id": request_id, "ok": False, "error": {"code": "WORKER_OPERATION_UNKNOWN", "message": op}, "result": {}}
+            response = {
+                "kind": "response",
+                "id": request_id,
+                "ok": False,
+                "error": {"code": "WORKER_OPERATION_UNKNOWN", "message": op},
+                "result": {},
+            }
         except Exception as error:
             traceback.print_exc(file=sys.stderr)
-            response = {"kind": "response", "id": request_id, "ok": False, "error": {"code": "WORKER_EXCEPTION", "message": type(error).__name__}, "result": {}}
+            response = {
+                "kind": "response",
+                "id": request_id,
+                "ok": False,
+                "error": {"code": "WORKER_EXCEPTION", "message": type(error).__name__},
+                "result": {},
+            }
         write_frame(out, response)
 
 
