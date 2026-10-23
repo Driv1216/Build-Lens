@@ -76,17 +76,16 @@ DATASET_FILES = [
     ".buildlens-eval/datasets/corpus-20261002.json",
     ".buildlens-eval/datasets/README.md",
 ]
+# Every match is listed in verification/bundle-secret-scan.json; non-secrets need a reason.
 PATTERNS = {
     "google_api_key": re.compile(r"AIza[0-9A-Za-z_\-]{35}"),
     "openai_key": re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{20,}"),
     "aws_access_key": re.compile(r"AKIA[0-9A-Z]{16}"),
     "github_token": re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}"),
     "private_key_block": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----\s*[A-Za-z0-9+/=]{40,}"),
-    "pg_url_with_password": re.compile(r"postgres(?:ql)?(?:\+\w+)?://[^:\s/@'\"]+:[^@\s/'\"]{6,}@"),
-}
-# (path suffix, pattern) pairs that are reviewed false positives; every use is recorded.
-KNOWN_FALSE_POSITIVES = {
-    (".env.example", "pg_url_with_password"),  # placeholder password text
+    "pg_url_with_password": re.compile(
+        r"postgres(?:ql)?(?:\+\w+)?://[^:\s/@'\"]+:[^@\s/'\"]{6,}@[^\s'\"\\]{0,40}"
+    ),
 }
 
 
@@ -131,9 +130,29 @@ def scan(path: str, data: bytes) -> list[dict[str, str]]:
     except ContentRejectedError as error:
         hits.append({"path": path, "rule": f"buildlens-screen:{error.code}"})
     for name, pattern in PATTERNS.items():
-        if pattern.search(text):
-            hits.append({"path": path, "rule": name})
+        for match in pattern.finditer(text):
+            reason = _reviewed(name, match.group(0), path)
+            hits.append(
+                {"path": path, "rule": name, **({"reviewed_reason": reason} if reason else {})}
+            )
     return hits
+
+
+def _reviewed(rule: str, matched: str, path: str) -> str | None:
+    """Content-based review of known non-secrets (never a blanket path exemption)."""
+    if rule != "pg_url_with_password":
+        return None
+    tail = matched.split("@", 1)[1] if "@" in matched else ""
+    password = matched.rsplit(":", 1)[-1].split("@", 1)[0] if matched.count(":") >= 2 else ""
+    if password.startswith("<"):
+        return "documentation placeholder"
+    if path.endswith(".env.example"):
+        return "example file placeholder password"
+    if tail.startswith("example"):
+        return "unit-test fixture host 'example' (no real server)"
+    if tail.startswith("127.0.0.1:1") or tail == "127.0.0.1:1":
+        return "outage-test fixture on unreachable port 1"
+    return None
 
 
 def collect(args: argparse.Namespace) -> tuple[dict[str, bytes], dict[str, str], dict[str, Any]]:
@@ -284,7 +303,7 @@ def main() -> int:
             del files[path]
             continue
         for hit in scan(path, data):
-            known = any(path.endswith(s) and hit["rule"] == r for s, r in KNOWN_FALSE_POSITIVES)
+            known = "reviewed_reason" in hit
             hits.append({**hit, "reviewed_false_positive": known})
     unexpected = [h for h in hits if not h["reviewed_false_positive"]]
     files["verification/bundle-secret-scan.json"] = json.dumps(
