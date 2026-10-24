@@ -309,6 +309,8 @@ class LabBenchmarkRunner:
                                     k: r.get(k)
                                     for k in ("chunk_id", "locator", "artifact_fingerprint", "span")
                                 }
+                                # Credited composite segments are part of the evidence record.
+                                | ({"spans": r["spans"]} if r.get("spans") else {})
                                 for r in rows[:64]
                             ]
                             for name, rows in observations.items()
