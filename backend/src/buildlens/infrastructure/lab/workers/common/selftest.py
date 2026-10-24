@@ -71,8 +71,35 @@ def _poison(session: WorkerSession, params: dict[str, Any]) -> Any:
 def _probe_fs(session: WorkerSession, params: dict[str, Any]) -> Any:
     """Run (name, operation, args) filesystem actions and report allowed/denied per name."""
     import shutil
+    import sqlite3
+
+    def open_at(base: str, components: list[str], mode: str) -> str:
+        """Open `base`, then descend with descriptor-relative os.open calls (dir_fd)."""
+        descriptors = [os.open(base, os.O_RDONLY)]
+        try:
+            for name in components[:-1]:
+                descriptors.append(os.open(name, os.O_RDONLY, dir_fd=descriptors[-1]))
+            flags = os.O_RDONLY if mode == "r" else os.O_WRONLY | os.O_TRUNC | os.O_CREAT
+            fd = os.open(components[-1], flags, dir_fd=descriptors[-1])
+            with os.fdopen(fd, "rb" if mode == "r" else "wb") as stream:
+                if mode == "r":
+                    return stream.read().decode()
+                stream.write(b"overwritten-by-worker")
+                return ""
+        finally:
+            for descriptor in descriptors:
+                os.close(descriptor)
+
+    def write(path: str) -> str:
+        with open(path, "w") as stream:
+            stream.write("worker-write")
+        return ""
 
     operations: dict[str, Any] = {
+        "open_at": open_at,
+        "write": write,
+        "listdir": lambda path: ",".join(sorted(os.listdir(path))),
+        "sqlite": lambda path: sqlite3.connect(path).close(),
         "rename": os.rename,
         "replace": os.replace,
         "link": os.link,
@@ -96,7 +123,7 @@ def _probe_fs(session: WorkerSession, params: dict[str, Any]) -> Any:
                 outcomes[name] = "allowed"
                 continue
             value = operations[operation](*args)
-            outcomes[name] = f"allowed:{value}" if operation == "read" else "allowed"
+            outcomes[name] = f"allowed:{value}" if value else "allowed"
         except PermissionError:
             outcomes[name] = "denied"
         except OSError as error:

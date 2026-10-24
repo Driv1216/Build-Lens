@@ -277,8 +277,8 @@ def test_guard_checks_both_paths_of_renames_replaces_and_links(tmp_path: Path) -
         "link_into_protected": "denied",
         "move_into_protected": "denied",
         "copy_into_protected": "denied",
-        "symlink_to_protected": "allowed",  # creating the link is a write inside the root
-        "read_through_symlink": "denied",  # following it resolves into the protected root
+        "symlink_to_protected": "denied",  # S12-SEC-06: no symlink creation (check/use races)
+        "read_through_symlink": "oserror:2",  # so there is nothing to follow
         "chdir_into_root": "denied",
         "rename_dir_fd_within": "allowed",
         "rename_dir_fd_out_of_root": "denied",
@@ -287,8 +287,89 @@ def test_guard_checks_both_paths_of_renames_replaces_and_links(tmp_path: Path) -
     assert secret.read_text() == "protected-secret"
     assert sorted(p.name for p in outside.iterdir()) == ["o.txt"]
     assert sorted(p.name for p in rw.iterdir()) == sorted(
-        ["a2", "c", "d", "e", "f", "g", "g2", "h", "i", "j", "k2", "m", "sym"]
+        ["a2", "c", "d", "e", "f", "g", "g2", "h", "i", "j", "k2", "m"]
     )
+
+
+@pytest.mark.lab  # needs psutil (lab extras) for RSS supervision
+@pytest.mark.parametrize("cwd_writable", [False, True], ids=["cwd-fixed", "cwd-in-write-root"])
+def test_guard_fails_closed_on_descriptor_relative_access(
+    tmp_path: Path, cwd_writable: bool
+) -> None:
+    """S12-SEC-06: the `open` event omits dir_fd, so descriptor-relative opens are refused.
+
+    The decision must not depend on the working directory: the second variant makes the
+    worker's cwd part of its write root (where cwd-relative resolution would allow writes).
+    """
+    rw, readable, protected, outside = (
+        tmp_path / "rw",
+        tmp_path / "readable",
+        tmp_path / "protected",
+        tmp_path / "outside",
+    )
+    for directory in (rw, readable, protected / "sub", outside):
+        directory.mkdir(parents=True)
+    secret = protected / "secret.txt"
+    secret.write_text("protected-secret")
+    (rw / "w.txt").write_text("w")
+    (readable / "r.txt").write_text("readable")
+    actions: list[tuple[str, str, list[Any]]] = [
+        ("direct_read_protected", "read", [secret]),
+        # Ancestor-descriptor traversal: open an unprotected parent, descend relatively.
+        ("traversal_read_protected", "open_at", [tmp_path, ["protected", "secret.txt"], "r"]),
+        ("traversal_write_protected", "open_at", [tmp_path, ["protected", "secret.txt"], "w"]),
+        ("traversal_into_subdirectory", "open_at", [tmp_path, ["protected", "sub", "n"], "w"]),
+        ("dir_fd_write_out_of_root", "open_at", [outside, ["new.txt"], "w"]),
+        ("dir_fd_read_inside_write_root", "open_at", [rw, ["w.txt"], "r"]),  # also refused
+        ("cwd_relative_read", "read", ["relative.txt"]),
+        ("list_protected", "listdir", [protected]),
+        ("sqlite_in_protected", "sqlite", [protected / "x.db"]),
+        ("sqlite_relative", "sqlite", ["relative.db"]),
+        ("symlink_in_write_root", "symlink", [rw / "w.txt", rw / "link"]),
+        # Legitimate absolute-path work keeps functioning.
+        ("absolute_read_read_root", "read", [readable / "r.txt"]),
+        ("absolute_read_write_root", "read", [rw / "w.txt"]),
+        ("absolute_write_write_root", "write", [rw / "new.txt"]),
+        ("list_write_root", "listdir", [rw]),
+        ("sqlite_in_write_root", "sqlite", [rw / "lab.db"]),
+    ]
+    write_roots = [str(rw)] + ([str(tmp_path / "worker")] if cwd_writable else [])
+    worker = _worker(tmp_path, write_roots=write_roots, read_roots=[str(readable)])
+    try:
+        outcomes = worker.request(
+            "probe_fs",
+            {
+                "actions": [
+                    [n, op, [a if isinstance(a, list) else str(a) for a in args]]
+                    for n, op, args in actions
+                ]
+            },
+            timeout_seconds=30,
+        ).value["outcomes"]
+    finally:
+        worker.close()
+    assert outcomes == {
+        "direct_read_protected": "denied",
+        "traversal_read_protected": "denied",
+        "traversal_write_protected": "denied",
+        "traversal_into_subdirectory": "denied",
+        "dir_fd_write_out_of_root": "denied",
+        "dir_fd_read_inside_write_root": "denied",
+        "cwd_relative_read": "denied",
+        "list_protected": "denied",
+        "sqlite_in_protected": "denied",
+        "sqlite_relative": "denied",
+        "symlink_in_write_root": "denied",
+        "absolute_read_read_root": "allowed:readable",
+        "absolute_read_write_root": "allowed:w",
+        "absolute_write_write_root": "allowed",
+        "list_write_root": "allowed:new.txt,w.txt",
+        "sqlite_in_write_root": "allowed",
+    }
+    assert secret.read_text() == "protected-secret"
+    assert sorted(p.name for p in protected.iterdir()) == ["secret.txt", "sub"]
+    assert list((protected / "sub").iterdir()) == [] and list(outside.iterdir()) == []
+    assert sorted(p.name for p in rw.iterdir()) == ["lab.db", "new.txt", "w.txt"]
 
 
 @pytest.mark.lab  # needs psutil (lab extras) for RSS supervision

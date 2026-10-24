@@ -370,7 +370,8 @@ API / CLI process ── LabService ──► Corpus Gateway (authoritative chun
 Workers receive a scrubbed environment (no production database URL or provider key; only the
 database-scoped workers that serve LS-1/2/3 receive the separate lab database URL), private
 HOME/TMPDIR and an audit-hook guard (network, process creation, writes, renames/links on both
-paths, and protected reads). Any failed request kills and replaces the worker. This is process
+paths, protected reads and listings, absolute-path-only opens because the `open` event omits
+`dir_fd`, no symlink creation). Any failed request kills and replaces the worker. This is process
 isolation plus defense in depth, **not** an OS sandbox: C extensions and ctypes bypass audit
 hooks. The parent re-verifies every returned item against authoritative evidence, and accepts
 precomputed-vector reuse only when zero document texts were embedded and the framework's own

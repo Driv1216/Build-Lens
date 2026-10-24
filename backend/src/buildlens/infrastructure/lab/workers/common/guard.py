@@ -21,11 +21,21 @@ Policy (from BUILDLENS_LAB_GUARD, a JSON object set by the parent):
   and descriptor-only mutations (fchmod etc.) through the descriptor's path; anything that
   cannot be resolved is denied;
 * chdir is denied, so relative paths always resolve against the fixed working directory;
+* file opens must use ABSOLUTE paths. The `open` audit event carries no dir_fd, so the real
+  target of a relative open (e.g. `os.open(name, flags, dir_fd=fd)` after opening an
+  unprotected ancestor directory) cannot be established; every relative open is denied,
+  including legitimate descriptor-relative opens inside a write root (fail closed);
+* sqlite3 database files (opened natively by SQLite) follow the write rule and must be
+  absolute; only `:memory:` and the anonymous temporary database are exempt;
+* symlink creation is denied: a link inside a write root could be retargeted between the
+  path check and the actual open;
 * reads beneath protected_roots (e.g. the user's home and registered repositories) are
-  denied unless they are also beneath read_roots (venv, package source, index, sandbox).
+  denied unless they are also beneath read_roots (venv, package source, index, sandbox);
+  directory listings (os.listdir/os.scandir, by path or descriptor) follow the same rule.
 
-Known limitation: the `open` audit event carries no dir_fd, so a relative open through a
-directory descriptor is checked as if relative to the working directory.
+Not covered: operations Python does not audit (os.stat/lstat/access/readlink, also with
+dir_fd, which disclose metadata and link targets; os.mkfifo/os.mknod), and anything done by
+native code or ctypes without a Python-level audit event.
 """
 
 from __future__ import annotations
@@ -51,7 +61,6 @@ _FS_MUTATIONS: dict[str, tuple[tuple[int, int | None], ...]] = {
     "os.removexattr": ((0, None),),
     "os.rename": ((0, 2), (1, 3)),  # also raised by os.replace
     "os.link": ((0, 2), (1, 3)),
-    "os.symlink": ((1, 2),),  # the target is checked when opened (realpath)
     "shutil.rmtree": ((0, 1),),
     "shutil.chown": ((0, None),),
     "shutil.copyfile": ((1, None),),
@@ -82,6 +91,7 @@ _state: dict[str, Any] = {
     "allow_net": set(),
     "allow_hosts": set(),
     "denials": [],
+    "recorded": set(),
 }
 
 
@@ -136,7 +146,11 @@ def _beneath(path: str, roots: tuple[str, ...]) -> bool:
 
 def _deny(event: str, detail: str) -> None:
     denials = _state["denials"]
-    if len(denials) < 200:
+    key = (event, detail[:200])
+    # Each distinct denial is recorded once, so repeated benign probes (e.g. the compiler
+    # looking up the pseudo-file "<unknown>") cannot exhaust the 200-entry log.
+    if len(denials) < 200 and key not in _state["recorded"]:
+        _state["recorded"].add(key)
         entry = {"event": event, "detail": detail[:200]}
         if _state.get("trace"):
             import traceback
@@ -153,9 +167,32 @@ def _relative(path: str) -> str:
     return path
 
 
+def _text(path: Any) -> str | None:
+    if isinstance(path, bytes):
+        return os.fsdecode(path)
+    if isinstance(path, (str, os.PathLike)):
+        return os.fsdecode(os.fspath(path))
+    return None
+
+
+def _check_read(event: str, path: str) -> None:
+    if path == _UNRESOLVED or (
+        _beneath(path, _state["protected_roots"]) and not _beneath(path, _state["read_roots"])
+    ):
+        _deny(event, _relative(path))
+
+
 def _hook(event: str, args: tuple[Any, ...]) -> None:
     if event == "open":
-        path = _norm(args[0])
+        if isinstance(args[0], int):
+            return  # wraps an already-open descriptor (os.fdopen / open(fd))
+        raw = _text(args[0])
+        if raw is None:
+            return
+        if not os.path.isabs(raw):
+            # The event omits dir_fd: the real target of a relative open is unknowable.
+            _deny("open-relative", raw)
+        path = _norm(raw)
         if path is None:
             return
         mode = args[1] if len(args) > 1 else None
@@ -167,9 +204,26 @@ def _hook(event: str, args: tuple[Any, ...]) -> None:
             if path != os.devnull and not _beneath(path, _state["write_roots"]):
                 _deny("open-write", _relative(path))
             return
-        if _beneath(path, _state["protected_roots"]) and not _beneath(path, _state["read_roots"]):
-            _deny("open-read", _relative(path))
+        _check_read("open-read", path)
         return
+    if event in {"os.listdir", "os.scandir"}:
+        target = args[0] if args and args[0] is not None else "."  # None: the fixed cwd
+        listed = _resolve(target, None)  # descriptors resolve through their path
+        if listed is not None:
+            _check_read(event, listed)
+        return
+    if event == "sqlite3.connect":
+        raw = _text(args[0]) if args else None
+        if not raw or raw == ":memory:":
+            return  # in-memory or anonymous temporary database
+        if raw.startswith("file:") or not os.path.isabs(raw):
+            _deny(event, raw)  # URIs and relative names: target not established
+        database = _norm(raw)
+        if database is not None and not _beneath(database, _state["write_roots"]):
+            _deny(event, _relative(database))
+        return
+    if event == "os.symlink":
+        _deny(event, "symlink creation")
     if event in _FS_MUTATIONS:
         for index, fd_index in _FS_MUTATIONS[event]:
             if len(args) <= index:
