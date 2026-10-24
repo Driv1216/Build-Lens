@@ -338,7 +338,7 @@ def test_lab_database_authority_is_scoped_to_database_workers(tmp_path: Path) ->
     from buildlens.infrastructure.lab.service import LabWorkerPool
     from buildlens.infrastructure.lab.store import LabStore
 
-    url = "postgresql+psycopg://lab_role:not-a-real-password@127.0.0.1:55412/buildlens_lab"
+    url = "postgresql+psycopg://lab_role:<synthetic-password>@127.0.0.1:55412/buildlens_lab"
     pool = LabWorkerPool(
         LabStore(tmp_path / ".buildlens-eval" / "lab"),
         max_rss_bytes=3 * 1024**3,
