@@ -198,6 +198,8 @@ class CorpusGateway:
         include_unsupported: bool,
         timeout_seconds: float = 3.0,
     ) -> tuple[list[LabDocument], GatewayReport]:
+        if filters.get("kind"):  # defense in depth behind parse_config
+            raise LabError("LAB_FILTER_UNSUPPORTED", "filter kind applies to native_chunks only")
         report = GatewayReport("artifact_sources")
         snapshot = corpus.snapshot
         if not snapshot.canonical_root:
@@ -312,6 +314,6 @@ def _matches(
         return False
     if filters.get("language") and language != filters["language"]:
         return False
-    if filters.get("kind") and kind is not None and kind != filters["kind"]:
-        return False
+    if filters.get("kind") and kind != filters["kind"]:
+        return False  # an unknown kind never satisfies a requested kind
     return True

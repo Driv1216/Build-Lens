@@ -399,7 +399,6 @@ def _item(
     score: float | None,
     score_kind: str,
     detail: dict[str, Any] | None = None,
-    span: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     meta = document.metadata
     source = None
@@ -420,7 +419,6 @@ def _item(
             score=score,
             score_kind=score_kind,
             detail=detail,
-            span_override=span,
         ),
         document.page_content,
     )
@@ -751,20 +749,21 @@ def _query_window(
             last = members[-1]
             end = last.metadata["start_hint"] + len(last.page_content)
             text = state.sources[artifact][start:end]
-            composite = Document(
+            # The window text is the exact source slice [start, end), so it is anchored and
+            # hash-verified like any slice (not a composite).
+            window_document = Document(
                 page_content=text,
-                metadata={**hit.metadata, "ref": f"{hit.id}:W{window}"},
+                metadata={**hit.metadata, "ref": f"{hit.id}:W{window}", "start_hint": start},
                 id=f"{hit.id}:W{window}",
             )
             expanded.append(
                 _item(
                     state,
-                    composite,
+                    window_document,
                     rank,
                     hit.metadata.get("similarity"),
                     "cosine",
                     {"window_members": len(members)},
-                    span=(start, end),
                 )
             )
         attrs["_refs"] = [e["ref"] for e in expanded]

@@ -54,20 +54,26 @@ def rows_for(
             rows.append(chunk_metadata(chunks[chunk_id], corpus))
             continue
         span = item.get("span") if item.get("anchored") else None
-        rows.append(
-            {
-                "chunk_id": key,
-                "locator": item.get("locator") if span else None,
-                "artifact_fingerprint": item.get("artifact_fingerprint") if span else None,
-                "span": span or {"start_offset": -1, "end_offset": -1},
-                "text_bytes": item.get("text_bytes"),
-            }
-        )
+        row = {
+            "chunk_id": key,
+            "locator": item.get("locator") if span else None,
+            "artifact_fingerprint": item.get("artifact_fingerprint") if span else None,
+            "span": span or {"start_offset": -1, "end_offset": -1},
+            "text_bytes": item.get("text_bytes"),
+        }
+        if span and item.get("spans"):
+            row["spans"] = item["spans"]  # verified composite segments only
+        rows.append(row)
     return rows, duplicates
 
 
 def _overlap(a: tuple[int, int], b: tuple[int, int]) -> int:
     return max(0, min(a[1], b[1]) - max(a[0], b[0]))
+
+
+def segments(entry: dict[str, Any]) -> list[tuple[int, int]]:
+    """Credited source segments of a row or item: verified composite segments, else its span."""
+    return [(s["start_offset"], s["end_offset"]) for s in entry.get("spans") or [entry["span"]]]
 
 
 def derived_metrics(
@@ -96,20 +102,22 @@ def derived_metrics(
         span = row["span"]
         if row.get("locator") is None or span["start_offset"] < 0:
             return None
-        item_span = (span["start_offset"], span["end_offset"])
-        length = max(1, item_span[1] - item_span[0])
+        pieces = segments(row)
+        length = max(1, sum(b - a for a, b in pieces))
+
+        def overlap(target: tuple[int, int]) -> int:
+            return sum(_overlap(target, piece) for piece in pieces)
+
         judged = [
             r
             for r in relevant
-            if r[0] == row["locator"]
-            and r[1] == row.get("artifact_fingerprint")
-            and _overlap(r[2], item_span)
+            if r[0] == row["locator"] and r[1] == row.get("artifact_fingerprint") and overlap(r[2])
         ]
         if not judged:
             return None  # overlaps no judged chunk: unjudged under the projection
-        positive_overlap = sum(_overlap(r[2], item_span) for r in judged if r[3])
+        positive_overlap = sum(overlap(r[2]) for r in judged if r[3])
         covers_one = any(
-            r[3] and _overlap(r[2], item_span) >= DERIVED_TAU * (r[2][1] - r[2][0]) for r in judged
+            r[3] and overlap(r[2]) >= DERIVED_TAU * (r[2][1] - r[2][0]) for r in judged
         )
         return positive_overlap >= DERIVED_TAU * length or covers_one
 
@@ -123,9 +131,10 @@ def derived_metrics(
         covered = 0
         for locator, fingerprint, span, _positive in positives:
             union = sorted(
-                (r["span"]["start_offset"], r["span"]["end_offset"])
+                piece
                 for r in top
                 if r.get("locator") == locator and r.get("artifact_fingerprint") == fingerprint
+                for piece in segments(r)
             )
             amount = sum(_overlap(span, u) for u in _merge(union))
             if amount >= DERIVED_TAU * (span[1] - span[0]):
@@ -485,19 +494,19 @@ def constructed_coverage(
         entry: dict[str, Any] = {"language": case["language"]}
         for k in (1, 5, 10):
             spans = sorted(
-                (i["span"]["start_offset"], i["span"]["end_offset"])
+                piece
                 for i in result["ranked"][:k]
                 if i.get("anchored")
                 and i.get("locator") == case["locator"]
                 and i.get("artifact_fingerprint") == case["fingerprint"]
+                for piece in segments(i)
             )
             covered = sum(_overlap(target, s) for s in _merge(spans)) >= target[1] - target[0]
             entry[f"covered@{k}"] = covered
         entry["context_covered"] = any(
             i.get("anchored")
             and i.get("locator") == case["locator"]
-            and i["span"]["start_offset"] <= target[0]
-            and i["span"]["end_offset"] >= target[1]
+            and any(a <= target[0] and b >= target[1] for a, b in segments(i))
             for i in result["context"]
         )
         entry["context_kib"] = round(

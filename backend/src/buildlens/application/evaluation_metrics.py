@@ -15,11 +15,14 @@ from buildlens.domain.evaluation import (
 
 
 def target_covered(target: EvidenceTarget, rows: list[dict[str, Any]]) -> bool:
+    # A row may carry `spans` (Stage 12 lab composites: only verified segments); otherwise
+    # its single `span` is used, exactly as before.
     spans = sorted(
-        (row["span"]["start_offset"], row["span"]["end_offset"])
+        (span["start_offset"], span["end_offset"])
         for row in rows
         if row["locator"] == target.locator
         and row.get("artifact_fingerprint") == target.artifact_fingerprint
+        for span in row.get("spans") or [row["span"]]
     )
     cursor = target.start_offset
     for start, end in spans:

@@ -565,6 +565,9 @@ def parse_config(raw: Any) -> ExperimentConfig:
         ):
             raise LabError("CONFIG_INVALID", f"filter {key} is invalid")
         filters[key] = value
+    if filters["kind"] is not None and mode != "native_chunks":
+        # Whole artifacts have no chunk kind; the filter used to be silently ignored.
+        raise LabError("CONFIG_INVALID", "filter kind applies to native_chunks only")
     embedding = raw.get("embedding", {})
     if not isinstance(embedding, dict) or set(embedding) - {"source"}:
         raise LabError("CONFIG_INVALID", "embedding has unknown keys")

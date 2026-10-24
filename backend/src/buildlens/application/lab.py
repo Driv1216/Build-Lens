@@ -143,6 +143,51 @@ class EvidenceMaps:
         )
 
 
+def _composite_segments(
+    raw: dict[str, Any], source: str, texts: dict[str, str], detail: dict[str, Any]
+) -> tuple[list[tuple[int, int]], int]:
+    """Verified source segments of a composite item, and how many constituents failed.
+
+    A constituent counts only if its span lies in the source, the source slice hashes to the
+    worker-reported member hash, and that exact slice occurs in the delivered text after the
+    previous verified member (order preserved). Consecutive verified members are joined only
+    when the source between them AND the delivered text between them are both whitespace
+    (LlamaIndex re-joins sentences with " "); anything else stays a separate segment, so
+    coverage is credited only for source text that was actually delivered.
+    """
+    constituents = list(detail.get("constituents") or [])
+    delivered = texts.get(str(raw.get("text_sha256")))
+    if delivered is None or sha256_hex(delivered) != raw.get("text_sha256"):
+        return [], len(constituents)
+    verified: list[tuple[int, int, int, int]] = []  # source start/end, delivered start/end
+    cursor = 0
+    for member in constituents:
+        start, end = member.get("start_offset"), member.get("end_offset")
+        if not (isinstance(start, int) and isinstance(end, int) and 0 <= start < end):
+            continue
+        piece = source[start:end] if end <= len(source) else ""
+        if not piece or sha256_hex(piece) != member.get("text_sha256"):
+            continue
+        at = delivered.find(piece, cursor)
+        if at < 0 or (verified and start < verified[-1][1]):
+            continue
+        verified.append((start, end, at, at + len(piece)))
+        cursor = at + len(piece)
+    segments: list[tuple[int, int]] = []
+    previous: tuple[int, int, int, int] | None = None
+    for member in verified:
+        if (
+            previous is not None
+            and not source[previous[1] : member[0]].strip()
+            and not delivered[previous[3] : member[2]].strip()
+        ):
+            segments[-1] = (segments[-1][0], member[1])
+        else:
+            segments.append((member[0], member[1]))
+        previous = member
+    return segments, len(constituents) - len(verified)
+
+
 def float32_digest(values: tuple[float, ...] | list[float]) -> str:
     return sha256_hex(struct.pack(f"<{len(values)}f", *values))
 
@@ -608,7 +653,16 @@ class LabService:
                 raw["anchored"], raw["span"] = False, None
                 verification["rejected_anchors"] += 1
             elif detail.get("anchor_method") == "composite":
-                verification["composite"] += 1
+                segments, rejected = _composite_segments(raw, source, texts, detail)
+                detail["constituents_verified"] = len(detail.get("constituents") or []) - rejected
+                detail["constituents_rejected"] = rejected
+                if segments:
+                    raw["spans"] = [{"start_offset": a, "end_offset": b} for a, b in segments]
+                    raw["span"] = {"start_offset": segments[0][0], "end_offset": segments[-1][1]}
+                    verification["composite"] += 1
+                else:  # nothing verifiable: never credit the bounding span
+                    raw["anchored"], raw["span"] = False, None
+                    verification["rejected_anchors"] += 1
             elif sha256_hex(source[start:end]) != raw.get("text_sha256"):
                 raw["anchored"], raw["span"] = False, None
                 verification["rejected_anchors"] += 1

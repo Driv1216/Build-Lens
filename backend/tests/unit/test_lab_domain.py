@@ -205,3 +205,50 @@ def test_hash_embedding_is_deterministic_and_normalized() -> None:
     a, b = hash_vector("loadUser record"), hash_vector("loadUser record")
     assert a == b and abs(sum(v * v for v in a) - 1.0) < 1e-9
     assert hash_vector("") != tuple(0.0 for _ in a)
+
+
+# ------------------------------------------------------------------ corpus filters
+
+
+def test_kind_filter_is_rejected_for_artifact_sources() -> None:
+    """Defect: artifacts have no chunk kind, so the filter was silently ignored."""
+    with pytest.raises(LabError) as caught:
+        parse_config(
+            {
+                "name": "k",
+                "pipeline": "langchain.ingest",
+                "corpus": {"mode": "artifact_sources", "filters": {"kind": "function"}},
+            }
+        )
+    assert caught.value.code == "CONFIG_INVALID" and "kind" in caught.value.message
+    allowed = parse_config(
+        {
+            "name": "k",
+            "pipeline": "langchain.vector",
+            "corpus": {"mode": "native_chunks", "filters": {"kind": "function"}},
+        }
+    )
+    assert allowed.filters["kind"] == "function"
+
+
+def test_gateway_filter_never_ignores_a_requested_kind() -> None:
+    from buildlens.infrastructure.lab.corpus import _matches
+
+    assert _matches("a.py", "python", "function", {"kind": "function"})
+    assert not _matches("a.py", "python", "class", {"kind": "function"})
+    assert not _matches("a.py", "python", None, {"kind": "function"})  # unknown never matches
+    assert _matches("a.py", "python", None, {"kind": None})
+
+
+# ------------------------------------------------------------------ generation status
+
+
+@pytest.mark.parametrize("flag", [False, True])
+def test_generation_is_never_advertised_while_unimplemented(flag: bool) -> None:
+    """Defect: with the flag set the status said "authorized" although `generate` always fails."""
+    from buildlens.infrastructure.lab.service import catalog
+
+    status = catalog(None, lab_db_configured=False, generation_enabled=flag)["generation"]
+    assert status["enabled"] is False and status["available"] is False
+    assert status["implemented"] is False and status["flag_set"] is flag
+    assert "authorized" not in status["state"] and "not implemented" in status["state"]

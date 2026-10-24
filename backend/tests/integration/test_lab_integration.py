@@ -320,3 +320,33 @@ def test_sentence_windows_survive_dropped_oversized_sentences(lab: dict[str, Any
         assert build["worker_manifest"]["dropped_oversized_sentences"] > 0, pipeline
         result = service.query(config, project, snapshot, QUESTION)
         assert result["context"] and result["verification"]["rejected_anchors"] == 0, pipeline
+
+
+def test_window_evidence_is_verified_against_source_and_delivered_text(
+    lab: dict[str, Any],
+) -> None:
+    """Composite (LlamaIndex) windows are credited only for verified constituent segments;
+    LangChain windows are exact slices and verified as such."""
+    service, project, snapshot = lab["service"], lab["project"], lab["snapshot"]
+    for pipeline in ("langchain.sentence_window", "llamaindex.sentence_window"):
+        config = _config(pipeline, window_size=1)
+        service.build(config, project, snapshot)
+        result = service.query(config, project, snapshot, QUESTION)
+        items = [i for i in result["context"] if i.get("anchored")]
+        assert items, pipeline
+        for item in items:
+            source = (lab["repo"] / item["locator"]).read_text()
+            delivered = result["texts"][item["text_sha256"]]
+            method = item["detail"]["anchor_method"]
+            if pipeline.startswith("langchain"):
+                assert method == "indexed" and "spans" not in item
+                span = item["span"]
+                assert source[span["start_offset"] : span["end_offset"]] == delivered
+                continue
+            assert method == "composite" and item["spans"], item["ref"]
+            assert item["detail"]["constituents_verified"] >= 1
+            for segment in item["spans"]:
+                piece = source[segment["start_offset"] : segment["end_offset"]]
+                # Every credited segment is delivered (modulo the re-joining whitespace).
+                assert " ".join(piece.split()) in " ".join(delivered.split()), item["ref"]
+        assert result["verification"]["rejected_anchors"] == 0, pipeline

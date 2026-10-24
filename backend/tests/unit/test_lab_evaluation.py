@@ -73,3 +73,110 @@ def test_derived_metrics_flatten_only_when_eligible() -> None:
     flat = flatten_derived(derived)
     assert flat["derived_MRR@32"] == 0.5 and flat["derived_recall@5"] == 0.25
     assert "derived_precision@5" not in flat
+
+
+# ------------------------------------------------------------------ composite evidence
+
+SOURCE = "def a():\n    return 1\n\n\ndef b():\n    return 2\n\nSECRET_UNDELIVERED = 3\n"
+
+
+def _composite(text: str, constituents: list[tuple[int, int]] | None, **overrides: Any) -> Any:
+    from buildlens.domain.lab import sha256_hex
+
+    detail: dict[str, Any] = {"anchor_method": "composite"}
+    if constituents is not None:
+        detail["constituents"] = [
+            {"start_offset": s, "end_offset": e, "text_sha256": sha256_hex(SOURCE[s:e])}
+            for s, e in constituents
+        ]
+    item = {
+        "ref": "w1",
+        "rank": 1,
+        "text_sha256": sha256_hex(text),
+        "text_bytes": len(text.encode()),
+        "locator": "m.py",
+        "span": {"start_offset": 0, "end_offset": len(SOURCE)},  # bounding span: never trusted
+        "anchored": True,
+        "chunk_id": None,
+        "detail": detail,
+        **overrides,
+    }
+    return item, {item["text_sha256"]: text}
+
+
+def _verify(item: dict[str, Any], texts: dict[str, str]) -> tuple[dict[str, Any], dict[str, int]]:
+    from buildlens.application.lab import EvidenceMaps, LabService
+
+    maps = EvidenceMaps({}, {}, {"m.py": SOURCE}, {"m.py": "fp"})
+    verification = {
+        "rebound_chunks": 0,
+        "verified_slices": 0,
+        "rejected_anchors": 0,
+        "composite": 0,
+    }
+    return LabService._verify_item(dict(item), maps, texts, verification), verification
+
+
+A, B = (0, 21), (24, 45)  # "def a()…1" and "def b()…2"; "\n\n\n" between them
+
+
+def test_composite_without_constituents_is_not_anchored() -> None:
+    """Defect: a bounding span alone was accepted and covered undelivered source text."""
+    item, texts = _composite("def a():\n    return 1", None)
+    verified, verification = _verify(item, texts)
+    assert verified["anchored"] is False and verified["span"] is None
+    assert verification["rejected_anchors"] == 1 and verification["composite"] == 0
+
+
+def test_composite_credits_only_verified_constituents() -> None:
+    window = SOURCE[A[0] : A[1]] + " " + SOURCE[B[0] : B[1]]  # LlamaIndex-style " " join
+    item, texts = _composite(window, [A, B, (47, 70)])  # third: never delivered
+    verified, verification = _verify(item, texts)
+    # Whitespace-only gaps (source "\n\n\n", delivered " ") join; undelivered text is excluded.
+    assert verified["spans"] == [{"start_offset": 0, "end_offset": 45}]
+    assert verified["span"] == {"start_offset": 0, "end_offset": 45}
+    assert verified["detail"]["constituents_verified"] == 2
+    assert verified["detail"]["constituents_rejected"] == 1
+    assert verification["composite"] == 1
+
+
+def test_composite_rejects_forged_hashes_and_non_whitespace_gaps() -> None:
+    from buildlens.domain.lab import sha256_hex
+
+    window = SOURCE[A[0] : A[1]] + " … " + SOURCE[B[0] : B[1]]
+    item, texts = _composite(window, [A, B])
+    item["detail"]["constituents"][1]["text_sha256"] = sha256_hex("forged")
+    verified, _ = _verify(item, texts)
+    assert verified["spans"] == [{"start_offset": 0, "end_offset": 21}]  # forged one dropped
+    item, texts = _composite(window, [A, B])
+    verified, _ = _verify(item, texts)  # separator is not whitespace: separate segments
+    assert verified["spans"] == [
+        {"start_offset": 0, "end_offset": 21},
+        {"start_offset": 24, "end_offset": 45},
+    ]
+    item, texts = _composite(window, [A, B])
+    verified, verification = _verify(item, {})  # delivered text missing: nothing verifiable
+    assert verified["anchored"] is False and verification["rejected_anchors"] == 1
+
+
+def test_coverage_counts_only_verified_composite_segments() -> None:
+    from buildlens.application.evaluation_metrics import target_covered
+    from buildlens.application.lab_evaluation import rows_for
+    from buildlens.domain.evaluation import EvidenceTarget
+
+    window = SOURCE[A[0] : A[1]] + " … " + SOURCE[B[0] : B[1]]
+    item, texts = _composite(window, [A, B])
+    verified, _ = _verify(item, texts)
+    verified["artifact_fingerprint"] = "fp"
+
+    class _Corpus:
+        chunks: list[Any] = []
+
+    rows, _ = rows_for([verified], _Corpus())  # type: ignore[arg-type]
+
+    def target(start: int, end: int) -> EvidenceTarget:
+        return EvidenceTarget("t", "m.py", "fp", start, end, "excerpt-hash")
+
+    assert target_covered(target(2, 20), rows) and target_covered(target(25, 40), rows)
+    assert not target_covered(target(10, 30), rows)  # crosses the unverified gap
+    assert not target_covered(target(50, 60), rows)  # inside the old bounding span only

@@ -38,6 +38,16 @@ _PUBLIC_CONNECT = text(
 )
 
 
+# Other databases on which a PRE-EXISTING role holds CONNECT through any non-PUBLIC grant:
+# directly, as owner (NULL ACL = owner default), or via membership of a granted role.
+_ROLE_CONNECT = text(
+    "select distinct d.datname from pg_database d, "
+    "aclexplode(coalesce(d.datacl, acldefault('d', d.datdba))) a "
+    "where not d.datistemplate and d.datname <> :d and a.privilege_type = 'CONNECT' "
+    "and a.grantee <> 0 and pg_has_role(:r, a.grantee, 'MEMBER') order by 1"
+)
+
+
 @dataclass(frozen=True, slots=True)
 class LabProvision:
     url: str
@@ -103,6 +113,21 @@ def _provision(
                     "Revoke it there, or pass --dedicated-server on a disposable lab-only "
                     "server. Nothing was changed.",
                 )
+            role_exists = connection.execute(
+                text("select 1 from pg_roles where rolname=:r"), {"r": role}
+            ).first()
+            granted = (
+                list(connection.execute(_ROLE_CONNECT, {"d": database, "r": role}).scalars())
+                if role_exists
+                else []
+            )
+            if granted:  # revoking another database's grants is never this tool's job
+                raise LabError(
+                    "LAB_DATABASE_ROLE_NOT_CONFINED",
+                    f"Existing role {role!r} can CONNECT to other database(s) through its own "
+                    f"or inherited grants: {granted}. Revoke them or choose another role. "
+                    "Nothing was changed.",
+                )
             if dedicated_server:
                 others = sorted(
                     connection.execute(
@@ -120,10 +145,7 @@ def _provision(
                         f"Server also holds {unexpected}; refusing server-wide changes. "
                         "Nothing was changed.",
                     )
-            exists = connection.execute(
-                text("select 1 from pg_roles where rolname=:r"), {"r": role}
-            ).first()
-            statement = "ALTER ROLE" if exists else "CREATE ROLE"
+            statement = "ALTER ROLE" if role_exists else "CREATE ROLE"
             # DDL cannot take bind parameters; the password matched a strict URL-safe pattern.
             connection.execute(
                 text(

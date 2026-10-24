@@ -65,19 +65,28 @@ def item(
     score_kind: str,
     detail: dict[str, Any] | None = None,
     span_override: tuple[int, int] | None = None,
+    constituents: list[tuple[int, int, str]] | None = None,
 ) -> dict[str, Any]:
-    """Build a LabItem dictionary; native-chunk metadata carries its own exact span."""
+    """Build a LabItem dictionary; native-chunk metadata carries its own exact span.
+
+    A composite (e.g. a LlamaIndex sentence window, whose sentences are re-joined with
+    separators) reports its constituent source spans with the hash of each member's text.
+    The parent verifies every constituent against the source and the delivered text and
+    credits only those; the bounding span is a hint and is never trusted on its own.
+    """
     chunk_id = metadata.get("chunk_id")
     extra = dict(detail or {})
     start: int | None
     end: int | None
     if span_override is not None:
-        # Composite nodes (sentence windows, merged parents) cover a verified union of
-        # anchored children; the delivered text may contain separators, so it is marked.
         start, end = span_override
         method = "composite"
         if source_text is None or source_text[start:end] != text:
             extra["composite_text_differs"] = True
+        extra["constituents"] = [
+            {"start_offset": s, "end_offset": e, "text_sha256": sha256_hex(member)}
+            for s, e, member in constituents or []
+        ]
     elif source_text is None:
         # Pass-through BuildLens chunk: the authoritative span travels in its metadata.
         start, end = metadata.get("start_offset"), metadata.get("end_offset")

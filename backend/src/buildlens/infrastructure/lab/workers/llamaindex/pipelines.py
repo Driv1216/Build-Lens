@@ -418,29 +418,38 @@ def _absolute_start(state: IndexState, node: BaseNode) -> int | None:
     return start
 
 
-def _window_span(state: IndexState, node: BaseNode, size: int) -> tuple[int, int] | None:
-    """Span of the sentence window, from the neighbouring sentence nodes' own offsets.
+def _window_span(
+    state: IndexState, node: BaseNode, size: int
+) -> tuple[tuple[int, int], list[tuple[int, int, str]]] | None:
+    """Bounding span and constituents of the sentence window, from the sentence nodes.
 
     LlamaIndex joins window sentences with spaces, so the window text is not an exact source
-    slice; the span is a verified union of anchored sentence nodes instead (composite).
+    slice. Each member sentence node is reported with its own offsets and text; the parent
+    verifies them (composite) and credits only verified members.
     """
     original = state.nodes.get(node.node_id)
     if original is None or original.start_char_idx is None:
         return None
-    first = last = original
+    members = [original]
     for _ in range(size):
-        info = first.relationships.get(NodeRelationship.PREVIOUS)
+        info = members[0].relationships.get(NodeRelationship.PREVIOUS)
         if info is None or info.node_id not in state.nodes:
             break
-        first = state.nodes[info.node_id]
+        members.insert(0, state.nodes[info.node_id])
     for _ in range(size):
-        info = last.relationships.get(NodeRelationship.NEXT)
+        info = members[-1].relationships.get(NodeRelationship.NEXT)
         if info is None or info.node_id not in state.nodes:
             break
-        last = state.nodes[info.node_id]
+        members.append(state.nodes[info.node_id])
+    first, last = members[0], members[-1]
     if first.start_char_idx is None or last.end_char_idx is None:
         return None
-    return first.start_char_idx, last.end_char_idx
+    constituents = [
+        (m.start_char_idx, m.end_char_idx, m.get_content(metadata_mode=MetadataMode.NONE))
+        for m in members
+        if m.start_char_idx is not None and m.end_char_idx is not None
+    ]
+    return (first.start_char_idx, last.end_char_idx), constituents
 
 
 def _source_for(state: IndexState, node: BaseNode) -> str | None:
@@ -458,7 +467,7 @@ def _item(
     kind: str,
     detail: dict[str, Any] | None = None,
     text: str | None = None,
-    span: tuple[int, int] | None = None,
+    span: tuple[tuple[int, int], list[tuple[int, int, str]]] | None = None,
 ) -> dict[str, Any]:
     content = text if text is not None else node.get_content(metadata_mode=MetadataMode.NONE)
     source = _source_for(state, node)
@@ -477,7 +486,8 @@ def _item(
         score=score,
         score_kind=kind,
         detail=detail,
-        span_override=span,
+        span_override=span[0] if span else None,
+        constituents=span[1] if span else None,
     )
     TEXTS[result["text_sha256"]] = content
     return result

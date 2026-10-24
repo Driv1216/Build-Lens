@@ -141,3 +141,53 @@ def test_dedicated_server_mode_reports_its_only_server_wide_change(
     assert provisioned.server_wide_revocations == ("postgres",)
     privileges = role_privileges(provisioned.url)
     assert privileges["connectable_databases"] == [server["database"]]
+
+
+@pytest.mark.parametrize("grant", ["direct", "membership"])
+def test_existing_role_grants_are_refused_before_any_change(
+    server: dict[str, object], grant: str
+) -> None:
+    """Defect: PUBLIC was preflighted, but a pre-existing role's own CONNECT grant (direct or
+    via role membership) was found only after the lab database and role had been changed."""
+    admin = server["admin"]
+    assert isinstance(admin, Engine)
+    role, other = str(server["role"]), str(server["other"])
+    group = role + "_grp"
+    try:
+        with admin.connect() as connection:
+            connection.execute(text(f'CREATE DATABASE "{other}" TEMPLATE template0'))
+            for name in list(
+                connection.execute(
+                    text("select datname from pg_database where not datistemplate")
+                ).scalars()
+            ):
+                connection.execute(text(f'REVOKE CONNECT ON DATABASE "{name}" FROM PUBLIC'))
+            connection.execute(text(f'CREATE ROLE "{role}" LOGIN CONNECTION LIMIT 3'))
+            if grant == "direct":
+                connection.execute(text(f'GRANT CONNECT ON DATABASE "{other}" TO "{role}"'))
+            else:
+                connection.execute(text(f'CREATE ROLE "{group}" NOLOGIN'))
+                connection.execute(text(f'GRANT CONNECT ON DATABASE "{other}" TO "{group}"'))
+                connection.execute(text(f'GRANT "{group}" TO "{role}"'))
+        before = _acls(admin)
+        with admin.connect() as connection:
+            limit_before = connection.execute(
+                text("select rolconnlimit from pg_roles where rolname=:r"), {"r": role}
+            ).scalar()
+        with pytest.raises(LabError) as caught:
+            _provision(server)
+        assert caught.value.code == "LAB_DATABASE_ROLE_NOT_CONFINED"
+        assert other in caught.value.message and "Nothing was changed" in caught.value.message
+        assert _acls(admin) == before
+        assert str(server["database"]) not in _acls(admin)  # lab database never created
+        with admin.connect() as connection:
+            limit_after = connection.execute(
+                text("select rolconnlimit from pg_roles where rolname=:r"), {"r": role}
+            ).scalar()
+        assert limit_after == limit_before == 3  # role not altered
+    finally:
+        with admin.connect() as connection:
+            for database in (other, str(server["database"])):
+                connection.execute(text(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)'))
+            connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
+            connection.execute(text(f'DROP ROLE IF EXISTS "{group}"'))

@@ -31,6 +31,8 @@ MODULES = {
     "llamaindex": "buildlens.infrastructure.lab.workers.llamaindex.main",
     "selftest": "buildlens.infrastructure.lab.workers.common.selftest",
 }
+# Real provider-backed generation is not implemented (the bridge `generate` is a stub).
+GENERATION_IMPLEMENTED = False
 # In-process framework workers that can host lab-database pipelines when database-scoped.
 DATABASE_FAMILIES = frozenset({"langchain", "llamaindex"})
 EXTRA_PACKAGES = {
@@ -214,10 +216,14 @@ def catalog(
         "isolated_environments": isolated,
         "lab_database_configured": lab_db_configured,
         "generation": {
-            "enabled": generation_enabled,
-            "state": "authorized"
-            if generation_enabled
-            else "offline-only (no external provider calls)",
+            # No provider integration exists: `generate` is a stub that always fails, so the
+            # status never claims availability, whatever the configuration flag says.
+            "enabled": False,
+            "available": False,
+            "implemented": GENERATION_IMPLEMENTED,
+            "flag_set": bool(generation_enabled),
+            "state": "not implemented: offline stand-ins only (no external provider calls)"
+            + ("; BUILDLENS_LAB_GENERATION_ENABLED has no effect" if generation_enabled else ""),
         },
         "models": model_status,
         "lab_root": str(store.root) if store else None,
@@ -237,7 +243,8 @@ def bridge_factory(state: Any) -> Any:
             reranker=state.reranker_runtime,
             retrieval=retrieval_service(state),
             context=context_service(state),
-            generation_authorized=bool(state.settings.lab_generation_enabled),
+            generation_authorized=GENERATION_IMPLEMENTED
+            and bool(state.settings.lab_generation_enabled),
             **kwargs,
         )
 
@@ -286,7 +293,7 @@ def build_lab_service(state: Any) -> LabService:
             query_timeout_seconds=settings.lab_query_timeout_seconds,
             max_index_documents=settings.lab_max_index_documents,
             max_index_bytes=settings.lab_max_index_bytes,
-            generation_authorized=bool(settings.lab_generation_enabled),
+            generation_authorized=GENERATION_IMPLEMENTED and bool(settings.lab_generation_enabled),
         )
         state.lab_service_instance = service
     return service
