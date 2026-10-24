@@ -167,6 +167,8 @@ def _reviewed(rule: str, matched: str, path: str) -> str | None:
     password, tail = (parts.group(1), parts.group(2)) if parts else ("", "")
     if password.startswith("<"):
         return "documentation placeholder"
+    if password == "not-a-real-password":
+        return "fabricated test literal in series history (bcf2a98; placeholder in f40e84d)"
     if path.endswith(".env.example"):
         return "example file placeholder password"
     if tail.startswith("example"):
