@@ -31,6 +31,8 @@ MODULES = {
     "llamaindex": "buildlens.infrastructure.lab.workers.llamaindex.main",
     "selftest": "buildlens.infrastructure.lab.workers.common.selftest",
 }
+# In-process framework workers that can host lab-database pipelines when database-scoped.
+DATABASE_FAMILIES = frozenset({"langchain", "llamaindex"})
 EXTRA_PACKAGES = {
     "lab-langchain": (
         "langchain",
@@ -59,19 +61,31 @@ def isolated_python(name: str) -> Path:
 
 
 class LabWorkerPool:
+    """One supervised worker per (family, database scope).
+
+    Lab database authority (the BUILDLENS_LAB_PG_URL credential and the single network
+    allowance to the lab server) is given ONLY to database-scoped workers, which serve the
+    pipelines that declare `needs_lab_database`. Every other worker of the same framework is
+    a separate, uncredentialed process with no network allowance.
+    """
+
     def __init__(
         self, store: LabStore, *, max_rss_bytes: int, lab_db: tuple[str, int, str] | None = None
     ) -> None:
         self.store = store
         self.max_rss_bytes = max_rss_bytes
-        self.lab_db = lab_db  # (host, port, url) for pgvector-capable workers only
+        self.lab_db = lab_db  # (host, port, url) for database-scoped workers only
         self._workers: dict[str, SupervisedFrameworkWorker] = {}
         self._lock = threading.Lock()
 
     def index_directory_root(self) -> str:
         return str(self.store.area("indexes"))
 
-    def spec(self, family: str) -> WorkerSpec:
+    @staticmethod
+    def key(family: str, database: bool) -> str:
+        return f"{family}+lab-db" if database and family in DATABASE_FAMILIES else family
+
+    def spec(self, family: str, *, database: bool = False) -> WorkerSpec:
         common: dict[str, Any] = {
             "write_roots": [str(self.store.area("indexes"))],
             "read_roots": [str(self.store.area("indexes")), str(self.store.sandbox_base)],
@@ -100,20 +114,25 @@ class LabWorkerPool:
         spec = WorkerSpec(
             family, module_argv(MODULES[family]), python_path=buildlens_python_path(), **common
         )
-        if self.lab_db is not None and family in {"langchain", "llamaindex"}:
+        if database:
+            if family not in DATABASE_FAMILIES:
+                raise LabError("LAB_DATABASE_SCOPE_INVALID", family)
+            if self.lab_db is None:
+                raise LabError("LAB_DATABASE_NOT_CONFIGURED")
             host, port, url = self.lab_db
             spec.allow_net = [(host, port)]
             spec.secret_env = {"BUILDLENS_LAB_PG_URL": url}
         return spec
 
-    def get(self, family: str) -> SupervisedFrameworkWorker:
+    def get(self, family: str, *, database: bool = False) -> SupervisedFrameworkWorker:
+        key = self.key(family, database)
         with self._lock:
-            worker = self._workers.get(family)
+            worker = self._workers.get(key)
             if worker is None:
-                home = self.store.area("workers") / family
+                home = self.store.area("workers") / key
                 home.mkdir(mode=0o700, exist_ok=True)
-                worker = SupervisedFrameworkWorker(self.spec(family), home)
-                self._workers[family] = worker
+                worker = SupervisedFrameworkWorker(self.spec(family, database=database), home)
+                self._workers[key] = worker
             return worker
 
     def close(self) -> None:

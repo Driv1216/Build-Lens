@@ -65,6 +65,7 @@ class FrameworkWorker(Protocol):
     hello: dict[str, Any] | None
     spawn_ms: float | None
     peak_rss: int | None
+    generation: int  # changes whenever the worker process is started or discarded
 
     def request(
         self,
@@ -79,7 +80,7 @@ class FrameworkWorker(Protocol):
 
 
 class WorkerPool(Protocol):
-    def get(self, family: str) -> FrameworkWorker: ...
+    def get(self, family: str, *, database: bool = False) -> FrameworkWorker: ...
     def index_directory_root(self) -> str: ...
 
 
@@ -176,7 +177,8 @@ class LabService:
         self.max_bytes = max_index_bytes
         self.generation_authorized = generation_authorized
         self._sessions: dict[tuple[UUID, UUID], CorpusSession] = {}
-        self._loaded: dict[str, set[str]] = {}  # family -> index ids loaded in the worker
+        # (family, database) -> (worker generation, index ids loaded into that process)
+        self._loaded: dict[tuple[str, bool], tuple[int, set[str]]] = {}
         self._sources: dict[str, dict[str, str]] = {}  # index id -> artifact ref -> text
 
     # ------------------------------------------------------------------ corpus
@@ -250,7 +252,7 @@ class LabService:
         if spec.family == "native":
             return {"index_id": None, "pipeline": config.pipeline, "native": True}
         session = self.verify_corpus(project_id, snapshot_id)
-        worker = self.workers.get(spec.family)
+        worker = self.workers.get(spec.family, database=spec.needs_lab_database)
         if worker.hello is None:
             worker.request("drop", {"index_id": ""}, timeout_seconds=60)
         versions = dict((worker.hello or {}).get("versions") or {})
@@ -264,7 +266,7 @@ class LabService:
         # Artifact sources depend on current verified bytes, so the documents are identity.
         documents_digest = lab_digest([[d.ref, sha256_hex(d.text)] for d in documents])
         index_id = self.index_identity(config, session, versions, documents_digest)
-        if index_id in self._loaded.get(spec.family, set()) and self.store.index_exists(index_id):
+        if index_id in self._loaded_in(spec, worker) and self.store.index_exists(index_id):
             manifest = self.store.read_index(index_id, "index.json")
             return {**manifest, "reused_loaded_index": True}
         directory = self.store.index_dir(index_id, create=True)
@@ -292,6 +294,7 @@ class LabService:
             },
             timeout_seconds=60,
         )
+        generation = worker.generation  # the process that holds this build
         batch: list[dict[str, Any]] = []
         size = 0
         for document in documents:
@@ -314,6 +317,8 @@ class LabService:
             allowed_methods=BUILD_METHODS,
             max_calls=200_000,
         )
+        if worker.generation != generation:  # a fresh process never saw build_begin
+            raise LabError("LAB_WORKER_REPLACED", "Worker process changed during the build")
         manifest = dict(call.value)
         records = manifest.pop("embedding_records", [])
         node_spans = manifest.pop("node_spans", {})
@@ -370,8 +375,17 @@ class LabService:
                 },
             },
         )
-        self._loaded.setdefault(spec.family, set()).add(index_id)
+        self._loaded_in(spec, worker).add(index_id)
         return result
+
+    def _loaded_in(self, spec: Any, worker: FrameworkWorker) -> set[str]:
+        """Index ids loaded into the worker's CURRENT process (empty after any replacement)."""
+        key = (spec.family, spec.needs_lab_database)
+        generation, loaded = self._loaded.get(key, (None, set()))
+        if generation != worker.generation:
+            loaded = set()
+            self._loaded[key] = (worker.generation, loaded)
+        return loaded
 
     def _verify_reuse(
         self,
@@ -460,7 +474,7 @@ class LabService:
             return result
         manifest = self.build(config, project_id, snapshot_id)
         index_id = manifest["index_id"]
-        worker = self.workers.get(spec.family)
+        worker = self.workers.get(spec.family, database=spec.needs_lab_database)
         bridge = self.bridges(
             corpus=session.corpus,
             project_id=project_id,
@@ -491,7 +505,7 @@ class LabService:
         except LabError as error:
             if error.code != "LAB_INDEX_NOT_LOADED":
                 raise
-            self._loaded.get(spec.family, set()).discard(index_id)
+            self._loaded_in(spec, worker).discard(index_id)
             self.build(config, project_id, snapshot_id)
             call = worker.request(
                 "query",

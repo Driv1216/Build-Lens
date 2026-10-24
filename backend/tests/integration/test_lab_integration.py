@@ -179,6 +179,27 @@ def test_strict_reuse_is_genuine_and_transformations_are_recorded(lab: dict[str,
     assert records and all(r["raw_sha256"] != r["embed_sha256"] for r in records)
 
 
+def test_failed_build_replaces_worker_and_invalidates_loaded_indexes(lab: dict[str, Any]) -> None:
+    """S12-SUP-02: a failure during index construction discards the process, and the parent
+    no longer believes indexes loaded into that process are available."""
+    service, project, snapshot = lab["service"], lab["project"], lab["snapshot"]
+    config = _config("llamaindex.vector")
+    first = service.build(config, project, snapshot)
+    assert "reused_loaded_index" not in first
+    assert service.build(config, project, snapshot).get("reused_loaded_index") is True
+    worker = lab["app"].state.lab_workers.get("llamaindex")
+    assert worker.hello is not None
+    pid = worker.hello["pid"]
+    with pytest.raises(LabError):  # strict reuse refuses metadata injection inside the worker
+        service.build(_config("llamaindex.vector", metadata_in_embedding=True), project, snapshot)
+    assert not worker.alive()
+    rebuilt = service.build(config, project, snapshot)
+    assert "reused_loaded_index" not in rebuilt and rebuilt["index_id"] == first["index_id"]
+    assert worker.hello is not None and worker.hello["pid"] != pid
+    assert rebuilt["reuse_verification"]["verified_genuine_reuse"] is True
+    assert service.query(config, project, snapshot, QUESTION)["ranked"]
+
+
 def test_gateway_enforces_source_boundary(lab: dict[str, Any]) -> None:
     service, project, snapshot = lab["service"], lab["project"], lab["snapshot"]
     session = service.corpus_session(project, snapshot)

@@ -97,5 +97,17 @@ def test_three_pgvector_stores_match_native_exact_search(pg_engine: Engine, tmp_
                 assert must_include <= ids, (pipeline, must_include - ids)
                 for chunk_id, score in ranked:
                     assert abs(score - native_scores[chunk_id]) < 1e-5, (pipeline, chunk_id, score)
+            # S12-PRIV-04: the in-memory pipeline ran in an uncredentialed process; only the
+            # database-scoped processes received the lab URL and the lab-server allowance.
+            pool = app.state.lab_workers
+            lab_server = f"{pool.lab_db[0]}:{pool.lab_db[1]}"
+            allowances = {key: w.spec.allow_net for key, w in pool._workers.items()}
+            credentials = {
+                key: "BUILDLENS_LAB_PG_URL" in w.spec.secret_env for key, w in pool._workers.items()
+            }
+            assert credentials["langchain"] is False and allowances["langchain"] == []
+            for key in ("langchain+lab-db", "llamaindex+lab-db"):
+                assert credentials[key] is True
+                assert [f"{h}:{p}" for h, p in allowances[key]] == [lab_server]
         finally:
             app.state.lab_workers.close()

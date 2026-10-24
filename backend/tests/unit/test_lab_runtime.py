@@ -223,6 +223,174 @@ def test_guard_and_environment_scrubbing(tmp_path: Path, monkeypatch: pytest.Mon
     assert not (tmp_path / "outside.txt").exists()
 
 
+@pytest.mark.lab  # needs psutil (lab extras) for RSS supervision
+def test_guard_checks_both_paths_of_renames_replaces_and_links(tmp_path: Path) -> None:
+    """S12-SEC-01: destination of rename/replace and source of hard links are validated."""
+    rw, protected, outside = tmp_path / "rw", tmp_path / "protected", tmp_path / "outside"
+    for directory in (rw, protected, outside):
+        directory.mkdir()
+    secret = protected / "secret.txt"
+    secret.write_text("protected-secret")
+    (outside / "o.txt").write_text("outside")
+    for name in "abcdefghijkm":
+        (rw / name).write_text(name)
+    actions: list[tuple[str, str, list[Path | str]]] = [
+        ("rename_within", "rename", [rw / "a", rw / "a2"]),
+        ("replace_within", "replace", [rw / "b", rw / "c"]),
+        ("rename_into_protected", "rename", [rw / "d", protected / "d"]),
+        ("replace_over_protected", "replace", [rw / "e", secret]),
+        ("rename_out_of_root", "rename", [rw / "f", outside / "f"]),
+        ("rename_from_protected", "rename", [secret, rw / "stolen"]),
+        ("link_protected_source", "link", [secret, rw / "alias"]),
+        ("read_protected_alias", "read", [rw / "alias"]),
+        ("link_outside_source", "link", [outside / "o.txt", rw / "alias2"]),
+        ("link_within", "link", [rw / "g", rw / "g2"]),
+        ("link_into_protected", "link", [rw / "h", protected / "h"]),
+        ("move_into_protected", "move", [rw / "i", protected / "i"]),
+        ("copy_into_protected", "copyfile", [rw / "j", protected / "j"]),
+        ("symlink_to_protected", "symlink", [secret, rw / "sym"]),
+        ("read_through_symlink", "read", [rw / "sym"]),
+        ("chdir_into_root", "chdir", [rw]),
+        ("rename_dir_fd_within", "rename_dir_fd", [rw, "k", rw, "k2"]),
+        ("rename_dir_fd_out_of_root", "rename_dir_fd", [rw, "m", outside, "m"]),
+    ]
+    worker = _worker(tmp_path, write_roots=[str(rw)])
+    try:
+        outcomes = worker.request(
+            "probe_fs",
+            {"actions": [[n, op, [str(a) for a in args]] for n, op, args in actions]},
+            timeout_seconds=30,
+        ).value["outcomes"]
+    finally:
+        worker.close()
+    assert outcomes == {
+        "rename_within": "allowed",
+        "replace_within": "allowed",
+        "rename_into_protected": "denied",
+        "replace_over_protected": "denied",
+        "rename_out_of_root": "denied",
+        "rename_from_protected": "denied",
+        "link_protected_source": "denied",
+        "read_protected_alias": "oserror:2",  # the alias was never created
+        "link_outside_source": "denied",
+        "link_within": "allowed",
+        "link_into_protected": "denied",
+        "move_into_protected": "denied",
+        "copy_into_protected": "denied",
+        "symlink_to_protected": "allowed",  # creating the link is a write inside the root
+        "read_through_symlink": "denied",  # following it resolves into the protected root
+        "chdir_into_root": "denied",
+        "rename_dir_fd_within": "allowed",
+        "rename_dir_fd_out_of_root": "denied",
+    }
+    assert sorted(p.name for p in protected.iterdir()) == ["secret.txt"]
+    assert secret.read_text() == "protected-secret"
+    assert sorted(p.name for p in outside.iterdir()) == ["o.txt"]
+    assert sorted(p.name for p in rw.iterdir()) == sorted(
+        ["a2", "c", "d", "e", "f", "g", "g2", "h", "i", "j", "k2", "m", "sym"]
+    )
+
+
+@pytest.mark.lab  # needs psutil (lab extras) for RSS supervision
+def test_failed_operations_kill_and_replace_the_worker(tmp_path: Path) -> None:
+    """S12-SUP-02: an ok=false response never leaves a reusable process behind."""
+    worker = _worker(tmp_path)
+    try:
+        first = worker.request("remember", {"value": "kept"}, timeout_seconds=30).value["pid"]
+        with pytest.raises(LabError) as caught:
+            worker.request("no_such_operation", {}, timeout_seconds=30)
+        assert caught.value.code == "WORKER_OPERATION_UNKNOWN"
+        assert not worker.alive() and worker.hello is None
+        recalled = worker.request("recall", {}, timeout_seconds=30).value
+        assert recalled["pid"] != first and recalled["value"] is None
+        second = recalled["pid"]
+        with pytest.raises(LabError) as caught:
+            worker.request("poison", {}, timeout_seconds=30)  # mutates state, then fails
+        assert caught.value.code == "WORKER_EXCEPTION"
+        assert not worker.alive()
+        recalled = worker.request("recall", {}, timeout_seconds=30).value
+        assert recalled["pid"] not in {first, second} and recalled["value"] is None
+
+        def oversized(method: str, params: dict[str, Any], deadline: float) -> Any:
+            return "x" * MAX_FRAME_BYTES  # reply cannot be framed; worker is mid-request
+
+        with pytest.raises(LabError) as caught:
+            worker.request(
+                "callback",
+                {"method": "embed_query"},
+                timeout_seconds=30,
+                callbacks=oversized,
+                allowed_methods=frozenset({"embed_query"}),
+                max_calls=1,
+            )
+        assert caught.value.code == "LAB_TRANSFER_TOO_LARGE"
+        assert not worker.alive()
+        assert worker.request("echo", {"ok": 1}, timeout_seconds=30).value == {"ok": 1}
+    finally:
+        worker.close()
+
+
+@pytest.mark.lab  # needs psutil (lab extras) for RSS supervision
+def test_lab_database_authority_is_scoped_to_database_workers(tmp_path: Path) -> None:
+    """S12-PRIV-04: with a lab DB configured, only database-scoped workers get its authority."""
+    import dataclasses
+
+    from buildlens.infrastructure.lab.service import LabWorkerPool
+    from buildlens.infrastructure.lab.store import LabStore
+
+    url = "postgresql+psycopg://lab_role:not-a-real-password@127.0.0.1:55412/buildlens_lab"
+    pool = LabWorkerPool(
+        LabStore(tmp_path / ".buildlens-eval" / "lab"),
+        max_rss_bytes=3 * 1024**3,
+        lab_db=("127.0.0.1", 55412, url),
+    )
+    for family in ("langchain", "llamaindex"):
+        plain, scoped = pool.spec(family), pool.spec(family, database=True)
+        assert plain.secret_env == {} and plain.allow_net == []
+        assert scoped.secret_env == {"BUILDLENS_LAB_PG_URL": url}
+        assert scoped.allow_net == [("127.0.0.1", 55412)]
+        assert pool.key(family, False) != pool.key(family, True)
+    with pytest.raises(LabError) as caught:
+        pool.spec("selftest", database=True)
+    assert caught.value.code == "LAB_DATABASE_SCOPE_INVALID"
+    observed = {}
+    for database in (False, True):
+        # The exact environment and guard policy the pool builds, run in a real process.
+        spec = dataclasses.replace(
+            pool.spec("langchain", database=database),
+            framework="selftest",
+            argv=module_argv("buildlens.infrastructure.lab.workers.common.selftest"),
+        )
+        worker = SupervisedFrameworkWorker(spec, tmp_path / f"worker-{database}")
+        try:
+            probe = worker.request("probe_guard", {}, timeout_seconds=30).value
+            observed[database] = (
+                "BUILDLENS_LAB_PG_URL" in probe["env_keys"],
+                worker.hello["guard"]["allow_net"] if worker.hello else None,
+            )
+        finally:
+            worker.close()
+    assert observed == {False: (False, []), True: (True, ["127.0.0.1:55412"])}
+
+
+def test_memory_supervision_fails_closed_when_lost_mid_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S12-SUP-03: losing the RSS measurement of a live worker kills it."""
+    from buildlens.infrastructure.lab import supervisor
+
+    readings = iter([123_456_789])  # the startup check succeeds, every later read fails
+    monkeypatch.setattr(supervisor, "_rss", lambda pid: next(readings, None))
+    worker = _worker(tmp_path)
+    try:
+        with pytest.raises(LabError) as caught:
+            worker.request("sleep", {"seconds": 3}, timeout_seconds=30)
+        assert caught.value.code == "LAB_MEMORY_SUPERVISION_LOST"
+        assert not worker.alive()
+    finally:
+        worker.close()
+
+
 # ------------------------------------------------------------------ architecture boundaries
 
 FRAMEWORKS = (

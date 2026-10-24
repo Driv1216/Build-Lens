@@ -3,8 +3,11 @@
 Each framework environment runs in its own spawned process (own session/process group).
 The parent enforces: a scrubbed environment allow-list, a handshake with protocol check,
 bounded frames, an absolute deadline per request, a per-request callback allow-list and
-call budget, sampled RSS limits, and kill-and-replace on any failure. A failed worker is
-never reused; the next request starts a fresh process.
+call budget, sampled RSS limits (an unmeasurable live worker is killed), and kill-and-replace
+on any failure. Any failed request, including a well-formed `ok: false` response from the
+worker, kills the process: a failed worker is never reused, and the next request starts a
+fresh one. `generation` changes whenever a process is started or discarded, so callers can
+tell that state they loaded into an earlier process is gone.
 """
 
 from __future__ import annotations
@@ -82,6 +85,7 @@ class SupervisedFrameworkWorker:
         self.hello: dict[str, Any] | None = None
         self.spawn_ms: float | None = None
         self.peak_rss: int | None = None
+        self.generation = 0  # bumped on every start and every kill
         self._request_id = 0
 
     # ------------------------------------------------------------------ lifecycle
@@ -127,6 +131,7 @@ class SupervisedFrameworkWorker:
 
     def _start(self, deadline: float) -> None:
         started = time.perf_counter()
+        self.generation += 1
         self._process = subprocess.Popen(
             self.spec.argv,
             stdin=subprocess.PIPE,
@@ -180,11 +185,13 @@ class SupervisedFrameworkWorker:
     def kill(self) -> None:
         process = self._process
         self._process = None
+        self.hello = None
         if self._reader is not None:
             self._reader.close()
             self._reader = None
         if process is None:
             return
+        self.generation += 1
         try:
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=2)
@@ -247,14 +254,21 @@ class SupervisedFrameworkWorker:
                 return frame
             if self._process is not None:
                 rss = _rss(self._process.pid)
-                if rss is not None:
-                    self.peak_rss = max(self.peak_rss or 0, rss)
-                    if rss > self.spec.max_rss_bytes:
-                        self.kill()
-                        raise LabError("LAB_WORKER_MEMORY_LIMIT")
                 if self._process.poll() is not None:
                     self.kill()
                     raise LabError("LAB_WORKER_CRASHED")
+                if rss is None:
+                    # Fail closed: a live worker whose memory can no longer be measured is
+                    # unsupervised (an exit between the two checks is reported as a crash).
+                    self.kill()
+                    raise LabError(
+                        "LAB_MEMORY_SUPERVISION_LOST",
+                        "Worker RSS could not be measured during a request; worker killed",
+                    )
+                self.peak_rss = max(self.peak_rss or 0, rss)
+                if rss > self.spec.max_rss_bytes:
+                    self.kill()
+                    raise LabError("LAB_WORKER_MEMORY_LIMIT")
 
     # ------------------------------------------------------------------ RPC
 
@@ -273,57 +287,72 @@ class SupervisedFrameworkWorker:
             if not self.alive():
                 self.kill()
                 self._start(deadline)
-            self._request_id += 1
-            request_id = self._request_id
-            started = time.perf_counter()
-            bridge_ms = 0.0
-            calls = 0
-            self._send({"kind": "request", "id": request_id, "op": op, "params": params})
-            while True:
-                frame = self._read(deadline)
-                kind = frame.get("kind")
-                if kind == "call":
-                    calls += 1
-                    method = str(frame.get("method"))
-                    call_id = frame.get("id")
-                    if method not in allowed_methods or callbacks is None:
-                        reply = _reply_error(call_id, "LAB_CALLBACK_NOT_ALLOWED", method)
-                    elif calls > max_calls:
-                        reply = _reply_error(call_id, "LAB_CALLBACK_BUDGET_EXCEEDED", method)
-                    else:
-                        call_started = time.perf_counter()
-                        try:
-                            result = callbacks(method, dict(frame.get("params") or {}), deadline)
-                            reply = {"kind": "reply", "id": call_id, "ok": True, "result": result}
-                        except LabError as error:
-                            reply = _reply_error(call_id, error.code, error.message)
-                        except Exception as error:  # never leak details into the worker
-                            reply = _reply_error(
-                                call_id, "LAB_CALLBACK_FAILED", type(error).__name__
-                            )
-                        bridge_ms += (time.perf_counter() - call_started) * 1000
-                    self._send(reply)
-                    continue
-                if kind != "response" or frame.get("id") != request_id:
-                    self.kill()
-                    raise LabError("LAB_WORKER_PROTOCOL_ERROR")
-                result = frame.get("result") or {}
-                if not frame.get("ok"):
-                    failure = frame.get("error") or {}
-                    raise LabWorkerError(
-                        str(failure.get("code", "WORKER_FAILED")),
-                        str(failure.get("message", "")),
-                        result.get("steps") or [],
-                        result.get("guard_denials") or [],
-                    )
-                return WorkerCall(
-                    value=result.get("value"),
-                    steps=list(result.get("steps") or []),
-                    bridge_calls=dict(result.get("bridge_calls") or {}),
-                    guard_denials=list(result.get("guard_denials") or []),
-                    elapsed_ms=(time.perf_counter() - started) * 1000,
-                    bridge_ms=bridge_ms,
+            try:
+                return self._exchange(op, params, deadline, callbacks, allowed_methods, max_calls)
+            except BaseException:
+                # Kill-and-replace on ANY failure: a worker that reported an error, or was
+                # left mid-request (e.g. an unframeable reply), may hold contaminated state.
+                self.kill()
+                raise
+
+    def _exchange(
+        self,
+        op: str,
+        params: dict[str, Any],
+        deadline: float,
+        callbacks: CallbackHandler | None,
+        allowed_methods: frozenset[str],
+        max_calls: int,
+    ) -> WorkerCall:
+        self._request_id += 1
+        request_id = self._request_id
+        started = time.perf_counter()
+        bridge_ms = 0.0
+        calls = 0
+        self._send({"kind": "request", "id": request_id, "op": op, "params": params})
+        while True:
+            frame = self._read(deadline)
+            kind = frame.get("kind")
+            if kind == "call":
+                calls += 1
+                method = str(frame.get("method"))
+                call_id = frame.get("id")
+                if method not in allowed_methods or callbacks is None:
+                    reply = _reply_error(call_id, "LAB_CALLBACK_NOT_ALLOWED", method)
+                elif calls > max_calls:
+                    reply = _reply_error(call_id, "LAB_CALLBACK_BUDGET_EXCEEDED", method)
+                else:
+                    call_started = time.perf_counter()
+                    try:
+                        result = callbacks(method, dict(frame.get("params") or {}), deadline)
+                        reply = {"kind": "reply", "id": call_id, "ok": True, "result": result}
+                    except LabError as error:
+                        reply = _reply_error(call_id, error.code, error.message)
+                    except Exception as error:  # never leak details into the worker
+                        reply = _reply_error(call_id, "LAB_CALLBACK_FAILED", type(error).__name__)
+                    bridge_ms += (time.perf_counter() - call_started) * 1000
+                self._send(reply)
+                continue
+            if kind != "response" or frame.get("id") != request_id:
+                self.kill()
+                raise LabError("LAB_WORKER_PROTOCOL_ERROR")
+            result = frame.get("result") or {}
+            if not frame.get("ok"):
+                failure = frame.get("error") or {}
+                raise LabWorkerError(
+                    str(failure.get("code", "WORKER_FAILED")),
+                    str(failure.get("message", "")),
+                    result.get("steps") or [],
+                    result.get("guard_denials") or [],
                 )
+            return WorkerCall(
+                value=result.get("value"),
+                steps=list(result.get("steps") or []),
+                bridge_calls=dict(result.get("bridge_calls") or {}),
+                guard_denials=list(result.get("guard_denials") or []),
+                elapsed_ms=(time.perf_counter() - started) * 1000,
+                bridge_ms=bridge_ms,
+            )
 
 
 class LabWorkerError(LabError):

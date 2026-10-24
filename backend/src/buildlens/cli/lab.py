@@ -461,21 +461,42 @@ def provision(
     database: str = typer.Option("buildlens_lab"),
     role: str = typer.Option("buildlens_lab_app"),
     credentials: Path = typer.Option(..., help="Where to write the 0600 env file with the lab URL"),
+    dedicated_server: bool = typer.Option(
+        False,
+        "--dedicated-server",
+        help="Confirm a disposable lab-only server: allows revoking PUBLIC CONNECT on `postgres` "
+        "(server-wide). Refused if the server holds any other database.",
+    ),
 ) -> None:
-    """Create a separate lab database and a least-privilege role (never the production DB)."""
+    """Create a separate lab database and a least-privilege role (never the production DB).
+
+    Without --dedicated-server only the lab role and lab database are changed; provisioning
+    refuses (changing nothing) if PUBLIC can still CONNECT to another database on the server.
+    """
     from buildlens.infrastructure.lab.database import provision_lab_database
 
     settings = get_settings()
-    url = provision_lab_database(
-        admin_url, database, role, secrets.token_urlsafe(24), production_url=settings.database_url
-    )
+    try:
+        provisioned = provision_lab_database(
+            admin_url,
+            database,
+            role,
+            secrets.token_urlsafe(24),
+            production_url=settings.database_url,
+            dedicated_server=dedicated_server,
+        )
+    except LabError as error:
+        typer.echo(f"{error.code}: {error.message}", err=True)
+        raise typer.Exit(code=1) from None
     credentials.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(credentials, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as stream:
-        stream.write(f"BUILDLENS_LAB_DATABASE_URL={url}\n")
+        stream.write(f"BUILDLENS_LAB_DATABASE_URL={provisioned.url}\n")
     typer.echo(
         f"lab database {database} with role {role}; credentials written to {credentials} (0600)"
     )
+    for name in provisioned.server_wide_revocations:
+        typer.echo(f"server-wide change: revoked PUBLIC CONNECT on database {name}")
 
 
 def pipelines_table() -> list[dict[str, Any]]:

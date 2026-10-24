@@ -13,34 +13,56 @@ Policy (from BUILDLENS_LAB_GUARD, a JSON object set by the parent):
 
 * network: deny every socket connect/bind/getaddrinfo except listed (host, port) pairs;
 * subprocesses/exec: always denied;
-* writes, deletes, renames, chmod, mkdir: only beneath write_roots;
+* writes, deletes, chmod, mkdir: only beneath write_roots;
+* rename/replace/move: the source AND the destination must be beneath write_roots;
+* hard links: the source AND the destination must be beneath write_roots (a hard link
+  aliases the source inode, so linking a protected or out-of-root file is denied);
+* paths relative to a directory descriptor (dir_fd) are resolved through that descriptor,
+  and descriptor-only mutations (fchmod etc.) through the descriptor's path; anything that
+  cannot be resolved is denied;
+* chdir is denied, so relative paths always resolve against the fixed working directory;
 * reads beneath protected_roots (e.g. the user's home and registered repositories) are
   denied unless they are also beneath read_roots (venv, package source, index, sandbox).
+
+Known limitation: the `open` audit event carries no dir_fd, so a relative open through a
+directory descriptor is checked as if relative to the working directory.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sys
 from typing import Any
 
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
-_FS_MUTATIONS = {
-    "os.remove": 0,
-    "os.rename": 0,
-    "os.rmdir": 0,
-    "os.mkdir": 0,
-    "os.chmod": 0,
-    "os.chown": 0,
-    "os.symlink": 1,
-    "os.link": 1,
-    "os.truncate": 0,
-    "os.utime": 0,
-    "shutil.rmtree": 0,
-    "shutil.copyfile": 1,
-    "shutil.move": 1,
+# event -> (path argument index, dir_fd argument index or None) for every path it mutates.
+_FS_MUTATIONS: dict[str, tuple[tuple[int, int | None], ...]] = {
+    "os.remove": ((0, 1),),
+    "os.rmdir": ((0, 1),),
+    "os.mkdir": ((0, 2),),
+    "os.chmod": ((0, 2),),
+    "os.chown": ((0, 3),),
+    "os.utime": ((0, 3),),
+    "os.truncate": ((0, None),),
+    "os.chflags": ((0, None),),
+    "os.setxattr": ((0, None),),
+    "os.removexattr": ((0, None),),
+    "os.rename": ((0, 2), (1, 3)),  # also raised by os.replace
+    "os.link": ((0, 2), (1, 3)),
+    "os.symlink": ((1, 2),),  # the target is checked when opened (realpath)
+    "shutil.rmtree": ((0, 1),),
+    "shutil.chown": ((0, None),),
+    "shutil.copyfile": ((1, None),),
+    "shutil.copymode": ((1, None),),
+    "shutil.copystat": ((1, None),),
+    "shutil.copytree": ((1, None),),
+    "shutil.move": ((0, None), (1, None)),
+    "shutil.unpack_archive": ((1, None),),
 }
+_UNRESOLVED = "<unresolved-path>"
+
 _EXEC_EVENTS = {
     "subprocess.Popen",
     "os.system",
@@ -78,6 +100,34 @@ def _norm(path: Any) -> str | None:
         return os.path.realpath(os.fspath(path))
     except (OSError, ValueError):
         return os.path.abspath(os.fspath(path))
+
+
+def _fd_path(fd: int) -> str | None:
+    try:
+        if hasattr(fcntl, "F_GETPATH"):  # macOS
+            raw = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
+            return os.fsdecode(raw.split(b"\0", 1)[0]) or None
+        return os.readlink(f"/proc/self/fd/{fd}")  # Linux
+    except (OSError, ValueError):
+        return None
+
+
+def _resolve(path: Any, dir_fd: Any) -> str | None:
+    """Mutation target: descriptors and dir_fd-relative paths resolve through the descriptor."""
+    if isinstance(path, int):
+        base = _fd_path(path)
+        return _norm(base) if base is not None else _UNRESOLVED
+    if isinstance(path, bytes):
+        path = os.fsdecode(path)
+    if not isinstance(path, (str, os.PathLike)):
+        return None
+    raw = os.fsdecode(os.fspath(path))
+    if isinstance(dir_fd, int) and dir_fd >= 0 and not os.path.isabs(raw):
+        base = _fd_path(dir_fd)
+        if base is None:
+            return _UNRESOLVED
+        raw = os.path.join(base, raw)
+    return _norm(raw)
 
 
 def _beneath(path: str, roots: tuple[str, ...]) -> bool:
@@ -121,11 +171,16 @@ def _hook(event: str, args: tuple[Any, ...]) -> None:
             _deny("open-read", _relative(path))
         return
     if event in _FS_MUTATIONS:
-        index = _FS_MUTATIONS[event]
-        path = _norm(args[index]) if len(args) > index else None
-        if path is not None and not _beneath(path, _state["write_roots"]):
-            _deny(event, _relative(path))
+        for index, fd_index in _FS_MUTATIONS[event]:
+            if len(args) <= index:
+                continue
+            dir_fd = args[fd_index] if fd_index is not None and len(args) > fd_index else None
+            path = _resolve(args[index], dir_fd)
+            if path is not None and not _beneath(path, _state["write_roots"]):
+                _deny(event, _relative(path))
         return
+    if event == "os.chdir":  # also raised by os.fchdir
+        _deny(event, "working directory is fixed")
     if event in _EXEC_EVENTS or event.startswith("os.exec") or event.startswith("os.spawn"):
         _deny(event, "process creation")
     if event in {"socket.connect", "socket.sendto", "socket.bind"}:
