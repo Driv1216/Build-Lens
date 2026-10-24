@@ -69,6 +69,19 @@ clean; frontend unchanged. The first gate run exposed a startup race in the new 
 the slower base install (reported `…_LOST` instead of `…_UNAVAILABLE`, both fail closed); fixed in
 `14ff248`, then 20/20 repeated runs passed.
 
+**Focused re-review, 2026-10-24: S12-SEC-06 corrected in `4706af0` (awaiting re-review; not
+accepted).** The re-review confirmed the other four corrections but reproduced a guard bypass: the
+`open` audit event omits `dir_fd`, so descending from an unprotected ancestor with descriptor-relative
+`os.open` read (and, with a writable cwd, wrote) protected files. The guard now denies every relative
+open (fail closed, including legitimate descriptor-relative opens in a write root), applies the
+protected-read rule to directory listings, requires absolute write-root SQLite paths and denies
+symlink creation; vendored copy identical. A spawned-worker regression test (two cwd variants) fails
+on the unfixed guard and passes now; 195 passed on Python 3.14.6 and 3.11.15, base install 176. All
+framework pipelines and LD-1 loaders were qualified under the stricter guard. Unaudited calls
+(`os.stat`/`access`/`readlink`, `mkfifo`/`mknod`) and native code remain outside the guard; it is
+still defense in depth, not a sandbox. Open item from the re-review: provisioning preflights only
+PUBLIC CONNECT, not direct grants to a pre-existing role.
+
 **Limitations and deviations.** (1) macOS renumbered the repository volume's `st_dev`; the
 production secure reader refuses the original snapshot root (`ROOT_CHANGED`). Lab artifact
 experiments used an explicit lab-only opt-in that requires the recorded inode and per-file sha256
