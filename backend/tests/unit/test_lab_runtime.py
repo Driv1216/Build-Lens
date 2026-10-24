@@ -379,9 +379,11 @@ def test_memory_supervision_fails_closed_when_lost_mid_request(
     """S12-SUP-03: losing the RSS measurement of a live worker kills it."""
     from buildlens.infrastructure.lab import supervisor
 
-    readings = iter([123_456_789])  # the startup check succeeds, every later read fails
-    monkeypatch.setattr(supervisor, "_rss", lambda pid: next(readings, None))
     worker = _worker(tmp_path)
+    # Measurable while starting (however many startup polls happen), lost once it is running.
+    monkeypatch.setattr(
+        supervisor, "_rss", lambda pid: 123_456_789 if worker.hello is None else None
+    )
     try:
         with pytest.raises(LabError) as caught:
             worker.request("sleep", {"seconds": 3}, timeout_seconds=30)

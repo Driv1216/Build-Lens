@@ -260,7 +260,13 @@ class SupervisedFrameworkWorker:
                 if rss is None:
                     # Fail closed: a live worker whose memory can no longer be measured is
                     # unsupervised (an exit between the two checks is reported as a crash).
+                    starting = self.hello is None
                     self.kill()
+                    if starting:
+                        raise LabError(
+                            "LAB_MEMORY_SUPERVISION_UNAVAILABLE",
+                            "Worker RSS cannot be measured; refusing to run unsupervised",
+                        )
                     raise LabError(
                         "LAB_MEMORY_SUPERVISION_LOST",
                         "Worker RSS could not be measured during a request; worker killed",
