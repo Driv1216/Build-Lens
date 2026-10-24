@@ -82,6 +82,22 @@ framework pipelines and LD-1 loaders were qualified under the stricter guard. Un
 still defense in depth, not a sandbox. Open item from the re-review: provisioning preflights only
 PUBLIC CONNECT, not direct grants to a pre-existing role.
 
+**Final targeted corrections, 2026-10-24 (commits `9be09a4`, `4a684c7`; awaiting review; not
+accepted).** (1) Composite evidence: LlamaIndex sentence windows were credited for their whole
+bounding span without any parent check; the worker now reports each constituent's span and hash,
+the parent verifies every constituent against the source and the delivered text, and coverage
+credits only verified segments (LangChain windows are exact slices and are hash-verified as
+such). (2) The `kind` filter was silently ignored for `artifact_sources`; it is now rejected
+there and an unknown kind never matches. (3) Generation was reported as "authorized" when the
+flag was set although no provider integration exists; it is now reported not enabled, not
+available and not implemented, and `generate` is never offered to workers. (4) Provisioning now
+refuses, before any change, a pre-existing role holding CONNECT on another database through its
+own, owner or inherited grants (previously the lab database was created before the refusal).
+Regression tests reproduce each defect on the unfixed code. 206 passed on Python 3.14.6 and
+3.11.15, base install 186. Scoring semantics changed, so the sentence-window experiments and
+LD-2 were regenerated: no coverage, ranking or derived metric changed (details in
+`docs/FRAMEWORK_LAB.md` section 4); the retained benchmark figures stand.
+
 **Limitations and deviations.** (1) macOS renumbered the repository volume's `st_dev`; the
 production secure reader refuses the original snapshot root (`ROOT_CHANGED`). Lab artifact
 experiments used an explicit lab-only opt-in that requires the recorded inode and per-file sha256
