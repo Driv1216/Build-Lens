@@ -48,6 +48,27 @@ react-table re-render loop; stale-probe lock; probe sending listing-only fields;
 error echoing a (never-used) generated password; RSS supervision silently skipped without psutil
 (now fails closed).
 
+**Corrections after independent technical review, 2026-10-24 (commits `bcf2a98`, `14ff248`;
+awaiting focused re-review; not accepted).** The review of bundle `04a32260…` accepted the benchmark evidence but
+reproduced worker defects, now corrected with regression tests that fail on the unfixed code:
+S12-SEC-01 the audit-hook guard checked only the source of rename/replace and only the destination
+of hard links (a protected file could be overwritten, linked and read) — both paths are now
+checked, `dir_fd`/descriptor mutations are resolved, `chdir` is denied, vendored copy identical;
+S12-SUP-02 a worker returning `ok: false` was reused — every failed request now kills and replaces
+the process, and loaded-index state follows the worker generation; S12-SUP-03 RSS supervision
+failed open after startup — losing the measurement now kills the worker; S12-PRIV-04 every
+framework worker received the lab DB credential when one was configured — only database-scoped
+workers serving LS-1/2/3 do now; S12-OPS-05 provisioning revoked PUBLIC privileges on every
+database of the server — it is now scoped to the lab database, refuses (changing nothing) on a
+shared server, and makes its single server-wide change only with a validated `--dedicated-server`.
+Audit hooks remain defense in depth, not a sandbox. Benchmark, parity and LD runs were not
+repeated (successful-request analytics are unchanged); the full lab suite, lab-database stores and
+the real-model gate were rerun on `14ff248`: 193 passed on Python 3.14.6 and 3.11.15 (incl. lab and
+lab-database tests, none skipped), base install 176 passed, real-model 4/4, ruff/format/mypy
+clean; frontend unchanged. The first gate run exposed a startup race in the new RSS check under
+the slower base install (reported `…_LOST` instead of `…_UNAVAILABLE`, both fail closed); fixed in
+`14ff248`, then 20/20 repeated runs passed.
+
 **Limitations and deviations.** (1) macOS renumbered the repository volume's `st_dev`; the
 production secure reader refuses the original snapshot root (`ROOT_CHANGED`). Lab artifact
 experiments used an explicit lab-only opt-in that requires the recorded inode and per-file sha256
