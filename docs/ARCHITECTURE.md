@@ -382,8 +382,8 @@ findings: [FRAMEWORK_LAB.md](FRAMEWORK_LAB.md).
 
 ## Stage 13 Milestone A — multi-language structure
 
-**Status: Milestone A implemented, 2026-10-25; Milestones B–D not started.** Design, deviations
-and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
+**Status: Milestones A and B implemented, 2026-10-25; Milestones C–D not started.** Design,
+deviations and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
 
 **Producers**
 - Structural runs keep the frozen Python declaration producer. The run-level `producer_contract` still means *the Python declaration producer only*.
@@ -405,5 +405,14 @@ and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
 **Migration and limits**
 - Migration `0010` is additive, and its downgrade refuses while Stage 13 evidence exists.
 - Nothing is executed or resolved: no Node, no tsconfig, no module resolution in production.
-- Import resolution, the semantic catalog and AI interpretations belong to later milestones.
+- AI interpretations belong to later milestones.
+
+**Semantic catalog (Milestone B)**
+- `application/semantic_catalog.py` builds a snapshot-owned, immutable catalog run as a pure function of persisted rows: the active structural run, the active fresh processing run's chunks, and the inventory. No source reader is called on this path.
+- `application/fact_renderer.py` renders every `F#` fact from its cited rows. Read-time detail re-loads those rows with the same normalisers and compares digests.
+- `application/recognizers.py` holds the six labelled recognizers.
+- `infrastructure/persistence/semantic.py` publishes under the snapshot lock with captured authority and a `superseded` flag; failures are retained.
+- Migration `0011` adds the four catalog tables and `project_versions.active_semantic_catalog_run_id`. Its downgrade refuses while catalog runs exist.
+- A catalog is stale when its captured structural or processing authority changes, processing freshness fails, or the catalog contract changes. Current reads then return 409; explicit history stays readable.
+- The read-only `/explore` UI and the snapshot panel's "Semantic catalog" section sit over `api/semantic_routes.py`.
 

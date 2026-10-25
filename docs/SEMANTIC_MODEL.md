@@ -1,14 +1,14 @@
 # Stage 13 — Semantic Project Model
 
-**Status (2026-10-25): Milestone A (multi-language structural foundation) implemented and
-verified locally.** Milestones B (deterministic semantic catalog), C (controlled AI
-generation) and D (evaluation and hardening) are **not started**. Nothing in this stage
+**Status (2026-10-25): Milestones A (multi-language structural foundation) and B
+(deterministic semantic catalog) implemented and verified locally.** Milestones C (controlled
+AI generation) and D (evaluation and hardening) are **not started**. Nothing in this stage
 generates or stores AI text yet.
 
 The approved plan (revision 4) separates deterministic facts from AI interpretations. It keeps
 every existing Stage 1–12 producer byte-identical and adds capabilities as separately contracted,
-per-artifact passes. This document records what Milestone A actually built and verified. The
-contracts for later milestones are design commitments, not implemented behaviour.
+per-artifact passes. This document records what Milestones A and B actually built and verified.
+The contracts for later milestones are design commitments, not implemented behaviour.
 
 ## Milestone A: what exists
 
@@ -82,8 +82,77 @@ hosted CI.
 
 Reports are retained under `.buildlens-eval/runs/stage13-milestone-a-20261025/` (git-ignored).
 
+## Milestone B: deterministic semantic catalog
+
+`POST …/semantic/catalog` builds an immutable, snapshot-owned catalog run from PostgreSQL only.
+It reads the active current structural run, the active fresh processing run (chunk rows) and the
+inventory. **It never reads repository files**: processing is consulted only for authority and
+freshness, and no source reader is ever called. The run is
+published with the existing pattern: snapshot `FOR UPDATE`, captured authority and pointer, a
+`superseded` flag, and retained failures. Nothing in it is AI text (F4).
+
+| Capability | Implementation |
+|---|---|
+| Builder | `application/semantic_catalog.py`: `build_catalog` is a pure function of the normalised rows. `SemanticCatalogService` adds authority, the in-process lock, freshness and reads. |
+| Entities | Keys come from existing stable identities: `file:<artifact identity>`, `symbol:<symbol identity>`, `component:`/`hook:<symbol identity>`, `api_endpoint:<handler identity>:<recognizer>:<n>`, `db_table:<class identity>` or `db_table:<artifact identity>:<n>`. Role entities point to their `subject_entity_key`. |
+| Stored-source coverage (§3.4) | Per entity: `complete`, `incomplete` (no chunk for the entity or for a declaration inside it), `unavailable` (not processed, processing failed, stale dependency, structure failed, non-current TS contract) or `coordinate_mismatch` (overlap, region start, outside region, chunk hash/length). Whitespace gaps are counted. |
+| Generation-context coverage (§4.2) | `full` for symbols within the byte ceiling; `outline` for files and for containers that exceed it, with residual chunks, child signature facts and an explicit omitted-region list; otherwise `not_eligible` with a reason. G4: a partially parsed file entity is `not_eligible` (`PARTIAL_PARSE_ARTIFACT`). `package_digest` binds mode, chunk keys and hashes, fact digests, neighbour facts and omitted regions. |
+| Facts (`F#`) | `application/fact_renderer.py` (`fact-renderer.v1`). Kinds: signature, import, export, reference, base, recognizer_match, relation, limitation. Each fact stores `source_refs` (table, row id, producer contract digest, locator), a `derived` record and `fact_digest = sha256(renderer, text, refs, derived)`. Rendered text never contains database ids. |
+| Read-time verification (F2) | Entity detail re-loads every cited row with the same normalisers, checks contract and locator, re-renders and compares the digest (`verified`, `FACT_SOURCE_MISSING`, `FACT_PROVENANCE_CHANGED`, `FACT_DIGEST_MISMATCH`, `FACT_RENDERER_CHANGED`). Evidence chunks are hash- and length-verified; failing content is withheld. |
+| Recognizers | `application/recognizers.py`: `fastapi-route.v1`, `flask-route.v1`, `sqlalchemy-declarative.v1`, `alembic-table.v1`, `react-component.v1`, `react-hook.v1` (labelled naming convention). Each match lists conditions met and unmet; strength is `pattern_with_local_evidence` or `pattern_only`. No numeric confidence. |
+| Import resolution | `import-resolution.v1` against the snapshot inventory: `resolved`, `ambiguous`, `not_found`, `external`, `not_attempted` (path aliases such as `@/`). Python roots are the repository root, each `pyproject.toml`/`setup.py`/`setup.cfg` directory and its `src/`. A directory without `__init__.py` never shadows an installed package. TS/JS follows a fixed extension and `index` priority. |
+| Relations | contains, imports, exports, references (same file only), renders, uses_hook and inherits (same file or one-hop import binding), defines_route, maps_table. Each relation is backed by a `relation` fact. There is no cross-file call graph. |
+| Reproducibility | `input_authority_digest` short-circuits an unchanged rebuild. `catalog_digest` covers sorted rows without row ids or timestamps. `portable_digest` replaces identities with locator, qualified name, kind and ordinal, so two databases holding the same bytes agree. |
+| Freshness (§5.3) | A catalog is stale when the structural or processing authority it captured is no longer active, processing freshness fails, or the catalog contract (versions, ceiling, current extractor digests) changes. Current reads return 409 `SEMANTIC_CATALOG_STALE` (or `SEMANTIC_CATALOG_REQUIRED`); explicit `run_id` history stays readable and is labelled. |
+| Persistence | Migration `0011_semantic_catalog` (additive): `semantic_catalog_runs`, `semantic_entities`, `semantic_facts`, `semantic_relations`, plus `project_versions.active_semantic_catalog_run_id` (composite deferred FK). Downgrade refuses while catalog runs exist. The tables are listed by `buildlens diagnostics`. |
+| API | `api/semantic_routes.py`: `POST|GET /catalog`, `GET /catalog/runs[/{id}]`, `GET /entities` (kind, language, locator prefix, both coverages, text query; paginated), `GET /entities/{key}` (facts with provenance and verification, neighbour facts, relations with labels, evidence, omitted regions, integrity errors). `/semantic/catalog` is a JSON-only mutation. |
+| UI | The snapshot panel gains "Semantic catalog" (build, status, counts). `/explore` is read-only: an entity tree with filters, source assembled from stored chunks (whitespace gaps marked, omitted outline regions shaded) and Facts, Relations and Coverage tabs. Facts carry "Parsed", "Pattern · local evidence" or "Pattern only" badges plus their verification state. |
+
+### Deviations from the plan (Milestone B)
+- **Migration split.** The catalog tables are migration `0011_semantic_catalog`. Milestone C will add the generation tables as a new revision instead of amending an applied one, so the plan's single `0011_semantic_model` becomes two revisions.
+- **Derived values in `F#`.** Import resolution, recognizer conditions and relation layout depend on the whole inventory, not only on the cited rows. They are stored in each fact's `derived` record, which the digest covers. Re-rendering detects any change to a cited row; a change to the derivation itself is detected by catalog-digest reproduction, not by single-fact re-rendering.
+- **Coverage strictness.** A symbol is `incomplete` when any declaration inside it has no stored chunk (`DECLARATION_WITHOUT_CHUNK`), not only when its own region lacks one.
+- **Alembic table names** are not captured, because call arguments are not extracted. The entities are named `table #n in <file>`.
+- **Concurrency.** Catalog builds use the in-process lock plus captured-revision publication (a late concurrent build is retained as `superseded`). The DB-enforced leases in the plan apply to generation (Milestone C).
+- **Not yet built:** entity history, interpretations, generation tabs and a catalog CLI command. They belong to Milestone C.
+- **Placeholder policy.** The 48,000-byte package ceiling and the 20 neighbour-fact limit are recorded in the catalog contract, pending tuning (§10.7).
+
+### Verification (Milestone B, 2026-10-25)
+All of this ran locally against disposable PostgreSQL 16 / pgvector 0.8.6 databases or copies. Nothing was published or run in hosted CI.
+
+**Backend suite**
+- Python 3.14.6 and 3.11.15, each run alone: 261 passed, 1 skipped (the lab-database test without `BUILDLENS_TEST_LAB_DATABASE_URL`), 5 deselected (real model/provider).
+- Ruff, format and mypy are clean on both runtimes.
+- The 3.11 run caught a migration annotation (`sa.SchemaItem`) that 3.14's deferred annotations had hidden; it is fixed.
+- New tests:
+  - `tests/unit/test_semantic_catalog.py` (15): resolver, recognizers with negatives, coverage states and reasons, budget outline/rejection, TS merges and partial files, non-current contracts, order-independent determinism, renderer row dependence.
+  - `tests/integration/test_semantic_catalog.py` (6): entities, recognizers and relations on a synthetic Python + TSX repository; short-circuit; staleness (409) and labelled history; identical catalog and portable digests after reprocessing; equal portable and different catalog digests across two projects; tampered symbol and chunk rows detected at read time; a legacy (facts-less) build with the repository deleted and the source reader disabled; superseded and failed runs never moving the pointer; HTTP contracts; downgrade refusal.
+
+**Real repository (BuildLens itself, disposable database)**
+- Pipeline: 254 structural artifacts and 2,432 symbols; the catalog builds 2,825 entities, 14,793 facts and 6,514 relations in about 3 s.
+- Stored coverage is `complete` for every entity except the two files whose structure failed. There are no coordinate mismatches.
+- Recognizers: 56 FastAPI routes, 22 SQLAlchemy and 22 Alembic tables, 39 React components.
+- About 300 sampled entity details re-verified with no integrity error.
+- An unchanged rebuild short-circuits. After a reprocess, the rebuilt catalog has an identical `catalog_digest` and `portable_digest`.
+- The first run surfaced 24 `alembic` imports wrongly marked `not_found`, because the repository's `backend/alembic/` folder was treated as a package. Fixed and covered by a unit test.
+
+**Stage 11 baseline (§8.6, Milestone B)**
+- The retained Stage 11 volume was copied, with the original mounted read-only and never started, then upgraded 0009 → 0011.
+- All 14 pre-existing data tables are byte-identical over their original columns, both after the upgrade and after building a catalog.
+- The legacy catalog builds with the source reader disabled: 1,353 entities, all Python carrying `FACTS_NOT_EXTRACTED`, two `STRUCTURE_FAILED` files `unavailable`, no sampled integrity error.
+- `eval validate` on Python 3.11.15: corpus passed, 30/30 cases bound, 0 invalid; definition and judgments digests are identical to Milestone A's record.
+- `lab parity` on Python 3.11.15: 90/90 retrieval, ranking and packed context equal; corpus digest `03c559c4…` unchanged.
+  - The first two attempts timed out, because the first query loads the embedding model inside the 15 s search deadline and a cold load took about 15.4 s in the freshly built environment.
+  - This is pre-existing Stage 10–12 behaviour, unrelated to this milestone. The passing run raised only `BUILDLENS_EMBEDDINGS_SEARCH_TIMEOUT_SECONDS` to 60, a timing allowance that does not affect rankings.
+
+**Browser run**
+- Synthetic Python + TSX repository through the real API and Vite dev server: snapshot → structure → processing → catalog → Explore (entity tree, verified source with whitespace gaps and shaded outline regions, labelled facts, relations in both directions).
+- Mutations were issued through the local API.
+- The desktop preview runner could not access the Desktop folder, so both servers were started from the shell.
+
+**Frontend:** 26 tests passed (4 new). Lint, TypeScript and production build passed.
+
 ## Not built yet (later milestones)
-- Semantic catalog (entities, recognizers, import resolution, `F#` facts).
 - AI generation (persisted plans, `OutboundGate`, generator profiles, claims, freshness index).
-- The Explore UI.
+- Explore interpretation, history and generate tabs.
 - Semantic benchmarks.

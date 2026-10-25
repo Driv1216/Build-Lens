@@ -44,6 +44,14 @@ from buildlens.application.processing import (
     ProcessingUnavailableError,
 )
 from buildlens.application.projects import ProjectNotFoundError
+from buildlens.application.semantic_catalog import (
+    SemanticCatalogBusyError,
+    SemanticCatalogConflictError,
+    SemanticCatalogRequiredError,
+    SemanticCatalogStaleError,
+    SemanticNotFoundError,
+    SemanticPrerequisiteError,
+)
 from buildlens.application.snapshots import (
     ScanBusyError,
     SnapshotConflictError,
@@ -148,6 +156,26 @@ def register_errors(app: FastAPI) -> None:
             "Compatible structural evidence is unavailable.",
         ),
         ProjectNotFoundError: (404, "PROJECT_NOT_FOUND", "Project was not found."),
+        SemanticCatalogRequiredError: (
+            409,
+            "SEMANTIC_CATALOG_REQUIRED",
+            "Build the semantic catalog for this snapshot first.",
+        ),
+        SemanticCatalogStaleError: (
+            409,
+            "SEMANTIC_CATALOG_STALE",
+            "The semantic catalog is stale. Rebuild it explicitly.",
+        ),
+        SemanticNotFoundError: (
+            404,
+            "SEMANTIC_NOT_FOUND",
+            "Semantic catalog record was not found.",
+        ),
+        SemanticPrerequisiteError: (
+            409,
+            "STRUCTURE_UNAVAILABLE",
+            "Compatible structural evidence is unavailable.",
+        ),
         SnapshotNotFoundError: (404, "SNAPSHOT_NOT_FOUND", "Repository snapshot was not found."),
         ProcessingNotFoundError: (
             404,
@@ -202,6 +230,8 @@ def register_errors(app: FastAPI) -> None:
         ScanBusyError,
         ContextBusyError,
         ContextConflictError,
+        SemanticCatalogBusyError,
+        SemanticCatalogConflictError,
     ):
         mapping[error] = (
             409,

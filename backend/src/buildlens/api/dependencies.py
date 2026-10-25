@@ -11,6 +11,7 @@ from buildlens.application.fingerprinting import SnapshotFingerprinter
 from buildlens.application.processing import ProcessingService
 from buildlens.application.projects import ProjectService
 from buildlens.application.retrieval import RetrievalService
+from buildlens.application.semantic_catalog import SemanticCatalogService
 from buildlens.application.snapshots import SnapshotService
 from buildlens.application.structural import StructuralAnalysisService
 from buildlens.core.config import Settings
@@ -24,6 +25,7 @@ from buildlens.infrastructure.runtime import (
     context_service,
     processing_service,
     retrieval_service,
+    semantic_catalog_service,
 )
 from buildlens.infrastructure.structural.supervisor import (
     SupervisedRepositoryInspector,
@@ -83,6 +85,10 @@ def get_structural_analysis_service(request: Request) -> StructuralAnalysisServi
 
 def get_processing_service(request: Request) -> ProcessingService:
     return processing_service(request.app.state)
+
+
+def get_semantic_catalog_service(request: Request) -> SemanticCatalogService:
+    return semantic_catalog_service(request.app.state)
 
 
 def get_embedding_service(request: Request) -> EmbeddingService:

@@ -4,6 +4,7 @@ import { createSnapshot, latestSnapshot, listArtifactChanges, listArtifacts, typ
 import type { Project } from '../api/projects'
 import { StructuralAnalysisPanel } from './StructuralAnalysisPanel'
 import { ArtifactProcessingPanel } from './ArtifactProcessingPanel'
+import { SemanticCatalogPanel } from './SemanticCatalogPanel'
 import { SemanticSearchPanel } from './SemanticSearchPanel'
 import { AskPanel } from './AskPanel'
 
@@ -80,6 +81,7 @@ function SnapshotScope({ project }: { project: Project }) {
         {artifacts && <><h3>Inventory</h3><div className="inventory-scroll"><table><thead><tr><th>Path</th><th>Kind</th><th>Language</th><th>Tags</th><th>Size</th><th>Exclusion</th></tr></thead><tbody>{artifacts.items.map((artifact) => <tr key={artifact.id}><td><code>{displayPath(artifact.locator)}</code></td><td>{artifact.kind}</td><td>{artifact.language ?? '—'}</td><td>{artifact.tags.join(', ') || '—'}</td><td>{artifact.size_bytes?.toLocaleString() ?? '—'}</td><td>{artifact.exclusion_reasons.join(', ') || '—'}</td></tr>)}</tbody></table></div><p>{artifacts.total} observed entries</p><div className="pager"><button disabled={artifacts.offset === 0} onClick={() => showPage(Math.max(0, artifacts.offset - artifacts.limit))}>Previous</button><button disabled={artifacts.offset + artifacts.limit >= artifacts.total} onClick={() => showPage(artifacts.offset + artifacts.limit)}>Next</button></div></>}
         <StructuralAnalysisPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onRefresh={() => setRevision(x => x + 1)} onAskInvalidate={() => setAskRevision(x => x + 1)} />
         <ArtifactProcessingPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onRefresh={() => setRevision(x => x + 1)} onAskInvalidate={() => setAskRevision(x => x + 1)} />
+        <SemanticCatalogPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} />
         <SemanticSearchPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onAskInvalidate={() => setAskRevision(x => x + 1)} />
         <AskPanel projectId={project.id} snapshotId={snapshot.id} invalidation={askRevision} />
       </>}

@@ -101,6 +101,11 @@ def diagnostics() -> None:
                     "chunks",
                     "embedding_runs",
                     "chunk_embeddings",
+                    "artifact_extractions",
+                    "semantic_catalog_runs",
+                    "semantic_entities",
+                    "semantic_facts",
+                    "semantic_relations",
                 )
             }
             content_bytes = connection.scalar(

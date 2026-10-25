@@ -11,6 +11,7 @@ from buildlens.application.context import ContextService, RerankerRuntime
 from buildlens.application.embeddings import EmbeddingRuntime
 from buildlens.application.processing import ProcessingService
 from buildlens.application.retrieval import RetrievalService
+from buildlens.application.semantic_catalog import SemanticCatalogService
 from buildlens.core.config import Settings
 from buildlens.domain.ask import GenerationPolicy
 from buildlens.infrastructure.embeddings.supervisor import SupervisedSentenceTransformer
@@ -26,6 +27,8 @@ from buildlens.infrastructure.persistence.retrieval import (
     SqlAlchemyContextEvidenceStore,
     SqlAlchemyRetrievalStore,
 )
+from buildlens.infrastructure.persistence.semantic import SqlAlchemySemanticCatalogStore
+from buildlens.infrastructure.persistence.structural import SqlAlchemyStructuralAnalysisStore
 from buildlens.infrastructure.reranking.supervisor import SupervisedCrossEncoder
 from buildlens.infrastructure.structural.supervisor import SupervisedSourceReader
 
@@ -42,6 +45,16 @@ def processing_service(state: Any) -> ProcessingService:
         max_chunks_per_artifact=s.processing_max_chunks_per_artifact,
         max_chunks=s.processing_max_chunks,
         overall_timeout_seconds=s.processing_overall_timeout_seconds,
+    )
+
+
+def semantic_catalog_service(state: Any) -> SemanticCatalogService:
+    """DB-only catalog construction: processing is used for authority only (zero source reads)."""
+    return SemanticCatalogService(
+        SqlAlchemySemanticCatalogStore(state.session_factory),
+        SqlAlchemyStructuralAnalysisStore(state.session_factory),
+        processing_service(state),
+        state.semantic_lock,
     )
 
 
@@ -89,6 +102,7 @@ class LocalRuntime:
         self.scan_lock = Lock()
         self.analysis_lock = Lock()
         self.processing_lock = Lock()
+        self.semantic_lock = Lock()
         self.embedding_runtime = EmbeddingRuntime(
             SupervisedSentenceTransformer(
                 Path(settings.embeddings_cache_dir).expanduser(),

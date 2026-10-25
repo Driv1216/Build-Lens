@@ -369,7 +369,7 @@ offline models and demonstrate mechanics only. Design, isolation model
 and measured findings: [docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md); verification:
 [CURRENT_STATE.md](CURRENT_STATE.md).
 
-## Stage 13 (in progress): multi-language structure
+## Stage 13 (in progress): multi-language structure and semantic catalog
 
 Milestone A of the Semantic Project Model is implemented. "Analyse source files" now extracts
 parse-only declarations for Python (frozen `ast` producer plus an additive facts pass) and for
@@ -381,9 +381,18 @@ API changes:
 - Symbols add TS declaration fields.
 - Imports add ES/CommonJS forms.
 
-Apply migration `0010` with `alembic upgrade head`. It is additive; take a backup first as usual.
-Existing structural and processing evidence stays current, and re-running structure on a new
-snapshot adds the new passes while preserving Python identities. Semantic catalog, AI
-interpretations and the Explore view are later milestones. See
-[docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) for scope, deviations and verification.
+Apply migrations `0010` and `0011` with `alembic upgrade head`. Both are additive; take a backup
+first as usual. Existing structural and processing evidence stays current, and re-running
+structure on a new snapshot adds the new passes while preserving Python identities.
+
+Milestone B adds the **deterministic semantic catalog**. After structure and processing, use
+"Build catalog" in the snapshot panel (or `POST …/semantic/catalog`), then open **Explore**
+(`/explore`). The catalog reads only PostgreSQL and never source files. It holds:
+- file, symbol, component, hook, API-endpoint and DB-table entities
+- stored-source and generation-context coverage
+- parsed facts and labelled pattern matches, each cited to its structural rows and re-verified on every read
+- import resolution and same-file or one-hop relations
+
+AI interpretations are a later milestone. See [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md)
+for scope, deviations and verification.
 

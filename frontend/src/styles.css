@@ -87,3 +87,31 @@ label.inline { align-items: center; display: inline-flex; gap: 6px; }
 .chart { background: #0e1521; border: 1px solid var(--lab-border); border-radius: 8px; padding: 8px; }
 td.warn { background: var(--lab-warn); }
 @media (max-width: 720px) { .lab-scope { grid-template-columns: 1fr; } .lab-shell { padding: 32px 16px; } }
+
+/* Stage 13 Explore (read-only deterministic catalog) */
+.app-nav { display: flex; flex-wrap: wrap; gap: 14px; }
+.explore-shell { max-width: 1440px; margin: 0 auto; padding: 48px 24px; }
+.explore-grid { display: grid; gap: 14px; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 380px); margin-top: 18px; }
+.explore-column { background: var(--lab-surface); border: 1px solid var(--lab-border); border-radius: 12px; display: grid; align-content: start; gap: 10px; max-height: 80vh; min-width: 0; overflow: auto; padding: 14px; }
+.explore-filters { display: grid; gap: 8px; margin: 0; }
+.entity-tree, .entity-tree ul { list-style: none; margin: 0; padding: 0; }
+.entity-tree > li { border-top: 1px solid #2b384e; padding: 8px 0; }
+.link-button { background: transparent; color: #c6d1e6; font-weight: 500; padding: 3px 0; text-align: left; }
+.link-button.entity.selected { color: #ffffff; text-decoration: underline; }
+.kind { color: var(--lab-accent); font-size: .72rem; font-weight: 700; text-transform: uppercase; }
+.badge.warn { color: #ffe0a1; font-size: .72rem; }
+.source-view h2 { overflow-wrap: anywhere; }
+.source-chunks { display: grid; gap: 0; }
+pre.source { border-radius: 0; margin: 0; max-height: none; white-space: pre; }
+pre.source.omitted { opacity: .45; background: #0b1019; }
+.source-line { display: block; }
+.line-number { color: #5d6c86; display: inline-block; margin-right: 12px; text-align: right; user-select: none; width: 3.5em; }
+.gap { color: #5d6c86; font-size: .75rem; margin: 2px 0; }
+.tabs { display: flex; gap: 6px; }
+.tabs button { background: transparent; border: 1px solid var(--lab-border); color: #c6d1e6; padding: 6px 10px; }
+.tabs button.active { background: #263754; color: #ffffff; }
+.facts { display: grid; gap: 10px; }
+.fact { border-top: 1px solid #2b384e; font-size: .85rem; padding-top: 8px; }
+.fact p { margin: 4px 0; overflow-wrap: anywhere; }
+.relations { display: grid; gap: 6px; font-size: .85rem; padding-left: 16px; }
+@media (max-width: 1080px) { .explore-grid { grid-template-columns: 1fr; } .explore-column { max-height: none; } }

@@ -1,8 +1,19 @@
 # BuildLens current state
 
-**Stage 13 — Semantic Project Model: Milestone A (multi-language structural foundation)
-implemented and verified locally, 2026-10-25. Milestones B–D are not started; no AI text is
-generated or stored.** Python declarations, contracts and fingerprints are frozen (golden
+**Stage 13 — Semantic Project Model: Milestone B (deterministic semantic catalog) implemented and
+verified locally, 2026-10-25, on top of Milestone A. Milestones C–D are not started; no AI text
+is generated or stored.** Migration `0011_semantic_catalog` (additive) adds immutable catalog
+runs, entities, `F#` facts and relations, built from PostgreSQL only with zero source reads.
+Every fact is re-rendered from its cited structural rows and digest-checked at read time. The
+read-only `/explore` view shows entities, stored-chunk source, labelled facts and relations.
+- Backend: 261 passed, 1 skipped on Python 3.14.6 and 3.11.15; ruff, format and mypy clean.
+- On BuildLens itself: 2,825 entities with no coordinate mismatch, and catalog and portable digests reproduce after a reprocess.
+- On an upgraded copy of the retained Stage 11 corpus (0009 → 0011): the 14 pre-existing tables are byte-identical; a legacy catalog builds with the source reader disabled; `eval validate` passes 30/30 and `lab parity` 90/90. Hosted CI has not been run.
+
+Details, deviations and limits: [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md).
+
+**Stage 13 Milestone A (multi-language structural foundation), implemented and verified locally
+2026-10-25.** Python declarations, contracts and fingerprints are frozen (golden
 parity captured from `816b136`). Additive, separately contracted passes now provide
 `python-facts.v1` and parse-only `tree-sitter` TS/TSX/JS declarations (`tree-sitter` 0.26.0,
 `tree-sitter-typescript` 0.23.2 and `tree-sitter-javascript` 0.25.0 in the base install). Migration
