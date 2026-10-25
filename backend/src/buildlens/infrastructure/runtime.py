@@ -9,9 +9,14 @@ from typing import Any
 from buildlens.application.ask import AskService
 from buildlens.application.context import ContextService, RerankerRuntime
 from buildlens.application.embeddings import EmbeddingRuntime
+from buildlens.application.outbound_gate import StructuredGenerator
 from buildlens.application.processing import ProcessingService
 from buildlens.application.retrieval import RetrievalService
 from buildlens.application.semantic_catalog import SemanticCatalogService
+from buildlens.application.semantic_generation import (
+    GenerationSettings,
+    SemanticGenerationService,
+)
 from buildlens.core.config import Settings
 from buildlens.domain.ask import GenerationPolicy
 from buildlens.infrastructure.embeddings.supervisor import SupervisedSentenceTransformer
@@ -28,6 +33,7 @@ from buildlens.infrastructure.persistence.retrieval import (
     SqlAlchemyRetrievalStore,
 )
 from buildlens.infrastructure.persistence.semantic import SqlAlchemySemanticCatalogStore
+from buildlens.infrastructure.persistence.semantic_generation import SqlAlchemyGenerationStore
 from buildlens.infrastructure.persistence.structural import SqlAlchemyStructuralAnalysisStore
 from buildlens.infrastructure.reranking.supervisor import SupervisedCrossEncoder
 from buildlens.infrastructure.structural.supervisor import SupervisedSourceReader
@@ -55,6 +61,55 @@ def semantic_catalog_service(state: Any) -> SemanticCatalogService:
         SqlAlchemyStructuralAnalysisStore(state.session_factory),
         processing_service(state),
         state.semantic_lock,
+    )
+
+
+def semantic_generator(settings: Settings) -> StructuredGenerator:
+    """Construct (never contact) the configured semantic provider. There is no fallback."""
+    tokens = settings.semantic_max_output_tokens
+    if settings.semantic_provider == "gemini":
+        from buildlens.infrastructure.generation.semantic_gemini import (
+            DEFAULT_MODEL as GEMINI_MODEL,
+        )
+        from buildlens.infrastructure.generation.semantic_gemini import GeminiSemanticGenerator
+
+        key = settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None
+        return GeminiSemanticGenerator(key, settings.semantic_model or GEMINI_MODEL, tokens)
+    if settings.semantic_provider == "openai":
+        from buildlens.infrastructure.generation.semantic_openai import (
+            DEFAULT_MODEL as OPENAI_MODEL,
+        )
+        from buildlens.infrastructure.generation.semantic_openai import OpenAISemanticGenerator
+
+        key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else None
+        return OpenAISemanticGenerator(key, settings.semantic_model or OPENAI_MODEL, tokens)
+    from buildlens.infrastructure.generation.semantic_local import LoopbackGenerator
+
+    return LoopbackGenerator(settings.semantic_base_url, settings.semantic_model or "local", tokens)
+
+
+def generation_settings(settings: Settings) -> GenerationSettings:
+    return GenerationSettings(
+        enabled=settings.semantic_generation_enabled,
+        max_output_tokens=settings.semantic_max_output_tokens,
+        request_byte_ceiling=settings.semantic_request_byte_ceiling,
+        max_outbound_requests=settings.semantic_max_outbound_requests,
+        max_attempts_per_entity=settings.semantic_max_attempts_per_entity,
+        deadline_seconds=settings.semantic_deadline_seconds,
+        plan_ttl_seconds=settings.semantic_plan_ttl_seconds,
+        request_timeout_seconds=settings.semantic_request_timeout_seconds,
+        retain_rejected_output=settings.semantic_retain_rejected_output,
+    )
+
+
+def semantic_generation_service(state: Any) -> SemanticGenerationService:
+    settings = state.settings
+    return SemanticGenerationService(
+        semantic_catalog_service(state),
+        SqlAlchemySemanticCatalogStore(state.session_factory),
+        SqlAlchemyGenerationStore(state.session_factory),
+        lambda: semantic_generator(settings),
+        generation_settings(settings),
     )
 
 

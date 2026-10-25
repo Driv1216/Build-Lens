@@ -5,7 +5,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 
-from buildlens.api.dependencies import get_semantic_catalog_service
+from buildlens.api.dependencies import (
+    get_semantic_catalog_service,
+    get_semantic_generation_service,
+)
 from buildlens.api.semantic_schemas import (
     CatalogHistoryResponse,
     CatalogRunResponse,
@@ -19,6 +22,7 @@ from buildlens.api.semantic_schemas import (
     RelationResponse,
 )
 from buildlens.application.semantic_catalog import EntityFilters, SemanticCatalogService
+from buildlens.application.semantic_generation import SemanticGenerationService
 from buildlens.domain.semantic import (
     SemanticCatalogRun,
     SemanticEntity,
@@ -176,21 +180,38 @@ def entities(
     | None = None,
     context_coverage: Literal["full", "outline", "not_eligible"] | None = None,
     q: str | None = Query(None, max_length=200),
+    state: Literal["current", "stale", "absent"] | None = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     service: SemanticCatalogService = Depends(get_semantic_catalog_service),
+    generation: SemanticGenerationService = Depends(get_semantic_generation_service),
 ) -> EntityPageResponse:
-    filters = EntityFilters(kind, language, locator_prefix, stored_coverage, context_coverage, q)
+    keys: tuple[str, ...] | None = None
+    if state is not None and run_id is None:
+        _, views = generation.entry_views(project_id, snapshot_id)
+        keys = tuple(key for key, view in views.items() if view.state == state)
+    filters = EntityFilters(
+        kind, language, locator_prefix, stored_coverage, context_coverage, q, keys
+    )
     selected, reasons, values, total = service.entity_page(
         project_id, snapshot_id, run_id, filters, limit, offset
     )
+    states: dict[str, str] = {}
+    if run_id is None and values:
+        _, page_views = generation.entry_views(
+            project_id, snapshot_id, [x.entity_key for x in values]
+        )
+        states = {key: view.state for key, view in page_views.items()}
     return EntityPageResponse(
         run_id=selected.id,
         freshness_reasons=list(reasons),
         total=total,
         limit=limit,
         offset=offset,
-        items=[entity(x) for x in values],
+        items=[
+            entity(x).model_copy(update={"interpretation_state": states.get(x.entity_key)})
+            for x in values
+        ],
     )
 
 

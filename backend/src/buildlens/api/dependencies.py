@@ -12,6 +12,7 @@ from buildlens.application.processing import ProcessingService
 from buildlens.application.projects import ProjectService
 from buildlens.application.retrieval import RetrievalService
 from buildlens.application.semantic_catalog import SemanticCatalogService
+from buildlens.application.semantic_generation import SemanticGenerationService
 from buildlens.application.snapshots import SnapshotService
 from buildlens.application.structural import StructuralAnalysisService
 from buildlens.core.config import Settings
@@ -26,6 +27,7 @@ from buildlens.infrastructure.runtime import (
     processing_service,
     retrieval_service,
     semantic_catalog_service,
+    semantic_generation_service,
 )
 from buildlens.infrastructure.structural.supervisor import (
     SupervisedRepositoryInspector,
@@ -89,6 +91,10 @@ def get_processing_service(request: Request) -> ProcessingService:
 
 def get_semantic_catalog_service(request: Request) -> SemanticCatalogService:
     return semantic_catalog_service(request.app.state)
+
+
+def get_semantic_generation_service(request: Request) -> SemanticGenerationService:
+    return semantic_generation_service(request.app.state)
 
 
 def get_embedding_service(request: Request) -> EmbeddingService:

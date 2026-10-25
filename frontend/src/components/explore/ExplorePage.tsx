@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router'
 import { ApiError } from '../../api/client'
 import { listProjects, type Project } from '../../api/projects'
 import { latestSnapshot } from '../../api/snapshots'
-import { getEntity, listEntities, type EntityDetail, type EntityFilters, type EntityPage } from '../../api/semantic'
+import { getEntity, getEntry, listEntities, type Entry, type EntityDetail, type EntityFilters, type EntityPage } from '../../api/semantic'
 import { EntityList } from './EntityList'
 import { EntityTabs } from './EntityTabs'
 import { SourceView } from './SourceView'
@@ -19,6 +19,8 @@ export function ExplorePage() {
   const [filters, setFilters] = useState<EntityFilters>({})
   const [page, setPage] = useState<EntityPage | null>(null)
   const [detail, setDetail] = useState<EntityDetail | null>(null)
+  const [entry, setEntry] = useState<Entry | null>(null)
+  const [generation, setGeneration] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const detailRequest = useRef<AbortController | null>(null)
 
@@ -75,6 +77,29 @@ export function ExplorePage() {
     return () => controller.abort()
   }, [projectId, snapshotId, entityKey])
 
+  useEffect(() => {
+    setEntry(null)
+    if (!projectId || !snapshotId || !entityKey) return
+    const controller = new AbortController()
+    void getEntry(projectId, snapshotId, entityKey, controller.signal)
+      .then(value => { if (!controller.signal.aborted) setEntry(value) })
+      .catch(() => { if (!controller.signal.aborted) setEntry(null) })
+    return () => controller.abort()
+  }, [projectId, snapshotId, entityKey, generation])
+
+  const cited = useMemo(() => {
+    const lines = new Set<number>()
+    for (const claim of entry?.interpretation?.claims ?? []) {
+      for (const citation of claim.citations) {
+        if (citation.kind === 'chunk' && citation.quote && citation.start_line) {
+          const span = citation.quote.split(/\r\n|\r|\n/).length
+          for (let line = citation.start_line; line < citation.start_line + span; line += 1) lines.add(line)
+        }
+      }
+    }
+    return lines
+  }, [entry])
+
   async function more() {
     if (!page || !projectId || !snapshotId) return
     const next = await listEntities(projectId, snapshotId, filters, page.offset + page.items.length)
@@ -83,9 +108,9 @@ export function ExplorePage() {
 
   const scopeLabel = useMemo(() => projects.find(item => item.id === projectId)?.name ?? '', [projects, projectId])
   return <main className="explore-shell">
-    <p className="eyebrow">Phase 2 · Stage 13 · Semantic catalog</p>
+    <p className="eyebrow">Phase 2 · Stage 13 · Semantic model</p>
     <h1 className="lab-title">Explore</h1>
-    <p className="subtitle">Deterministic entities, parsed facts and labelled pattern matches, each cited to the structural rows it was rendered from. No AI interpretation is shown or stored here.</p>
+    <p className="subtitle">Deterministic entities, parsed facts and labelled pattern matches, each cited to the structural rows it was rendered from. AI interpretations are separate, plan-authorised and shown only as cited claims.</p>
     <div className="lab-scope card">
       <label>Project
         <select aria-label="Explore project" value={projectId} onChange={event => update({ project: event.target.value, snapshot: '', entity: '' })}>
@@ -97,8 +122,8 @@ export function ExplorePage() {
     {error && <p className="error" role="alert">{error}</p>}
     <div className="explore-grid">
       <EntityList page={page} filters={filters} selected={entityKey} onFilters={setFilters} onSelect={key => update({ entity: key })} onMore={() => void more()} />
-      <SourceView detail={detail} />
-      <EntityTabs detail={detail} onSelect={key => update({ entity: key })} />
+      <SourceView detail={detail} cited={cited} />
+      <EntityTabs detail={detail} entry={entry} projectId={projectId} snapshotId={snapshotId} onSelect={key => update({ entity: key })} onGenerated={() => setGeneration(x => x + 1)} />
     </div>
   </main>
 }

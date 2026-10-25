@@ -48,6 +48,7 @@ from buildlens.domain.semantic import (
     SemanticRelation,
     StoredCoverage,
     catalog_contract,
+    package_digest_of,
 )
 from buildlens.domain.source import digest
 from buildlens.domain.structural import StructuralAnalysis
@@ -1060,25 +1061,50 @@ class _Builder:
                 mode, context_reason = "not_eligible", "CONTEXT_BUDGET_EXCEEDED"
         package_facts = list(dict.fromkeys(own_facts + child_facts))
         package_digest = (
-            digest(
-                {
-                    "version": PACKAGE_VERSION,
-                    "mode": mode,
-                    "chunks": [
-                        [chunk["stable_key"], chunk["content_hash"]] for chunk in package_chunks
-                    ],
-                    "facts": sorted(package_facts),
-                    "neighbors": neighbor_facts,
-                    "omitted": [
-                        [item.entity_key, item.start_line, item.end_line] for item in omitted
-                    ],
-                }
+            package_digest_of(
+                mode,
+                [
+                    (str(chunk["stable_key"]), str(chunk["content_hash"]))
+                    for chunk in package_chunks
+                ],
+                package_facts,
+                neighbor_facts,
+                [(item.entity_key, item.start_line, item.end_line) for item in omitted],
             )
             if mode != "not_eligible"
             else None
         )
         package_bytes = (
             self._bytes(package_chunks, package_facts + neighbor_facts) if package_digest else 0
+        )
+        portable = {
+            "package": [
+                [
+                    [chunk["content_hash"], chunk["start_offset"], chunk["end_offset"]]
+                    for chunk in package_chunks
+                ],
+                sorted(self._portable_fact(item) for item in package_facts),
+                [self._portable_fact(item) for item in neighbor_facts],
+                [
+                    [self.by_key[item.entity_key].portable, item.start_line, item.end_line]
+                    for item in omitted
+                ],
+            ]
+            if package_digest
+            else None
+        }
+        content_digest = (
+            digest(
+                {
+                    "version": PACKAGE_VERSION,
+                    "entity": entity.portable,
+                    "kind": entity.kind,
+                    "mode": mode,
+                    "package": portable["package"],
+                }
+            )
+            if package_digest
+            else None
         )
         symbol = entity.symbol
         result = SemanticEntity(
@@ -1123,23 +1149,8 @@ class _Builder:
             tuple(package_facts),
             tuple(neighbor_facts),
             tuple(omitted),
+            content_digest,
         )
-        portable = {
-            "package": [
-                [
-                    [chunk["content_hash"], chunk["start_offset"], chunk["end_offset"]]
-                    for chunk in package_chunks
-                ],
-                sorted(self._portable_fact(item) for item in package_facts),
-                [self._portable_fact(item) for item in neighbor_facts],
-                [
-                    [self.by_key[item.entity_key].portable, item.start_line, item.end_line]
-                    for item in omitted
-                ],
-            ]
-            if package_digest
-            else None
-        }
         return result, portable
 
     def _referenced_names(self, file: _File, rows: list[Row]) -> list[str]:
@@ -1359,6 +1370,7 @@ class EntityFilters:
     stored_coverage: str | None = None
     context_coverage: str | None = None
     query: str | None = None
+    keys: tuple[str, ...] | None = None
 
 
 class SemanticCatalogStore(Protocol):
@@ -1390,6 +1402,11 @@ class SemanticCatalogStore(Protocol):
     ) -> tuple[list[SemanticRelation], list[SemanticRelation]]: ...
     def verify_facts(self, facts: Sequence[SemanticFact]) -> dict[str, str]: ...
     def labels(self, run_id: UUID, entity_keys: Sequence[str]) -> dict[str, str]: ...
+    def names(self, run_id: UUID, entity_keys: Sequence[str]) -> dict[str, tuple[str, ...]]: ...
+    def fact_rows(self, facts: Sequence[SemanticFact]) -> dict[str, list[Row]]: ...
+    def artifact_ranges(
+        self, structural_analysis_id: UUID, artifact_identity_id: UUID | None
+    ) -> dict[str, tuple[tuple[int, int], ...]] | None: ...
     def evidence(
         self, run: SemanticCatalogRun, chunks: Sequence[EvidenceChunk]
     ) -> list[EvidenceChunk]: ...

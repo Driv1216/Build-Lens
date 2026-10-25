@@ -1,23 +1,37 @@
 import { useState } from 'react'
-import type { EntityDetail, Fact, Relation } from '../../api/semantic'
+import type { Entry, EntityDetail, Fact, Relation } from '../../api/semantic'
+import { GenerateTab, HistoryTab, InterpretationTab } from './GenerationTabs'
 
-type Tab = 'facts' | 'relations' | 'coverage'
+type Tab = 'facts' | 'relations' | 'coverage' | 'interpretation' | 'history' | 'generate'
 const BASIS: Record<Fact['basis'], string> = {
   parsed: 'Parsed',
   pattern_with_local_evidence: 'Pattern · local evidence',
   pattern_only: 'Pattern only',
 }
 
-export function EntityTabs({ detail, onSelect }: { detail: EntityDetail | null; onSelect: (key: string) => void }) {
+type Props = {
+  detail: EntityDetail | null
+  entry: Entry | null
+  projectId: string
+  snapshotId: string
+  onSelect: (key: string) => void
+  onGenerated: () => void
+}
+
+export function EntityTabs({ detail, entry, projectId, snapshotId, onSelect, onGenerated }: Props) {
   const [tab, setTab] = useState<Tab>('facts')
   if (!detail) return <aside className="explore-column" aria-label="Entity details" />
+  const key = detail.entity.entity_key
   return <aside className="explore-column" aria-label="Entity details">
     <div className="tabs" role="tablist">
-      {(['facts', 'relations', 'coverage'] as const).map(name => <button key={name} role="tab" aria-selected={tab === name} className={tab === name ? 'active' : ''} onClick={() => setTab(name)}>{name[0].toUpperCase() + name.slice(1)}</button>)}
+      {(['facts', 'interpretation', 'relations', 'history', 'coverage', 'generate'] as const).map(name => <button key={name} role="tab" aria-selected={tab === name} className={tab === name ? 'active' : ''} onClick={() => setTab(name)}>{name[0].toUpperCase() + name.slice(1)}</button>)}
     </div>
     {tab === 'facts' && <Facts detail={detail} />}
+    {tab === 'interpretation' && <InterpretationTab entry={entry} />}
     {tab === 'relations' && <Relations detail={detail} onSelect={onSelect} />}
+    {tab === 'history' && <HistoryTab projectId={projectId} snapshotId={snapshotId} entityKey={key} />}
     {tab === 'coverage' && <Coverage detail={detail} />}
+    {tab === 'generate' && <GenerateTab projectId={projectId} snapshotId={snapshotId} entityKey={key} onGenerated={onGenerated} />}
   </aside>
 }
 

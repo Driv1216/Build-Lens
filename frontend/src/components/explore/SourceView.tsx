@@ -1,7 +1,7 @@
 import type { EntityDetail, EvidenceChunk } from '../../api/semantic'
 
 /** Source assembled from stored, hash-verified chunks; nothing is read from disk. */
-export function SourceView({ detail }: { detail: EntityDetail | null }) {
+export function SourceView({ detail, cited = new Set<number>() }: { detail: EntityDetail | null; cited?: Set<number> }) {
   if (!detail) return <section className="explore-column source-view" aria-label="Source"><p className="note">Select an entity to see its stored source.</p></section>
   const { entity, evidence } = detail
   const outline = entity.context_coverage === 'outline'
@@ -17,17 +17,17 @@ export function SourceView({ detail }: { detail: EntityDetail | null }) {
     <div className="source-chunks">
       {chunks.map((chunk, index) => <div key={chunk.chunk_id}>
         {index > 0 && chunk.start_offset > chunks[index - 1].end_offset && <p className="gap">… {chunk.start_offset - chunks[index - 1].end_offset} whitespace characters not stored</p>}
-        <Chunk chunk={chunk} omitted={outline && !included.has(chunk.stable_key)} />
+        <Chunk chunk={chunk} omitted={outline && !included.has(chunk.stable_key)} cited={cited} />
       </div>)}
     </div>
   </section>
 }
 
-function Chunk({ chunk, omitted }: { chunk: EvidenceChunk; omitted: boolean }) {
+function Chunk({ chunk, omitted, cited }: { chunk: EvidenceChunk; omitted: boolean; cited: Set<number> }) {
   if (chunk.verified === false || chunk.content === null) return <p className="error">Chunk {chunk.stable_key.slice(0, 12)} failed verification; content is withheld.</p>
   const lines = chunk.content.split(/\r\n|\r|\n/)
   if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
   return <pre className={`source ${omitted ? 'omitted' : ''}`} aria-label={`Lines ${chunk.start_line}–${chunk.end_line}`}>
-    {lines.map((line, offset) => <span key={offset} className="source-line"><span className="line-number">{chunk.start_line + offset}</span>{line}{'\n'}</span>)}
+    {lines.map((line, offset) => <span key={offset} className={`source-line${cited.has(chunk.start_line + offset) ? ' cited' : ''}`}><span className="line-number">{chunk.start_line + offset}</span>{line}{'\n'}</span>)}
   </pre>
 }

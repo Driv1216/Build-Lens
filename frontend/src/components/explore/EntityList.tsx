@@ -37,6 +37,7 @@ export function EntityList({ page, filters, selected, onFilters, onSelect, onMor
           <button className={`link-button entity ${item.entity_key === selected ? 'selected' : ''}`} style={{ paddingLeft: `${indent(item) * 12}px` }} onClick={() => onSelect(item.entity_key)}>
             <span className={`kind kind-${item.kind}`}>{label(item)}</span> {item.kind === 'file' ? 'file' : item.name}
             {item.stored_coverage !== 'complete' && <span className="badge warn"> {item.stored_coverage.replace('_', ' ')}</span>}
+            {item.interpretation_state && item.interpretation_state !== 'absent' && <span className={`badge ${item.interpretation_state === 'stale' ? 'warn' : 'ai'}`}> AI {item.interpretation_state}</span>}
           </button>
         </li>)}</ul>
       </li>)}

@@ -393,6 +393,15 @@ Milestone B adds the **deterministic semantic catalog**. After structure and pro
 - parsed facts and labelled pattern matches, each cited to its structural rows and re-verified on every read
 - import resolution and same-file or one-hop relations
 
-AI interpretations are a later milestone. See [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md)
-for scope, deviations and verification.
+Milestone C adds **controlled AI interpretations** (off by default). Set
+`BUILDLENS_SEMANTIC_GENERATION_ENABLED=true` and choose `BUILDLENS_SEMANTIC_PROVIDER`:
+- `local`: an OpenAI-compatible loopback endpoint (`BUILDLENS_SEMANTIC_BASE_URL=http://127.0.0.1:<port>`, `BUILDLENS_SEMANTIC_MODEL`)
+- `gemini` or `openai`: reuse the existing `BUILDLENS_GEMINI_API_KEY` / `BUILDLENS_OPENAI_API_KEY`
+
+In Explore, the Generate tab first creates a plan (nothing is sent) listing every file that
+would be shared, the bytes, caps, sharing class, retention note and expiry; you then confirm
+that exact plan. The CLI equivalent is `buildlens semantic plan` followed by
+`buildlens semantic generate --plan-id … --plan-digest … --confirm`. Interpretations are cited
+claims only, labelled with provider, returned model and freshness; they are never Ask evidence.
+See [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) for scope, deviations and verification.
 

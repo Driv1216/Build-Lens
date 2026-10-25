@@ -1,8 +1,21 @@
 # BuildLens current state
 
-**Stage 13 — Semantic Project Model: Milestone B (deterministic semantic catalog) implemented and
-verified locally, 2026-10-25, on top of Milestone A. Milestones C–D are not started; no AI text
-is generated or stored.** Migration `0011_semantic_catalog` (additive) adds immutable catalog
+**Stage 13 — Semantic Project Model: Milestone C (controlled AI generation) implemented and
+verified locally, 2026-10-25, on top of Milestones A and B. Milestone D is not started.**
+Generation is off by default and runs only from a persisted, single-use, expiring plan whose
+digest the user confirms. Every outbound request is budgeted in PostgreSQL first, re-checked
+against current authority and the exact planned bytes, and sent only through `OutboundGate`
+with a single-use ticket. Runs are fenced by DB-time leases; late responses are recorded as
+receipts, never as candidates. Claims are validated deterministically (checks 1–9) and their
+citations re-verified on every read. Migration `0012_semantic_generation` is additive; the
+freshness key now uses a per-entity content digest (catalog contract v2).
+- Backend: 307 passed, 1 skipped on Python 3.14.6 and 3.11.15; ruff, format and mypy clean. Frontend: 29 tests, lint, types and build.
+- No real provider was called; OpenAI and Gemini adapters were verified only through mock transports.
+- Stage 11 corpus copy upgraded 0009 → 0012: pre-existing tables byte-identical, `eval validate` 30/30, `lab parity` 90/90. Hosted CI has not been run.
+
+**Stage 13 Milestone B (deterministic semantic catalog) implemented and
+verified locally, 2026-10-25, on top of Milestone A** (commit `5428f66`; no AI text in the
+catalog). Migration `0011_semantic_catalog` (additive) adds immutable catalog
 runs, entities, `F#` facts and relations, built from PostgreSQL only with zero source reads.
 Every fact is re-rendered from its cited structural rows and digest-checked at read time. The
 read-only `/explore` view shows entities, stored-chunk source, labelled facts and relations.

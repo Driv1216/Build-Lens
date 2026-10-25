@@ -8,6 +8,7 @@ and is re-verified from those rows at read time.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, get_args
@@ -17,7 +18,7 @@ from buildlens.domain.extractors import PYTHON_FACTS, current_declaration_digest
 from buildlens.domain.extractors import extractor_contract_digest as _extractor_digest
 from buildlens.domain.source import digest
 
-CATALOG_VERSION = "semantic-catalog.v1"
+CATALOG_VERSION = "semantic-catalog.v2"
 RENDERER_VERSION = "fact-renderer.v1"
 RESOLUTION_VERSION = "import-resolution.v1"
 PACKAGE_VERSION = "semantic-package.v1"
@@ -95,6 +96,26 @@ def catalog_contract() -> dict[str, object]:
         "neighbor_fact_limit": NEIGHBOR_FACT_LIMIT,
         "extractors": dict(sorted(extractors.items())),
     }
+
+
+def package_digest_of(
+    mode: str,
+    chunks: Sequence[tuple[str, str]],
+    facts: Sequence[str],
+    neighbors: Sequence[str],
+    omitted: Sequence[tuple[str, int | None, int | None]],
+) -> str:
+    """Canonical package projection (§4.2): chunk keys and hashes, fact digests, omitted regions."""
+    return digest(
+        {
+            "version": PACKAGE_VERSION,
+            "mode": mode,
+            "chunks": [[key, value] for key, value in chunks],
+            "facts": sorted(facts),
+            "neighbors": list(neighbors),
+            "omitted": [[key, start, end] for key, start, end in omitted],
+        }
+    )
 
 
 def fact_digest(
@@ -185,6 +206,9 @@ class SemanticEntity:
     package_facts: tuple[str, ...] = ()
     neighbor_facts: tuple[str, ...] = ()
     omitted: tuple[OmittedRegion, ...] = ()
+    # Content projection of the package (chunk hashes and positions, rendered fact texts,
+    # omitted regions by portable key). Stable across snapshots; keys source freshness.
+    content_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

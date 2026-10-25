@@ -52,6 +52,19 @@ from buildlens.application.semantic_catalog import (
     SemanticNotFoundError,
     SemanticPrerequisiteError,
 )
+from buildlens.application.semantic_generation import (
+    BudgetExhaustedError,
+    GenerationConflictError,
+    GenerationDisabledError,
+    GenerationNotFoundError,
+    PlanAlreadyUsedError,
+    PlanChangedError,
+    PlanConfigChangedError,
+    PlanExpiredError,
+    PlanInvalidError,
+    PlanNotFoundError,
+    RunFencedError,
+)
 from buildlens.application.snapshots import (
     ScanBusyError,
     SnapshotConflictError,
@@ -171,6 +184,26 @@ def register_errors(app: FastAPI) -> None:
             "SEMANTIC_NOT_FOUND",
             "Semantic catalog record was not found.",
         ),
+        GenerationDisabledError: (
+            409,
+            "SEMANTIC_GENERATION_DISABLED",
+            "Semantic generation is not enabled (BUILDLENS_SEMANTIC_GENERATION_ENABLED).",
+        ),
+        GenerationNotFoundError: (404, "SEMANTIC_NOT_FOUND", "Semantic record was not found."),
+        PlanNotFoundError: (404, "PLAN_NOT_FOUND", "Generation plan was not found."),
+        PlanInvalidError: (409, "PLAN_INVALID", "The plan or its digest does not verify."),
+        PlanExpiredError: (409, "PLAN_EXPIRED", "The plan has expired; create a new plan."),
+        PlanConfigChangedError: (
+            409,
+            "PLAN_CONFIG_CHANGED",
+            "Provider configuration changed since the plan; create a new plan.",
+        ),
+        PlanChangedError: (
+            409,
+            "PLAN_CHANGED",
+            "Catalog, structure, processing or index authority changed since the plan.",
+        ),
+        PlanAlreadyUsedError: (409, "PLAN_ALREADY_USED", "The plan was already executed."),
         SemanticPrerequisiteError: (
             409,
             "STRUCTURE_UNAVAILABLE",
@@ -232,6 +265,9 @@ def register_errors(app: FastAPI) -> None:
         ContextConflictError,
         SemanticCatalogBusyError,
         SemanticCatalogConflictError,
+        GenerationConflictError,
+        RunFencedError,
+        BudgetExhaustedError,
     ):
         mapping[error] = (
             409,

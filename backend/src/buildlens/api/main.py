@@ -15,6 +15,8 @@ from buildlens.api.processing_routes import router as processing_router
 from buildlens.api.retrieval_routes import router as embedding_router
 from buildlens.api.routes import router as projects_router
 from buildlens.api.schemas import HealthResponse
+from buildlens.api.semantic_generation_routes import router as generation_router
+from buildlens.api.semantic_generation_routes import runtime_router as generation_runtime_router
 from buildlens.api.semantic_routes import router as semantic_router
 from buildlens.api.snapshot_routes import router as snapshots_router
 from buildlens.api.structural_routes import router as structural_router
@@ -76,6 +78,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "/structure",
                         "/processing",
                         "/semantic/catalog",
+                        "/semantic/generation/plan",
+                        "/semantic/generation",
                         "/embeddings",
                         "/semantic-search",
                         "/search",
@@ -121,6 +125,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(structural_router)
     app.include_router(processing_router)
     app.include_router(semantic_router)
+    app.include_router(generation_router)
+    app.include_router(generation_runtime_router)
     app.include_router(embedding_router)
     app.include_router(context_router)
     app.include_router(context_runtime_router)

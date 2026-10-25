@@ -286,6 +286,7 @@ def _entity(x: SemanticEntityRecord) -> SemanticEntity:
         tuple(package.get("facts", [])),
         tuple(package.get("neighbors", [])),
         tuple(OmittedRegion(item[0], item[1], item[2]) for item in package.get("omitted", [])),
+        x.content_digest,
     )
 
 
@@ -661,6 +662,7 @@ class SqlAlchemySemanticCatalogStore:
                 "context_reason": item.context_reason,
                 "package_digest": item.package_digest,
                 "package_bytes": item.package_bytes,
+                "content_digest": item.content_digest,
                 "limitations": list(item.limitations),
                 "evidence": {
                     "chunks": [
@@ -743,6 +745,8 @@ class SqlAlchemySemanticCatalogStore:
                 scope.append(SemanticEntityRecord.stored_coverage == filters.stored_coverage)
             if filters.context_coverage:
                 scope.append(SemanticEntityRecord.context_coverage == filters.context_coverage)
+            if filters.keys is not None:
+                scope.append(SemanticEntityRecord.entity_key.in_(list(filters.keys)))
             if filters.query:
                 needle = (
                     "%"
@@ -855,8 +859,10 @@ class SqlAlchemySemanticCatalogStore:
 
     # ----------------------------------------------------------------- read-time verification
 
-    def verify_facts(self, facts: Sequence[SemanticFact]) -> dict[str, str]:
-        """Re-render every fact from its cited rows (invariant F2)."""
+    def _load_refs(
+        self, facts: Sequence[SemanticFact]
+    ) -> dict[tuple[str, str], tuple[Row, str | None, str]]:
+        """Every cited row, normalised exactly as at build time, with its current authority."""
         wanted: dict[str, set[str]] = defaultdict(set)
         for fact in facts:
             for ref in fact.source_refs:
@@ -873,6 +879,88 @@ class SqlAlchemySemanticCatalogStore:
                 for record in records:
                     contract, locator = self._authority(session, table, record)
                     loaded[(table, str(record.id))] = (normaliser(record), contract, locator)
+        return loaded
+
+    def fact_rows(self, facts: Sequence[SemanticFact]) -> dict[str, list[Row]]:
+        """Cited rows in reference order, for facts whose rows all still exist."""
+        loaded = self._load_refs(facts)
+        values: dict[str, list[Row]] = {}
+        for fact in facts:
+            rows = [
+                loaded.get((str(ref.get("table")), str(ref.get("id")))) for ref in fact.source_refs
+            ]
+            if all(row is not None for row in rows):
+                values[fact.fact_digest] = [row[0] for row in rows if row is not None]
+        return values
+
+    def names(self, run_id: UUID, entity_keys: Sequence[str]) -> dict[str, tuple[str, ...]]:
+        if not entity_keys:
+            return {}
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(
+                    SemanticEntityRecord.entity_key,
+                    SemanticEntityRecord.name,
+                    SemanticEntityRecord.qualified_name,
+                ).where(
+                    SemanticEntityRecord.catalog_run_id == run_id,
+                    SemanticEntityRecord.entity_key.in_(list(entity_keys)),
+                )
+            ).all()
+        return {
+            key: tuple(dict.fromkeys(value for value in (name, qualified) if value))
+            for key, name, qualified in rows
+        }
+
+    def artifact_ranges(
+        self, structural_analysis_id: UUID, artifact_identity_id: UUID | None
+    ) -> dict[str, tuple[tuple[int, int], ...]] | None:
+        """Comment, docstring and string ranges (decoded offsets) for quote classification."""
+        if artifact_identity_id is None:
+            return None
+        with self._session_factory() as session:
+            analysis = session.scalar(
+                select(ArtifactAnalysisRecord)
+                .join(ArtifactRecord, ArtifactRecord.id == ArtifactAnalysisRecord.artifact_id)
+                .where(
+                    ArtifactAnalysisRecord.structural_analysis_id == structural_analysis_id,
+                    or_(
+                        ArtifactAnalysisRecord.artifact_identity_id == artifact_identity_id,
+                        ArtifactRecord.stable_identity_id == artifact_identity_id,
+                    ),
+                )
+            )
+            if analysis is None:
+                return None
+            facts = [
+                record.artifact_facts or {}
+                for record in session.scalars(
+                    select(ArtifactExtractionRecord).where(
+                        ArtifactExtractionRecord.artifact_analysis_id == analysis.id,
+                        ArtifactExtractionRecord.outcome.in_(["extracted", "partial"]),
+                    )
+                )
+            ]
+        usable = [value for value in facts if "comment_ranges" in value]
+        if not usable:
+            return None
+
+        def ranges(*names: str) -> tuple[tuple[int, int], ...]:
+            return tuple(
+                (int(pair[0]), int(pair[1]))
+                for value in usable
+                for name in names
+                for pair in value.get(name) or []
+            )
+
+        return {
+            "documentation": ranges("comment_ranges", "docstring_ranges"),
+            "string": ranges("string_ranges"),
+        }
+
+    def verify_facts(self, facts: Sequence[SemanticFact]) -> dict[str, str]:
+        """Re-render every fact from its cited rows (invariant F2)."""
+        loaded = self._load_refs(facts)
         results: dict[str, str] = {}
         for fact in facts:
             if fact.renderer_version != RENDERER_VERSION:

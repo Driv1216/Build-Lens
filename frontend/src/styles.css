@@ -115,3 +115,6 @@ pre.source.omitted { opacity: .45; background: #0b1019; }
 .fact p { margin: 4px 0; overflow-wrap: anywhere; }
 .relations { display: grid; gap: 6px; font-size: .85rem; padding-left: 16px; }
 @media (max-width: 1080px) { .explore-grid { grid-template-columns: 1fr; } .explore-column { max-height: none; } }
+.source-line.cited { background: #2b3a1e; }
+.banner { background: #263754; border-radius: 8px; font-size: .82rem; margin: 0; padding: 8px 10px; }
+.badge.ai { color: #a1e8cd; font-size: .72rem; }

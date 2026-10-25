@@ -483,6 +483,11 @@ def test_catalog_is_deterministic_and_order_independent() -> None:
     # Fresh row ids (another database) keep the portable digest only.
     third = _catalog(*[_artifact(str(i.analysis["locator"]), _body(i)) for i in items])
     assert third.portable_digest == first.portable_digest
+    # Content digests (the generation freshness key) are row-id independent as well.
+    assert {e.portable_key: e.content_digest for e in third.entities} == {
+        e.portable_key: e.content_digest for e in first.entities
+    }
+    assert all(e.content_digest for e in first.entities if e.package_digest)
     assert third.catalog_digest != first.catalog_digest
     renders = [r for r in first.relations if r.kind == "renders"]
     assert [r.resolution_status for r in renders] == ["imported"]

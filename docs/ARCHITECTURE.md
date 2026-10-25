@@ -382,7 +382,7 @@ findings: [FRAMEWORK_LAB.md](FRAMEWORK_LAB.md).
 
 ## Stage 13 Milestone A — multi-language structure
 
-**Status: Milestones A and B implemented, 2026-10-25; Milestones C–D not started.** Design,
+**Status: Milestones A–C implemented, 2026-10-25; Milestone D not started.** Design,
 deviations and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
 
 **Producers**
@@ -414,5 +414,12 @@ deviations and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
 - `infrastructure/persistence/semantic.py` publishes under the snapshot lock with captured authority and a `superseded` flag; failures are retained.
 - Migration `0011` adds the four catalog tables and `project_versions.active_semantic_catalog_run_id`. Its downgrade refuses while catalog runs exist.
 - A catalog is stale when its captured structural or processing authority changes, processing freshness fails, or the catalog contract changes. Current reads then return 409; explicit history stays readable.
-- The read-only `/explore` UI and the snapshot panel's "Semantic catalog" section sit over `api/semantic_routes.py`.
+- The `/explore` UI and the snapshot panel's "Semantic catalog" section sit over `api/semantic_routes.py`.
+
+**Controlled generation (Milestone C)**
+- `application/semantic_generation.py` owns plans, the T0–T4 lifecycle, reuse and read-time entry state; `infrastructure/persistence/semantic_generation.py` does all coordination with rows, row locks and `clock_timestamp()` (no job platform).
+- `application/outbound_gate.py` is the only path to provider traffic: single-use tickets minted in T1 and redeemed against the exact canonical bytes.
+- `application/semantic_prompt.py` rebuilds and integrity-checks packages; `application/semantic_validation.py` validates claims deterministically.
+- Adapters live in `infrastructure/generation/semantic_{local,openai,gemini}.py`; the Ask adapters are unchanged.
+- Migration `0012` adds plans, runs, attempts, outcomes, late receipts, interpretations, claims, index entries, the active index pointer and `semantic_entities.content_digest`.
 

@@ -87,6 +87,9 @@ class ProjectVersionRecord(Base):
     active_semantic_catalog_run_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), nullable=True
     )
+    active_semantic_index_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
 
 
 class ArtifactIdentityRecord(Base):
@@ -989,6 +992,7 @@ class SemanticEntityRecord(Base):
     context_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     package_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     package_bytes: Mapped[int] = mapped_column(nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     limitations: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     evidence: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     package: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
@@ -1059,6 +1063,376 @@ class SemanticRelationRecord(Base):
     target_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     fact_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class SemanticGenerationPlanRecord(Base):
+    """Stage 13 persisted, immutable, single-use authorization plan (§11.1)."""
+
+    __tablename__ = "semantic_generation_plans"
+    __table_args__ = (
+        UniqueConstraint("plan_nonce", name="uq_semantic_generation_plans_nonce"),
+        UniqueConstraint(
+            "id", "project_version_id", name="uq_semantic_generation_plans_id_snapshot"
+        ),
+        ForeignKeyConstraint(
+            ["project_version_id", "project_id"],
+            ["project_versions.id", "project_versions.project_id"],
+            ondelete="CASCADE",
+            name="fk_semantic_generation_plan_snapshot_owner",
+        ),
+        ForeignKeyConstraint(
+            ["catalog_run_id", "project_version_id"],
+            ["semantic_catalog_runs.id", "semantic_catalog_runs.project_version_id"],
+            name="fk_semantic_generation_plan_catalog",
+        ),
+        CheckConstraint("expires_at > issued_at", name="ck_semantic_generation_plans_expiry"),
+        CheckConstraint(
+            "mode IN ('generate', 'reuse_only')", name="ck_semantic_generation_plans_mode"
+        ),
+        CheckConstraint(
+            "sharing_class IN ('cloud', 'loopback')", name="ck_semantic_generation_plans_sharing"
+        ),
+        CheckConstraint(
+            "plan_digest ~ '^[0-9a-f]{64}$' AND provider_config_digest ~ '^[0-9a-f]{64}$' "
+            "AND generator_profile_digest ~ '^[0-9a-f]{64}$'",
+            name="ck_semantic_generation_plans_digests",
+        ),
+        Index("ix_semantic_generation_plans_snapshot", "project_version_id", "issued_at"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    plan_nonce: Mapped[str] = mapped_column(String(64), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    selection: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    accept_profiles: Mapped[object] = mapped_column(JSONB, nullable=True)
+    provider_config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    provider_config_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    generator_profile_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    sharing_class: Mapped[str] = mapped_column(String(16), nullable=False)
+    catalog_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    processing_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    index_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    caps: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    totals: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    contributing_locators: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    retention_note: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class SemanticGenerationPlanItemRecord(Base):
+    __tablename__ = "semantic_generation_plan_items"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "entity_key", name="uq_semantic_generation_plan_items_entity"),
+        UniqueConstraint("plan_id", "ordinal", name="uq_semantic_generation_plan_items_ordinal"),
+        ForeignKeyConstraint(["plan_id"], ["semantic_generation_plans.id"], ondelete="CASCADE"),
+        CheckConstraint(
+            "disposition IN ('generate', 'reuse', 'ineligible')",
+            name="ck_semantic_generation_plan_items_disposition",
+        ),
+        CheckConstraint(
+            "disposition <> 'generate' OR (request_digest ~ '^[0-9a-f]{64}$' "
+            "AND package_digest IS NOT NULL AND input_key IS NOT NULL)",
+            name="ck_semantic_generation_plan_items_request",
+        ),
+        CheckConstraint(
+            "(disposition = 'reuse') = (reuse_interpretation_id IS NOT NULL)",
+            name="ck_semantic_generation_plan_items_reuse",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    plan_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    disposition: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    context_coverage: Mapped[str] = mapped_column(String(16), nullable=False)
+    package_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_bytes: Mapped[int] = mapped_column(nullable=False)
+    contributing_locators: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    reuse_interpretation_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    reuse_profile_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reuse_provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    reuse_returned_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SemanticGenerationRunRecord(Base):
+    """One explicit, plan-authorised generation run; the only row with a guarded transition."""
+
+    __tablename__ = "semantic_generation_runs"
+    __table_args__ = (
+        UniqueConstraint("plan_id", name="uq_semantic_generation_runs_plan"),
+        UniqueConstraint(
+            "id", "project_version_id", name="uq_semantic_generation_runs_id_snapshot"
+        ),
+        UniqueConstraint("id", "project_id", name="uq_semantic_generation_runs_id_project"),
+        ForeignKeyConstraint(
+            ["project_version_id", "project_id"],
+            ["project_versions.id", "project_versions.project_id"],
+            ondelete="CASCADE",
+            name="fk_semantic_generation_run_snapshot_owner",
+        ),
+        ForeignKeyConstraint(
+            ["plan_id", "project_version_id"],
+            ["semantic_generation_plans.id", "semantic_generation_plans.project_version_id"],
+            name="fk_semantic_generation_run_plan",
+        ),
+        ForeignKeyConstraint(
+            ["catalog_run_id", "project_version_id"],
+            ["semantic_catalog_runs.id", "semantic_catalog_runs.project_version_id"],
+            name="fk_semantic_generation_run_catalog",
+        ),
+        ForeignKeyConstraint(
+            ["captured_index_run_id", "project_version_id"],
+            ["semantic_generation_runs.id", "semantic_generation_runs.project_version_id"],
+            name="fk_semantic_generation_run_captured_index",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint(
+            "state IN ('executing', 'complete', 'partial', 'failed', 'superseded', 'abandoned')",
+            name="ck_semantic_generation_runs_state",
+        ),
+        CheckConstraint(
+            "(state = 'executing') = (completed_at IS NULL)",
+            name="ck_semantic_generation_runs_terminal",
+        ),
+        CheckConstraint(
+            "attempts_started >= 0 AND deadline_at > started_at",
+            name="ck_semantic_generation_runs_bounds",
+        ),
+        Index(
+            "uq_semantic_generation_runs_one_executing",
+            "project_version_id",
+            unique=True,
+            postgresql_where=text("state = 'executing'"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    plan_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    plan_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    catalog_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    processing_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    captured_index_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    caps: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    attempts_started: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    lease_token: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    totals: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    diagnostics: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class SemanticGenerationAttemptRecord(Base):
+    __tablename__ = "semantic_generation_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "entity_key", "attempt_no", name="uq_semantic_generation_attempts_slot"
+        ),
+        ForeignKeyConstraint(["run_id"], ["semantic_generation_runs.id"], ondelete="CASCADE"),
+        CheckConstraint("attempt_no >= 1", name="ck_semantic_generation_attempts_number"),
+        CheckConstraint(
+            "request_digest ~ '^[0-9a-f]{64}$'", name="ck_semantic_generation_attempts_digest"
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(nullable=False)
+    package_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SemanticGenerationOutcomeRecord(Base):
+    __tablename__ = "semantic_generation_attempt_outcomes"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", name="uq_semantic_generation_outcomes_attempt"),
+        ForeignKeyConstraint(
+            ["attempt_id"], ["semantic_generation_attempts.id"], ondelete="CASCADE"
+        ),
+        CheckConstraint(
+            "outcome IN ('accepted', 'accepted_with_conflicts', 'insufficient_evidence', "
+            "'rejected', 'rate_limited', 'provider_unavailable', 'timeout', 'context_rejected', "
+            "'refused', 'token_bound_violated', 'reused_concurrently', 'outcome_unknown', "
+            "'not_sent')",
+            name="ck_semantic_generation_outcomes_code",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    returned_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(nullable=True)
+    response_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rejection_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    retained_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SemanticGenerationLateReceiptRecord(Base):
+    """A provider response that arrived after fencing: recorded, never stored as a candidate."""
+
+    __tablename__ = "semantic_generation_late_receipts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id"], ["semantic_generation_attempts.id"], ondelete="CASCADE"
+        ),
+        CheckConstraint(
+            "reason IN ('RUN_FENCED', 'RUN_TERMINAL')",
+            name="ck_semantic_generation_late_receipts_reason",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    response_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    reason: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class SemanticInterpretationRecord(Base):
+    """Project-owned, immutable AI interpretation candidate with immutable provenance (F9)."""
+
+    __tablename__ = "semantic_interpretations"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", name="uq_semantic_interpretations_attempt"),
+        UniqueConstraint("id", "project_id", name="uq_semantic_interpretations_id_project"),
+        ForeignKeyConstraint(
+            ["run_id", "project_id"],
+            ["semantic_generation_runs.id", "semantic_generation_runs.project_id"],
+            ondelete="CASCADE",
+            name="fk_semantic_interpretation_run",
+        ),
+        ForeignKeyConstraint(
+            ["attempt_id"], ["semantic_generation_attempts.id"], ondelete="CASCADE"
+        ),
+        CheckConstraint(
+            "status IN ('accepted', 'accepted_with_conflicts', 'insufficient_evidence')",
+            name="ck_semantic_interpretations_status",
+        ),
+        CheckConstraint(
+            "input_key ~ '^[0-9a-f]{64}$' AND generator_profile_digest ~ '^[0-9a-f]{64}$'",
+            name="ck_semantic_interpretations_keys",
+        ),
+        Index(
+            "ix_semantic_interpretations_reuse",
+            "project_id",
+            "entity_key",
+            "input_key",
+            "generator_profile_digest",
+        ),
+        Index("ix_semantic_interpretations_input", "project_id", "input_key"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    input_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    generator_profile_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_model: Mapped[str] = mapped_column(Text, nullable=False)
+    returned_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    validator_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    unknowns: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SemanticClaimRecord(Base):
+    __tablename__ = "semantic_claims"
+    __table_args__ = (
+        UniqueConstraint("interpretation_id", "ordinal", name="uq_semantic_claims_ordinal"),
+        ForeignKeyConstraint(
+            ["interpretation_id"], ["semantic_interpretations.id"], ondelete="CASCADE"
+        ),
+        CheckConstraint(
+            "category IN ('purpose', 'responsibility', 'behavior', 'side_effect', 'dependency', "
+            "'usage_note')",
+            name="ck_semantic_claims_category",
+        ),
+        CheckConstraint(
+            "status IN ('cited', 'conflicts_with_fact')", name="ck_semantic_claims_status"
+        ),
+        CheckConstraint(
+            "basis IN ('code', 'documentation', 'facts')", name="ck_semantic_claims_basis"
+        ),
+        CheckConstraint(
+            "octet_length(text) BETWEEN 1 AND 400 "
+            "AND jsonb_array_length(citations) BETWEEN 1 AND 4",
+            name="ck_semantic_claims_bounds",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    interpretation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    basis: Mapped[str] = mapped_column(String(16), nullable=False)
+    basis_label: Mapped[str] = mapped_column(String(32), nullable=False)
+    assertion: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    assertion_outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scope_warning: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    citations: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+
+
+class SemanticIndexEntryRecord(Base):
+    __tablename__ = "semantic_index_entries"
+    __table_args__ = (
+        UniqueConstraint("run_id", "entity_key", name="uq_semantic_index_entries_entity"),
+        ForeignKeyConstraint(
+            ["run_id", "project_id"],
+            ["semantic_generation_runs.id", "semantic_generation_runs.project_id"],
+            ondelete="CASCADE",
+            name="fk_semantic_index_entry_run",
+        ),
+        ForeignKeyConstraint(
+            ["interpretation_id", "project_id"],
+            ["semantic_interpretations.id", "semantic_interpretations.project_id"],
+            name="fk_semantic_index_entry_interpretation",
+        ),
+        CheckConstraint(
+            "mode IN ('generated', 'reused', 'retained')", name="ck_semantic_index_entries_mode"
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    interpretation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    reused_from_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 # Explicit names and ownership match the forward-migrated PostgreSQL schema.
@@ -1552,6 +1926,17 @@ Base.metadata.tables["project_versions"].append_constraint(
         ["active_semantic_catalog_run_id", "id"],
         ["semantic_catalog_runs.id", "semantic_catalog_runs.project_version_id"],
         name="fk_project_versions_active_semantic_catalog",
+        use_alter=True,
+        deferrable=True,
+        initially="DEFERRED",
+    )
+)
+
+Base.metadata.tables["project_versions"].append_constraint(
+    ForeignKeyConstraint(
+        ["active_semantic_index_run_id", "id"],
+        ["semantic_generation_runs.id", "semantic_generation_runs.project_version_id"],
+        name="fk_project_versions_active_semantic_index",
         use_alter=True,
         deferrable=True,
         initially="DEFERRED",

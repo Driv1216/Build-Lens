@@ -1,13 +1,14 @@
 # Stage 13 — Semantic Project Model
 
-**Status (2026-10-25): Milestones A (multi-language structural foundation) and B
-(deterministic semantic catalog) implemented and verified locally.** Milestones C (controlled
-AI generation) and D (evaluation and hardening) are **not started**. Nothing in this stage
-generates or stores AI text yet.
+**Status (2026-10-25): Milestones A (multi-language structural foundation), B (deterministic
+semantic catalog) and C (controlled AI generation) implemented and verified locally.**
+Milestone D (evaluation and hardening) is **not started**. Generation is off by default
+(`BUILDLENS_SEMANTIC_GENERATION_ENABLED=false`). No real provider has been called: every
+generation in verification used a loopback stub or mock transports.
 
 The approved plan (revision 4) separates deterministic facts from AI interpretations. It keeps
 every existing Stage 1–12 producer byte-identical and adds capabilities as separately contracted,
-per-artifact passes. This document records what Milestones A and B actually built and verified.
+per-artifact passes. This document records what Milestones A–C actually built and verified.
 The contracts for later milestones are design commitments, not implemented behaviour.
 
 ## Milestone A: what exists
@@ -152,7 +153,47 @@ All of this ran locally against disposable PostgreSQL 16 / pgvector 0.8.6 databa
 
 **Frontend:** 26 tests passed (4 new). Lint, TypeScript and production build passed.
 
+## Milestone C: controlled semantic generation
+
+AI output is a separate record from facts (F4) and is never Ask evidence. An interpretation is a
+set of cited claims plus unknowns; there is no free-form prose. Nothing runs automatically:
+every outbound request is authorised by a persisted, single-use plan, budgeted in the database
+before sending, and sent only through `OutboundGate`.
+
+| Capability | Implementation |
+|---|---|
+| Packages and prompt | `application/semantic_prompt.py`: the package is rebuilt from the catalog and stored chunks, every chunk hash-verified and every fact re-rendered, and must reproduce the catalog's `package_digest`. `E#` chunks, own and neighbour `F#` facts, limitations and the omitted-region list go into one canonical untrusted-data JSON. The prompt (`semantic-prompt.v1`) and strict output schema (`semantic-claims.v1`) are versioned. |
+| Validator | `application/semantic_validation.py` (`semantic-validator.v1`), checks 1–9: structure and size with duplicate keys rejected; evidence ids; exact, unique 8–200-character quotes; identifier grounding; basis (code / documentation / string from the artifact's comment, docstring and string ranges; `behavior` and `side_effect` need a code quote); omitted implementation (behaviour about omitted children, neighbours or external callees is rejected unless the claim is a `calls` assertion that matches parsed facts); assertions versus facts (`matches_fact` / `conflicts_with_fact` / `not_checkable`); verdict lexicon rejected and quantifiers flagged; secret screening. Claims are `cited` or `conflicts_with_fact`; interpretations are `accepted`, `accepted_with_conflicts`, `insufficient_evidence` or `rejected` (never stored). |
+| Outbound gate (§11.2) | `application/outbound_gate.py`: a T1 transaction mints a single-use `GateTicket` bound to the run, lease token and `request_digest`. Each adapter's `send` first redeems the ticket against the exact canonical bytes; a reused, foreign or mismatched ticket is refused before any I/O. |
+| Providers | `infrastructure/generation/semantic_{local,openai,gemini}.py`. Loopback: OpenAI-compatible chat completions on `http://127.0.0.1:<port>` or `http://[::1]:<port>` only, `trust_env=False`, no redirects, no retries, no probes, 1 MiB response cap, labelled "loopback endpoint". OpenAI: `max_retries=0`, `store=False`, `stream=False`, `background=False`, no tools. Gemini: `HttpRetryOptions(attempts=1)`, AFC disabled, no `count_tokens` or model listing. Clients are created lazily; construction, status, rendering and plan creation send nothing. |
+| Plans (§11.1) | `semantic_generation_plans` and `_items` hold the selection, mode, `accept_profiles`, provider configuration and its digest, generator profile, captured catalog / structural / processing / index authority, caps, totals, the union of contributing locators (own source and neighbour-fact sources with bytes), the DB-time `issued_at`/`expires_at`, a nonce generated once, and `plan_digest` over the stored rows. |
+| Lifecycle (§4.4, §11.3) | T0 locks the snapshot, verifies the stored digest and the supplied one (`PLAN_INVALID`), rejects a consumed plan (`PLAN_ALREADY_USED`), expiry (`PLAN_EXPIRED`), a changed provider configuration (`PLAN_CONFIG_CHANGED`) or changed authority (`PLAN_CHANGED`), abandons expired-lease runs and inserts the run (`UNIQUE plan_id`; one `executing` run per snapshot by a partial unique index, else `OPERATION_CONFLICT`). T1 enforces the outbound and per-entity budgets under the run lock. A pre-send recheck re-reads authority, rebuilds the package and requires the planned `request_digest`; otherwise the attempt is recorded `not_sent`. T2 records the outcome and, if accepted, the interpretation and claims. T4 copies the previous index forward, overlays this run's results and moves the pointer only when captured authority (including the index run) is unchanged; otherwise the run is `superseded`. Every write uses the DB-time fencing predicate. |
+| Fencing and recovery | A fenced T2 records a `semantic_generation_late_receipts` row (no content) and never a candidate. Abandonment (next T0, `buildlens semantic recover`, or self-abandonment) marks attempts without outcomes `outcome_unknown`. Terminal states never change (a guarded `UPDATE … WHERE state='executing'` plus a CHECK). Candidates committed under a valid lease survive `superseded` and `abandoned` runs and stay reusable. |
+| Retries and bounds | Retries are explicit only: 429/503 with `Retry-After` ≤ 60 s that still fits the deadline, each a new T1 with a new ticket and budget increment. Reported prompt tokens above request bytes + 512 stop the run (`TOKEN_BOUND_VIOLATED`). Defaults: 10 requests, 2 attempts per entity, 300 s deadline, 64,000-byte request ceiling, 30-minute plan TTL (placeholders). |
+| Reuse and freshness (§4.4.3, §5.3) | `input_key` is source freshness only; `generator_profile_digest` (provider, requested model, policy) is separate. `generate` mode reuses only the same profile; `reuse_only` needs explicit `accept_profiles` (a list or `any`) and sends nothing. Index entries record `generated`, `reused` or `retained` and `reused_from_profile`; provenance (profile, requested and returned model, run, attempt) is immutable. Entry state is computed at read time: `current`, `stale` (`SOURCE_CHANGED`, `FACTS_CHANGED`, `NEIGHBOR_FACTS_CHANGED`, `CONTEXT_COVERAGE_CHANGED`, `CONTRACT_CHANGED`, `ENTITY_REMOVED`) or `absent`. |
+| Read-time citations (F2) | Every claim citation (chunk stable key + hash + offsets, or fact digest + offsets) is resolved and its quote hash re-verified on read; a failing citation withholds the claim text. Quote text is never stored. |
+| Persistence | Migration `0012_semantic_generation` (additive): plans, plan items, runs, attempts, attempt outcomes, late receipts, interpretations, claims, index entries, `project_versions.active_semantic_index_run_id`, and `semantic_entities.content_digest`. Downgrade refuses while plans or runs exist. |
+| API, CLI, UI | `GET /api/v1/semantic-generation` (configuration only); `POST …/semantic/generation/plan`, `GET …/generation/plans/{id}`, `POST …/generation` with `{plan_id, plan_digest, confirm: true}`, `GET …/generation/runs[/{id}]` with attempts and outcomes, `GET …/entities/{key}/interpretation`, `…/history`, `GET …/interpretations/{id}`, and `state` filtering on `/entities`. `buildlens semantic catalog|status|plan|generate|recover`. Explore adds Interpretation (provenance banner, chips, conflicts and unknowns, cited lines highlighted), History and Generate (plan with every locator, bytes, caps, sharing class, retention note and expiry; explicit checkbox before "Authorise and run"). Model text is rendered as plain text only (F7). |
+
+### Deviations from the plan (Milestone C)
+- **Ask adapters untouched.** Instead of a move-only refactor of the Ask Gemini/OpenAI adapters into a shared `common.py`, the Ask files are byte-unchanged and the semantic adapters construct their own clients (`semantic_common.py` holds only semantic helpers). Ask parity therefore holds by construction; the existing Ask tests pass unchanged.
+- **Freshness key.** The plan defines `input_key` from `package_digest`, but fact digests include cited structural row ids (§3.5), which change in every snapshot, so cross-snapshot reuse (§5.3) could never occur. `input_key` is instead derived from a per-entity `content_digest`: the catalog's portable content projection (chunk hashes and positions, rendered fact texts, omitted regions by portable key, mode). The row-level `package_digest` is still recomputed and required before every send. This is catalog contract `semantic-catalog.v2`; v1 catalogs show `CATALOG_CONTRACT_CHANGED` and must be rebuilt.
+- **Migrations.** Generation tables are a separate revision `0012`, not an amendment of `0011`.
+- **`not_sent` outcome.** An attempt whose pre-send recheck fails after T1 consumed budget is recorded `not_sent` with a reason (`AUTHORITY_CHANGED`, `PACKAGE_INTEGRITY`, `REQUEST_DIGEST_CHANGED`) rather than reusing another code.
+- **T0 order.** A consumed plan reports `PLAN_ALREADY_USED` before the expiry, configuration and authority checks (its own publication would otherwise surface as `PLAN_CHANGED`).
+- **Scenario 6 (R3).** With one `executing` run per snapshot, a newer index cannot be published by another process while a run still holds its lease; the guard was tested by forcing the active index pointer, and a run whose lease was taken over is fenced at T4.
+- **Basis classification.** Without comment/string ranges (legacy facts) quotes are `unclassified`, so behaviour claims are rejected; TS/JS string literals are not ranged and count as code. Unknowns are grounded against both facts and evidence.
+- **Gemini `Retry-After`.** The SDK error does not reliably expose response headers, so a Gemini 429 is recorded and not retried.
+- **Not verified against real providers.** The OpenAI and Gemini adapters were exercised only through injected mock transports; whether each provider accepts the strict schema as written (`anyOf` with null, `minItems`/`maxItems`) is unverified. The opt-in real-provider gate was not run.
+
+### Verification (Milestone C, 2026-10-25)
+- **Backend:** 307 passed, 1 skipped (lab-database test without its URL), 5 deselected on Python 3.14.6 and 3.11.15; ruff, format and mypy clean on both. New tests:
+  - `tests/unit/test_semantic_validation.py` (20): every check's rejection code, basis labels, omitted-implementation cases (external callee, neighbour, the allowed `calls` form, a mismatched assertion), assertion outcomes, quantifier flags, unknowns, statuses, identifier extraction, stale-reason manifest diffs.
+  - `tests/unit/test_semantic_outbound.py` (17): construction, status and render make 0 requests for all three adapters; one ticket is exactly one request; reused, forged or byte-mismatched tickets are refused; a 429 is one request with no SDK retry; loopback sends exactly the canonical bytes, refuses redirects, caps responses, ignores proxy environment and accepts only literal loopback URLs; an AST architecture test (only `gate.send`; every adapter redeems first; no provider imports in application code; Ask adapters free of semantic code).
+  - `tests/integration/test_semantic_generation.py` (9): plan stability, reuse and profile rules, returned-model provenance; tampered item or digest, expiry, configuration and authority changes; explicit 429 retry, budget edge, token bound, rejected output; pre-send recheck blocking changed bytes and authority with 0 requests; all six fencing scenarios; concurrent T1 at the budget edge; two OS processes consuming one plan (one run, one `PLAN_ALREADY_USED`); a slow run in another process blocking a second run (`OPERATION_CONFLICT`); HTTP contracts and a contract bump making entries `stale`; a new snapshot whose `reuse_only` plan adds exact-key entries with 0 requests.
+- **Frontend:** 29 tests passed (3 new), lint, types and build.
+- **Browser run:** synthetic Python + TSX repository, real API configured for a loopback stub: plan and execution through the local API (6 requests, 6 accepted), then Explore showing "AI current" badges and the Interpretation, History and Generate tabs.
+- **Stage 11 baseline:** a fresh copy of the retained volume upgraded 0009 → 0012: the 14 pre-existing tables byte-identical after the upgrade and after a catalog build; the legacy catalog builds with the source reader disabled; `eval validate` 30/30 with identical digests; `lab parity` 90/90 (retrieval, ranking and packed context equal; corpus digest `03c559c4…` unchanged; run with the 60 s search timeout described under Milestone B).
+
 ## Not built yet (later milestones)
-- AI generation (persisted plans, `OutboundGate`, generator profiles, claims, freshness index).
-- Explore interpretation, history and generate tabs.
-- Semantic benchmarks.
+- Milestone D: adversarial repository, grounding metrics, pre-registered human review, an optional authorised real-provider run.

@@ -59,6 +59,7 @@ class EntitySummaryResponse(BaseModel):
     package_digest: str | None
     package_bytes: int
     limitations: list[str]
+    interpretation_state: Literal["current", "stale", "absent"] | None = None
 
 
 class EntityPageResponse(BaseModel):
@@ -125,3 +126,176 @@ class EntityDetailResponse(BaseModel):
     incoming: list[RelationResponse]
     integrity_errors: list[str]
     related: dict[str, str] = Field(default_factory=dict)
+
+
+class PlanRequest(BaseModel):
+    entity_keys: list[str] = Field(default_factory=list, max_length=200)
+    locator_prefix: str | None = Field(None, max_length=1024)
+    kinds: list[Literal["file", "symbol", "component", "hook", "api_endpoint", "db_table"]] = Field(
+        default_factory=list
+    )
+    stale_only: bool = False
+    mode: Literal["generate", "reuse_only"] = "generate"
+    accept_profiles: list[str] | Literal["any"] | None = None
+
+
+class LocatorResponse(BaseModel):
+    artifact_identity_id: str | None = None
+    locator: str
+    role: str
+    bytes: int
+
+
+class PlanItemResponse(BaseModel):
+    ordinal: int
+    entity_key: str
+    disposition: Literal["generate", "reuse", "ineligible"]
+    reason: str | None
+    context_coverage: str
+    package_digest: str | None
+    input_key: str | None
+    request_digest: str | None
+    request_bytes: int
+    contributing_locators: list[LocatorResponse]
+    reuse_interpretation_id: UUID | None
+    reuse_profile_digest: str | None
+    reuse_provider: str | None
+    reuse_returned_model: str | None
+
+
+class PlanResponse(BaseModel):
+    plan_id: UUID
+    snapshot_id: UUID
+    plan_nonce: str
+    plan_digest: str
+    issued_at: datetime
+    expires_at: datetime
+    mode: Literal["generate", "reuse_only"]
+    accept_profiles: list[str] | Literal["any"] | None
+    selection: dict[str, object]
+    provider_config: dict[str, object]
+    provider_config_digest: str
+    generator_profile_digest: str
+    sharing_class: Literal["cloud", "loopback"]
+    retention_note: str
+    catalog_run_id: UUID
+    structural_analysis_id: UUID
+    processing_run_id: UUID
+    index_run_id: UUID | None
+    caps: dict[str, object]
+    totals: dict[str, object]
+    contributing_locators: list[dict[str, object]]
+    items: list[PlanItemResponse]
+    run_id: UUID | None
+
+
+class ExecuteRequest(BaseModel):
+    plan_id: UUID
+    plan_digest: str = Field(pattern="^[0-9a-f]{64}$")
+    confirm: bool
+
+
+class AttemptResponse(BaseModel):
+    attempt_id: UUID
+    entity_key: str
+    attempt_no: int
+    request_digest: str
+    started_at: datetime
+    outcome: str | None
+    returned_model: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    latency_ms: int | None
+    rejection_codes: list[str]
+    late_receipts: int
+
+
+class GenerationRunResponse(BaseModel):
+    run_id: UUID
+    snapshot_id: UUID
+    plan_id: UUID
+    plan_digest: str
+    state: Literal["executing", "complete", "partial", "failed", "superseded", "abandoned"]
+    catalog_run_id: UUID
+    captured_index_run_id: UUID | None
+    caps: dict[str, object]
+    attempts_started: int
+    started_at: datetime
+    completed_at: datetime | None
+    deadline_at: datetime
+    totals: dict[str, object]
+    diagnostics: list[str]
+    attempts: list[AttemptResponse] = Field(default_factory=list)
+
+
+class GenerationRunHistoryResponse(BaseModel):
+    items: list[GenerationRunResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class CitationResponse(BaseModel):
+    evidence_id: str
+    kind: Literal["chunk", "fact"]
+    basis: str
+    locator: str | None
+    start_line: int | None
+    end_line: int | None
+    stable_key: str | None
+    fact_digest: str | None
+    start: int
+    end: int
+    verification: str | None
+    quote: str | None
+
+
+class ClaimResponse(BaseModel):
+    ordinal: int
+    category: str
+    # Withheld (null) when any citation fails read-time verification.
+    text: str | None
+    status: Literal["cited", "conflicts_with_fact"]
+    basis: Literal["code", "documentation", "facts"]
+    basis_label: Literal["cited", "per_documentation", "from_declarations_only"]
+    assertion: dict[str, object] | None
+    assertion_outcome: str | None
+    scope_warning: bool
+    citations: list[CitationResponse]
+
+
+class InterpretationResponse(BaseModel):
+    interpretation_id: UUID
+    entity_key: str
+    snapshot_id: UUID
+    run_id: UUID
+    attempt_id: UUID
+    input_key: str
+    generator_profile_digest: str
+    provider: str
+    requested_model: str
+    returned_model: str | None
+    prompt_version: str
+    schema_version: str
+    validator_version: str
+    status: str
+    created_at: datetime
+    unknowns: list[str]
+    context_coverage: str | None
+    claims: list[ClaimResponse]
+    integrity_errors: list[str]
+
+
+class EntryResponse(BaseModel):
+    entity_key: str
+    state: Literal["current", "stale", "absent"]
+    stale_reasons: list[str]
+    mode: Literal["generated", "reused", "retained"] | None
+    reused_from_profile: str | None
+    index_run_id: UUID | None
+    interpretation: InterpretationResponse | None
+
+
+class EntryHistoryResponse(BaseModel):
+    entity_key: str
+    items: list[EntryResponse]
