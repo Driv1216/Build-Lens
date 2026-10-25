@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import multiprocessing as mp
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime
 from multiprocessing.connection import Connection
 from queue import Empty, Queue
 from threading import Thread
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from buildlens.application.processors import process_source
 from buildlens.domain.inspection import InspectionError, InspectionResult
 from buildlens.domain.processing import Chunk, ProcessingDiagnostic, ProcessorContract
 from buildlens.domain.source import ContentRejectedError
-from buildlens.domain.structural import ArtifactAnalysis, Symbol
+from buildlens.domain.structural import ArtifactAnalysis, ArtifactExtraction, Symbol
 from buildlens.infrastructure.structural.parser import PythonAstParser
 from buildlens.infrastructure.structural.reader import (
     PosixSecureSourceReader,
@@ -27,11 +28,97 @@ from buildlens.infrastructure.structural.reader import (
 )
 
 
-def _worker(connection: Connection, progress: Any) -> None:
+def _peak_rss_bytes() -> int:
+    import resource
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # ru_maxrss is bytes on macOS and KiB on Linux.
+    return int(peak if sys.platform == "darwin" else peak * 1024)
+
+
+def _extract(
+    reader: PosixSecureSourceReader,
+    args: tuple[Any, ...],
+    canary: list[str | None],
+) -> object:
+    """Stage 13 language dispatch: frozen Python declarations plus additive passes."""
+    (
+        analysis_id,
+        version_id,
+        artifact_id,
+        root,
+        locator,
+        max_bytes,
+        expected,
+        language,
+        reused_symbols,
+    ) = args
+    started = datetime.now(UTC)
+    raw = reader.read(root, locator, max_bytes, expected)
+    fingerprint = hashlib.sha256(raw.data).hexdigest()
+    if language == "Python":
+        from buildlens.infrastructure.structural.python_facts import extract_python_facts
+
+        if reused_symbols is not None:
+            return extract_python_facts(raw.data, reused_symbols), fingerprint, raw.size_bytes
+        parsed = PythonAstParser().parse(
+            analysis_id=analysis_id,
+            version_id=version_id,
+            artifact_id=artifact_id,
+            locator=locator,
+            data=raw.data,
+        )
+        extractions = (
+            (extract_python_facts(raw.data, parsed.symbols),) if parsed.outcome == "parsed" else ()
+        )
+        return replace(
+            parsed,
+            read_started_at=started,
+            read_completed_at=datetime.now(UTC),
+            input_fingerprint=fingerprint,
+            bytes_consumed=raw.size_bytes,
+            language="Python",
+            extractions=extractions,
+        )
+    from buildlens.infrastructure.structural import typescript
+
+    if not canary:
+        canary.append(typescript.verify_canary())
+    if canary[0] is not None:
+        extraction = typescript.failure(locator, raw.data, canary[0])
+    else:
+        extraction = typescript.extract(locator, raw.data)
+    return ArtifactAnalysis(
+        uuid4(),
+        analysis_id,
+        version_id,
+        artifact_id,
+        locator,
+        extraction.outcome,
+        started,
+        datetime.now(UTC),
+        extraction.encoding,
+        extraction.line_count,
+        False,
+        extraction.diagnostics,
+        extraction.symbols,
+        extraction.imports,
+        input_fingerprint=fingerprint,
+        bytes_consumed=raw.size_bytes,
+        language=language,
+        declaration_extraction_id=extraction.extraction.id
+        if extraction.outcome == "parsed"
+        else None,
+        extractions=(extraction.extraction,),
+    )
+
+
+def _worker(connection: Connection, progress: Any, max_rss_bytes: int = 0) -> None:
     def observe(count: int) -> None:
         progress.value = count
 
     reader = PosixSecureSourceReader(observe)
+    canary: list[str | None] = []
     try:
         while True:
             operation, args = connection.recv()
@@ -71,6 +158,12 @@ def _worker(connection: Connection, progress: Any) -> None:
                         input_fingerprint=hashlib.sha256(raw.data).hexdigest(),
                         bytes_consumed=raw.size_bytes,
                     )
+                elif operation == "extract":
+                    result = _extract(reader, args, canary)
+                    if max_rss_bytes and _peak_rss_bytes() > max_rss_bytes:
+                        # Peak RSS never decreases; the parent recycles this worker.
+                        connection.send((False, ("RESOURCE_LIMIT", int(progress.value))))
+                        continue
                 elif operation == "process":
                     result = process_source(*args)
                 else:
@@ -91,8 +184,9 @@ def _worker(connection: Connection, progress: Any) -> None:
 
 
 class SupervisedSourceReader(SecureSourceReader):
-    def __init__(self, timeout: float = 3) -> None:
+    def __init__(self, timeout: float = 3, max_rss_bytes: int = 0) -> None:
         self.timeout = timeout
+        self.max_rss_bytes = max_rss_bytes
         self._process: Any = None
         self._connection: Connection | None = None
         self._progress: Any = None
@@ -105,7 +199,7 @@ class SupervisedSourceReader(SecureSourceReader):
                 # A terminated worker must never leave a progress mutex locked in the parent.
                 self._progress = context.RawValue("Q", 0)
                 self._process = context.Process(
-                    target=_worker, args=(child, self._progress), daemon=True
+                    target=_worker, args=(child, self._progress, self.max_rss_bytes), daemon=True
                 )
                 self._process.start()
                 child.close()
@@ -134,6 +228,8 @@ class SupervisedSourceReader(SecureSourceReader):
                 raise EOFError
             ok, result = cast(tuple[bool, Any], response)
             if not ok:
+                if result[0] == "RESOURCE_LIMIT":
+                    self.close()
                 raise SourceReadError(result[0], bytes_consumed=result[1])
             return result
         except (OSError, EOFError, RuntimeError):
@@ -212,6 +308,66 @@ class SupervisedSourceReader(SecureSourceReader):
                     locator,
                     max_bytes,
                     expected_root_identity,
+                ),
+                timeout,
+            ),
+        )
+
+    def extract(
+        self,
+        analysis_id: UUID,
+        version_id: UUID,
+        artifact_id: UUID,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int] | None,
+        timeout: float,
+        language: str,
+    ) -> ArtifactAnalysis:
+        return cast(
+            ArtifactAnalysis,
+            self._run(
+                "extract",
+                (
+                    analysis_id,
+                    version_id,
+                    artifact_id,
+                    root,
+                    locator,
+                    max_bytes,
+                    expected_root_identity,
+                    language,
+                    None,
+                ),
+                timeout,
+            ),
+        )
+
+    def extract_facts(
+        self,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int] | None,
+        timeout: float,
+        symbols: tuple[Symbol, ...],
+    ) -> tuple[ArtifactExtraction, str, int]:
+        zero = UUID(int=0)
+        return cast(
+            tuple[ArtifactExtraction, str, int],
+            self._run(
+                "extract",
+                (
+                    zero,
+                    zero,
+                    zero,
+                    root,
+                    locator,
+                    max_bytes,
+                    expected_root_identity,
+                    "Python",
+                    symbols,
                 ),
                 timeout,
             ),

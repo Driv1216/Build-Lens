@@ -18,6 +18,7 @@ from buildlens.application.snapshots import SnapshotNotFoundError
 from buildlens.application.source_ports import ProcessingWorker, SourceReadError
 from buildlens.domain.eligibility import exclusion_reason
 from buildlens.domain.entities import Artifact, Project, ProjectVersion
+from buildlens.domain.extractors import extractor_contract_digest, language_for
 from buildlens.domain.processing import (
     ArtifactProcessing,
     ArtifactProcessingOutcome,
@@ -129,7 +130,46 @@ def processing_freshness(
     return ()
 
 
+TS_DEPENDENCY_SCHEME = "ts-declarations-dependency.v1"
+
+
+def dependency_scheme(artifact: ArtifactAnalysis) -> str | None:
+    """``None`` is the frozen legacy Python scheme; other languages carry their own."""
+    return None if artifact.language in {None, "Python"} else TS_DEPENDENCY_SCHEME
+
+
 def dependency_fingerprint(artifact: ArtifactAnalysis) -> str:
+    if dependency_scheme(artifact) is not None:
+        return _declaration_dependency_fingerprint(artifact)
+    return _python_dependency_fingerprint(artifact)
+
+
+def _declaration_dependency_fingerprint(artifact: ArtifactAnalysis) -> str:
+    """TS/JS dependency on their own declaration contract, never the Python contract (M4)."""
+    declaration = artifact.declaration_extraction
+    current = extractor_contract_digest(declaration.extractor) if declaration else None
+    observed = declaration.contract_digest if declaration else None
+    return digest(
+        {
+            "scheme": TS_DEPENDENCY_SCHEME,
+            "input": artifact.input_fingerprint,
+            "contract": current if current is not None and observed == current else None,
+            "symbols": [
+                [
+                    str(s.stable_identity_id),
+                    s.kind,
+                    s.state_fingerprint,
+                    s.start_offset,
+                    s.end_offset,
+                    [list(item) for item in s.additional_spans],
+                ]
+                for s in artifact.symbols
+            ],
+        }
+    )
+
+
+def _python_dependency_fingerprint(artifact: ArtifactAnalysis) -> str:
     return digest(
         {
             "input": artifact.input_fingerprint,
@@ -150,6 +190,31 @@ def dependency_fingerprint(artifact: ArtifactAnalysis) -> str:
 
 
 _TEXT_EXT = {"txt", "rst", "xml", "ini", "cfg", "conf"}
+_DECLARATION_EXT = {"ts", "tsx", "js", "jsx"}
+PROCESSOR_SET = (
+    "python",
+    "markdown",
+    "json",
+    "toml",
+    "yaml",
+    "generic",
+    "typescript",
+    "javascript",
+)
+
+
+def _structure_ready(structure: ArtifactAnalysis | None) -> bool:
+    """Structural prerequisite, including per-language declaration authority (M4)."""
+    if not structure or not structure.snapshot_verified or structure.outcome != "parsed":
+        return False
+    if structure.language in {None, "Python"}:
+        return True
+    declaration = structure.declaration_extraction
+    return (
+        declaration is not None
+        and declaration.outcome in {"extracted", "partial"}
+        and declaration.contract_digest == extractor_contract_digest(declaration.extractor)
+    )
 
 
 class ProcessingService:
@@ -237,20 +302,29 @@ class ProcessingService:
                     )
                     continue
                 suffix = PurePosixPath(artifact.locator).suffix.lstrip(".").lower()
-                if suffix not in {
-                    "py",
-                    "md",
-                    "json",
-                    "toml",
-                    "yaml",
-                    "yml",
-                    *_TEXT_EXT,
-                } and PurePosixPath(artifact.locator).name.upper() not in {
-                    "README",
-                    "LICENSE",
-                    "NOTICE",
-                    "CHANGELOG",
-                }:
+                declaration_code = suffix in _DECLARATION_EXT and language_for(
+                    metadata.language, artifact.locator
+                )
+                if (
+                    not declaration_code
+                    and suffix
+                    not in {
+                        "py",
+                        "md",
+                        "json",
+                        "toml",
+                        "yaml",
+                        "yml",
+                        *_TEXT_EXT,
+                    }
+                    and PurePosixPath(artifact.locator).name.upper()
+                    not in {
+                        "README",
+                        "LICENSE",
+                        "NOTICE",
+                        "CHANGELOG",
+                    }
+                ):
                     results.append(
                         self._outcome(snapshot_id, artifact, "unsupported", "UNSUPPORTED_ARTIFACT")
                     )
@@ -271,12 +345,9 @@ class ProcessingService:
                         )
                     )
                     continue
-                structure = structures.get(artifact.id) if suffix == "py" else None
-                if suffix == "py" and (
-                    not structure
-                    or not structure.snapshot_verified
-                    or structure.outcome != "parsed"
-                ):
+                code = suffix == "py" or bool(declaration_code)
+                structure = structures.get(artifact.id) if code else None
+                if code and not _structure_ready(structure):
                     results.append(
                         self._outcome(
                             snapshot_id, artifact, "failed", "STRUCTURAL_PREREQUISITE_MISSING"
@@ -426,6 +497,7 @@ class ProcessingService:
                         ),
                         structural_artifact_analysis_id=structure.id if structure else None,
                         dependency_fingerprint=dependency,
+                        fingerprint_scheme=dependency_scheme(structure) if structure else None,
                     )
                 )
             owned = tuple(replace(value, processing_run_id=run_id) for value in results)
@@ -464,6 +536,7 @@ class ProcessingService:
                 owned,
                 captured_active_processing_run_id=active.id if active else None,
                 captured_latest_revision=latest.revision if latest else 0,
+                processor_set=PROCESSOR_SET,
             )
             return self._store.save(project_id, snapshot_id, run, successful > 0)
         finally:

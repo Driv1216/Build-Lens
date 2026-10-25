@@ -379,3 +379,31 @@ persisted vectors match the stored digests. pgvector experiments use a separate 
 least-privilege role. Lab state lives under the already-excluded `.buildlens-eval/lab/`, so the
 `stage2.v3` policy and the frozen Stage 11 corpus binding are unchanged. Design and measured
 findings: [FRAMEWORK_LAB.md](FRAMEWORK_LAB.md).
+
+## Stage 13 Milestone A — multi-language structure
+
+**Status: Milestone A implemented, 2026-10-25; Milestones B–D not started.** Design, deviations
+and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
+
+**Producers**
+- Structural runs keep the frozen Python declaration producer. The run-level `producer_contract` still means *the Python declaration producer only*.
+- Additive per-artifact passes are recorded in `artifact_extractions`, each with its own contract digest:
+  - `python-facts.v1`, a second `ast` + `tokenize` pass beside the unchanged parser
+  - `typescript-declarations.v1` and `javascript-declarations.v1`, parse-only `tree-sitter` in the same supervised worker, with a canary handshake and fail-closed grammar checks
+- `domain/extractors.py` is the language registry.
+
+**Authority**
+- A parsed non-Python artifact must reference its declaration extraction (DB CHECK).
+- It is current only while that contract is current (M4). Python evidence in the same run is unaffected.
+
+**Processing**
+- Processing admits `.ts/.tsx/.js/.jsx` (not `.min.js`) behind the same structural prerequisite.
+- Chunks are cut from offset-precise declaration regions.
+- `artifact_processings.fingerprint_scheme` tags TS/JS dependencies (`ts-declarations-dependency.v1`); `NULL` remains the legacy Python fingerprint.
+- A TS extractor contract change makes processing runs that contain TS dependencies stale, because Stage 5 freshness is run-level. Runs without TS dependencies are unaffected.
+
+**Migration and limits**
+- Migration `0010` is additive, and its downgrade refuses while Stage 13 evidence exists.
+- Nothing is executed or resolved: no Node, no tsconfig, no module resolution in production.
+- Import resolution, the semantic catalog and AI interpretations belong to later milestones.
+

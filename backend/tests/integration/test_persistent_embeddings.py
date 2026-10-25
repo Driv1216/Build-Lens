@@ -458,10 +458,17 @@ def test_persistence_restart_exact_search_and_unchanged_reuse(
 
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).parents[2] / "alembic"))
+    # Stage 13 (0010) refuses first: new processing runs record their processor set.
+    with pytest.raises(Exception, match="Stage 13 multi-language evidence exists"):
+        command.downgrade(config, "0007_evidence_ownership")
+    with pg_engine.begin() as connection:
+        connection.execute(text("UPDATE processing_runs SET processor_set = NULL"))
+    # Without Stage 13 evidence, the retained-embedding guard still refuses; the whole
+    # downgrade is one transaction, so nothing is removed.
     with pytest.raises(Exception, match="Refusing to remove retained embedding history"):
         command.downgrade(config, "0007_evidence_ownership")
     with pg_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0009_lexical_hybrid_retrieval"
+            == "0010_multilanguage_structure"
         )

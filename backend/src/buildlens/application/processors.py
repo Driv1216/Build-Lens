@@ -394,6 +394,92 @@ def python_chunks(
     return tuple(replace(value, ordinal=index) for index, value in enumerate(values))
 
 
+def declaration_chunks(
+    source: str,
+    processing_id: UUID,
+    artifact_anchor: str,
+    symbols: Iterable[Symbol],
+    processor: str,
+) -> tuple[Chunk, ...]:
+    """Slice TS/JS declaration regions by exact decoded offsets (no reparsing).
+
+    Like ``python_chunks``: innermost regions are claimed first, enclosing declarations keep
+    only their residual text and everything else becomes ``module`` text. Merged declarations
+    contribute one region per declaration, all bound to the same identity. Regions are produced
+    by a well-nested parse tree, so a partial overlap is an integrity failure (``SPAN_CONFLICT``).
+    """
+    contract = contract_for(processor)
+    spans: list[tuple[int, int, str, UUID, UUID | None]] = []
+    for item in symbols:
+        if item.start_offset is None or item.end_offset is None:
+            continue
+        key = str(item.stable_identity_id or item.id)
+        spans.append(
+            (item.start_offset, item.end_offset, f"symbol:{key}", item.id, item.stable_identity_id)
+        )
+        for index, (left, right) in enumerate(item.additional_spans):
+            spans.append(
+                (left, right, f"symbol:{key}:merge:{index}", item.id, item.stable_identity_id)
+            )
+    for span in spans:
+        if span[0] < 0 or span[1] < span[0] or span[1] > len(source):
+            raise ContentRejectedError("SPAN_CONFLICT")
+    records = sorted(spans, key=lambda value: (value[1] - value[0], value[0]))
+    regions: list[tuple[int, int, str, UUID | None, UUID | None]] = []
+    occupied: list[tuple[int, int]] = []
+    for start, end, anchor, symbol_id, identity in records:
+        if start == end:
+            continue
+        for left, right in occupied:
+            overlaps = left < end and start < right
+            contained = start <= left and right <= end
+            if overlaps and not contained:
+                raise ContentRejectedError("SPAN_CONFLICT")
+        children = sorted((a, b) for a, b in occupied if start <= a and b <= end)
+        cursor = start
+        for child_start, child_end in children:
+            if cursor < child_start:
+                regions.append((cursor, child_start, f"{anchor}:residual", symbol_id, identity))
+            cursor = max(cursor, child_end)
+        if cursor < end:
+            regions.append((cursor, end, anchor, symbol_id, identity))
+        occupied = [(a, b) for a, b in occupied if not (start <= a and b <= end)]
+        occupied.append((start, end))
+    cursor = 0
+    for start, end in sorted(occupied):
+        if cursor < start:
+            regions.append((cursor, start, "module", None, None))
+        cursor = max(cursor, end)
+    if cursor < len(source):
+        regions.append((cursor, len(source), "module", None, None))
+    values: list[Chunk] = []
+    ordered = sorted(regions)
+    occurrence: dict[str, int] = {}
+    for region_no, (begin, finish, unit, owner, owner_identity) in enumerate(ordered):
+        if unit == "module" or unit.endswith(":residual"):
+            before = next((str(x[4] or x[3]) for x in reversed(ordered[:region_no]) if x[3]), "BOF")
+            after = next((str(x[4] or x[3]) for x in ordered[region_no + 1 :] if x[3]), "EOF")
+            unit = f"{unit}:{before}:{after}"
+        number = occurrence.get(unit, 0)
+        occurrence[unit] = number + 1
+        unit = f"{unit}:unit:{number}"
+        if not source[begin:finish].strip():
+            continue
+        values.extend(
+            _chunks(
+                source,
+                processing_id,
+                artifact_anchor,
+                processor,
+                [(begin, finish, unit, (), None)],
+                contract,
+                owner,
+                owner_identity,
+            )
+        )
+    return tuple(replace(value, ordinal=index) for index, value in enumerate(values))
+
+
 def toml_chunks(
     source: str, processing_id: UUID, artifact_anchor: str
 ) -> tuple[tuple[Chunk, ...], tuple[ProcessingDiagnostic, ...]]:
@@ -539,6 +625,13 @@ def process_source(
                 python_chunks(source, processing_id, anchor, symbols),
                 (),
                 contract_for("python", "python-tokenize"),
+            )
+        if suffix in {"ts", "tsx", "js", "jsx"}:
+            processor_name = "typescript" if suffix in {"ts", "tsx"} else "javascript"
+            return (
+                declaration_chunks(source, processing_id, anchor, symbols, processor_name),
+                (),
+                contract_for(processor_name),
             )
         processors = {
             "md": markdown_chunks,

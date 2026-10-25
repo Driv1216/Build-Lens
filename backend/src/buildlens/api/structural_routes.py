@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +11,7 @@ from buildlens.api.structural_schemas import (
     DecoratorResponse,
     DiagnosticResponse,
     ExpressionResponse,
+    ExtractionSummaryResponse,
     ImportPageResponse,
     ImportReferenceResponse,
     ParameterResponse,
@@ -28,6 +29,7 @@ from buildlens.application.structural import (
     AnalysisUnavailableError,
     StructuralAnalysisService,
 )
+from buildlens.domain.extractors import extractor_contract_digest
 from buildlens.domain.structural import (
     ArtifactAnalysis,
     ImportReference,
@@ -120,6 +122,19 @@ def _artifact(value: ArtifactAnalysis) -> ArtifactAnalysisResponse:
         snapshot_verified=value.snapshot_verified,
         execution_mode=value.execution_mode,
         reuse_source_artifact_analysis_id=value.reuse_source_artifact_analysis_id,
+        language=value.language,
+        declaration_extraction_id=value.declaration_extraction_id,
+        extractions=[
+            ExtractionSummaryResponse(
+                extractor=item.extractor,
+                outcome=item.outcome,
+                execution_mode=item.execution_mode,
+                contract_digest=item.contract_digest,
+                contract_current=item.contract_digest == extractor_contract_digest(item.extractor),
+                diagnostics=[_diagnostic(x) for x in item.diagnostics],
+            )
+            for item in value.extractions
+        ],
     )
 
 
@@ -143,6 +158,13 @@ def _symbol(record: Symbol) -> SymbolSummaryResponse:
         stable_identity_id=record.stable_identity_id,
         continuity_reason=record.continuity_reason,
         state_fingerprint=record.state_fingerprint,
+        declaration_form=record.declaration_form,
+        declaration_space=cast(Any, record.declaration_space),
+        name_source=record.name_source,
+        exported=record.exported,
+        start_offset=record.start_offset,
+        end_offset=record.end_offset,
+        additional_spans=list(record.additional_spans),
     )
 
 

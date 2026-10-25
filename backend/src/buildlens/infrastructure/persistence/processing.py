@@ -23,9 +23,16 @@ from buildlens.domain.processing import (
     ProcessorContract,
 )
 from buildlens.domain.source import processing_contract
-from buildlens.domain.structural import ArtifactAnalysis, SourceSpan, StructuralAnalysis, Symbol
+from buildlens.domain.structural import (
+    ArtifactAnalysis,
+    ArtifactExtraction,
+    SourceSpan,
+    StructuralAnalysis,
+    Symbol,
+)
 from buildlens.infrastructure.persistence.models import (
     ArtifactAnalysisRecord,
+    ArtifactExtractionRecord,
     ArtifactProcessingRecord,
     ArtifactRecord,
     ChunkRecord,
@@ -141,8 +148,35 @@ def structural_artifacts_in_session(
                 None,
                 stable_identity_id=item.stable_identity_id,
                 state_fingerprint=item.state_fingerprint,
+                declaration_form=item.declaration_form,
+                declaration_space=item.declaration_space,
+                start_offset=item.start_offset,
+                end_offset=item.end_offset,
+                additional_spans=tuple(
+                    (int(pair[0]), int(pair[1])) for pair in (item.additional_spans or [])
+                ),
             )
         )
+    declarations = {
+        record.id: ArtifactExtraction(
+            record.id,
+            record.extractor,
+            {},
+            record.contract_digest,
+            cast(Any, record.outcome),
+            record.input_fingerprint,
+        )
+        for record in session.scalars(
+            select(ArtifactExtractionRecord).where(
+                ArtifactExtractionRecord.structural_analysis_id == analysis_id,
+                ArtifactExtractionRecord.id.in_(
+                    select(ArtifactAnalysisRecord.declaration_extraction_id).where(
+                        ArtifactAnalysisRecord.structural_analysis_id == analysis_id
+                    )
+                ),
+            )
+        ).all()
+    }
     return {
         record.artifact_id: ArtifactAnalysis(
             record.id,
@@ -159,6 +193,11 @@ def structural_artifacts_in_session(
             symbols=tuple(grouped[record.id]),
             input_fingerprint=record.input_fingerprint,
             snapshot_verified=record.snapshot_verified,
+            language=record.language,
+            declaration_extraction_id=record.declaration_extraction_id,
+            extractions=(declarations[record.declaration_extraction_id],)
+            if record.declaration_extraction_id in declarations
+            else (),
         )
         for record in records
     }
@@ -394,6 +433,7 @@ class SqlAlchemyProcessingStore:
                 captured_latest_revision=run.captured_latest_revision,
                 quarantined=False,
                 superseded=superseded,
+                processor_set=list(run.processor_set) if run.processor_set else None,
             )
             session.add(persisted)
             session.flush()
@@ -415,6 +455,7 @@ class SqlAlchemyProcessingStore:
                         structural_artifact_analysis_id=value.structural_artifact_analysis_id,
                         result_digest=value.result_digest,
                         dependency_fingerprint=value.dependency_fingerprint,
+                        fingerprint_scheme=value.fingerprint_scheme,
                     )
                 )
                 session.flush()
@@ -747,6 +788,7 @@ class SqlAlchemyProcessingStore:
             x.structural_artifact_analysis_id,
             x.result_digest,
             dependency_fingerprint=x.dependency_fingerprint,
+            fingerprint_scheme=x.fingerprint_scheme,
         )
 
     def _run(self, session: Session, x: ProcessingRunRecord) -> ProcessingRun:
@@ -768,4 +810,5 @@ class SqlAlchemyProcessingStore:
             x.captured_latest_revision,
             quarantined=x.quarantined,
             superseded=x.superseded,
+            processor_set=tuple(x.processor_set) if x.processor_set else None,
         )

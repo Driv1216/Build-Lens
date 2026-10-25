@@ -16,9 +16,11 @@ from buildlens.application.snapshots import SnapshotNotFoundError
 from buildlens.application.source_ports import SourceReadError
 from buildlens.domain.eligibility import exclusion_reason
 from buildlens.domain.entities import Artifact, Project, ProjectVersion
+from buildlens.domain.extractors import PYTHON_FACTS, extractor_contract_digest, language_for
 from buildlens.domain.source import PARSER_VERSION, structural_contract
 from buildlens.domain.structural import (
     ArtifactAnalysis,
+    ArtifactExtraction,
     ImportReference,
     ParseDiagnostic,
     StructuralAnalysis,
@@ -86,9 +88,15 @@ class StructuralAnalysisStore(Protocol):
         kind: str | None,
         name: str | None,
         run_id: UUID | None = None,
+        current_only: bool = False,
     ) -> tuple[list[Symbol], int, UUID | None]: ...
     def symbol(
-        self, project_id: UUID, snapshot_id: UUID, symbol_id: UUID, run_id: UUID | None = None
+        self,
+        project_id: UUID,
+        snapshot_id: UUID,
+        symbol_id: UUID,
+        run_id: UUID | None = None,
+        current_only: bool = False,
     ) -> Symbol | None: ...
     def import_page(
         self,
@@ -99,6 +107,7 @@ class StructuralAnalysisStore(Protocol):
         artifact_id: UUID | None,
         owner_id: UUID | None,
         run_id: UUID | None = None,
+        current_only: bool = False,
     ) -> tuple[list[ImportReference], int, UUID | None]: ...
 
 
@@ -113,8 +122,32 @@ class ArtifactAnalyzer(Protocol):
         max_bytes: int,
         expected_root_identity: tuple[int, int] | None,
         timeout: float,
+        language: str = "Python",
     ) -> ArtifactAnalysis: ...
+    def extract_facts(
+        self,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int] | None,
+        timeout: float,
+        symbols: tuple[Symbol, ...],
+    ) -> tuple[ArtifactExtraction, str, int]: ...
     def close(self) -> None: ...
+
+
+def _language(artifact: Artifact) -> str | None:
+    language = artifact.metadata.language if artifact.metadata else None
+    return language if language_for(language, artifact.locator) else None
+
+
+def _reused(extraction: ArtifactExtraction) -> ArtifactExtraction:
+    return replace(
+        extraction,
+        id=uuid4(),
+        execution_mode="reused",
+        reuse_source_extraction_id=extraction.id,
+    )
 
 
 class StructuralAnalysisService:
@@ -195,6 +228,15 @@ class StructuralAnalysisService:
                         self._skipped(analysis_id, snapshot_id, artifact, "CURRENT_POLICY_EXCLUDED")
                     )
                     continue
+                support = language_for(_language(artifact), artifact.locator)
+                if support is None:
+                    code = (
+                        "GENERATED_ARTIFACT"
+                        if artifact.locator.lower().endswith(".min.js")
+                        else "UNSUPPORTED_LANGUAGE"
+                    )
+                    outcomes.append(self._skipped(analysis_id, snapshot_id, artifact, code))
+                    continue
                 eligible += 1
                 if eligible > self._max_artifacts or time.monotonic() > deadline:
                     outcomes.append(
@@ -218,7 +260,53 @@ class StructuralAnalysisService:
                     continue
                 baseline = self._store.baseline_artifact(project_id, snapshot_id, artifact.id)
                 reusable = self._store.reusable_artifact(project_id, snapshot_id, artifact.id)
+                expected_root = (
+                    (
+                        int(str(snapshot.root_observation["device"])),
+                        int(str(snapshot.root_observation["inode"])),
+                    )
+                    if snapshot.root_observation
+                    else None
+                )
                 if reusable is not None:
+                    extractions: list[ArtifactExtraction] = []
+                    declaration_id: UUID | None = None
+                    source_declaration = reusable.declaration_extraction
+                    if source_declaration is not None:
+                        copied = _reused(source_declaration)
+                        extractions.append(copied)
+                        declaration_id = copied.id
+                    for name in support.additional_extractors:
+                        current = next(
+                            (
+                                item
+                                for item in reusable.extractions
+                                if item.extractor == name
+                                and item.outcome == "extracted"
+                                and item.contract_digest == extractor_contract_digest(name)
+                                and item.input_fingerprint == reusable.input_fingerprint
+                            ),
+                            None,
+                        )
+                        if current is not None:
+                            extractions.append(_reused(current))
+                            continue
+                        # Declarations stay reused (identities preserved); only the additive
+                        # pass reads the source again.
+                        extracted, consumed = self._additional(
+                            name,
+                            snapshot.canonical_root,
+                            artifact,
+                            reusable,
+                            min(self._max_source_bytes, self._max_total_bytes - total),
+                            expected_root,
+                            min(
+                                self._artifact_timeout_seconds,
+                                max(0.001, deadline - time.monotonic()),
+                            ),
+                        )
+                        total += consumed
+                        extractions.append(extracted)
                     outcomes.append(
                         self._owned(
                             replace(
@@ -230,6 +318,9 @@ class StructuralAnalysisService:
                                 execution_mode="reused",
                                 baseline_artifact_analysis_id=reusable.id,
                                 reuse_source_artifact_analysis_id=reusable.id,
+                                language=support.language,
+                                declaration_extraction_id=declaration_id,
+                                extractions=tuple(extractions),
                             ),
                             analysis_id,
                             snapshot_id,
@@ -244,15 +335,11 @@ class StructuralAnalysisService:
                         snapshot.canonical_root,
                         artifact.locator,
                         min(self._max_source_bytes, self._max_total_bytes - total),
-                        (
-                            int(str(snapshot.root_observation["device"])),
-                            int(str(snapshot.root_observation["inode"])),
-                        )
-                        if snapshot.root_observation
-                        else None,
+                        expected_root,
                         min(
                             self._artifact_timeout_seconds, max(0.001, deadline - time.monotonic())
                         ),
+                        language=support.language,
                     )
                     total += result.bytes_consumed
                 except SourceReadError as error:
@@ -261,6 +348,7 @@ class StructuralAnalysisService:
                         replace(
                             self._skipped(analysis_id, snapshot_id, artifact, error.code),
                             outcome="failed",
+                            language=support.language,
                         )
                     )
                     continue
@@ -274,6 +362,8 @@ class StructuralAnalysisService:
                         outcome="failed",
                         symbols=(),
                         imports=(),
+                        extractions=(),
+                        declaration_extraction_id=None,
                         snapshot_verified=False,
                         diagnostics=(
                             *result.diagnostics,
@@ -290,6 +380,8 @@ class StructuralAnalysisService:
                         outcome="failed",
                         symbols=(),
                         imports=(),
+                        extractions=(),
+                        declaration_extraction_id=None,
                         snapshot_verified=False,
                         diagnostics=(
                             *result.diagnostics,
@@ -350,6 +442,49 @@ class StructuralAnalysisService:
             self._analyzer.close()
             self._lock.release()
 
+    def _additional(
+        self,
+        extractor: str,
+        root: str,
+        artifact: Artifact,
+        reusable: ArtifactAnalysis,
+        max_bytes: int,
+        expected_root: tuple[int, int] | None,
+        timeout: float,
+    ) -> tuple[ArtifactExtraction, int]:
+        """Run one additive pass for reused declarations, verified against the snapshot."""
+        if extractor != PYTHON_FACTS:
+            raise ValueError(f"No additive runner for {extractor!r}")
+        try:
+            extraction, fingerprint, consumed = self._analyzer.extract_facts(
+                root, artifact.locator, max_bytes, expected_root, timeout, reusable.symbols
+            )
+        except SourceReadError as error:
+            return self._failed_extraction(extractor, error.code), error.bytes_consumed
+        if (
+            artifact.content_fingerprint is None
+            or fingerprint != artifact.content_fingerprint.digest
+            or fingerprint != reusable.input_fingerprint
+        ):
+            return self._failed_extraction(extractor, "SOURCE_DIFFERS_FROM_SNAPSHOT"), consumed
+        return extraction, consumed
+
+    @staticmethod
+    def _failed_extraction(extractor: str, code: str) -> ArtifactExtraction:
+        from buildlens.domain.extractors import extractor_contract
+
+        contract = extractor_contract(extractor) or {}
+        digest_value = extractor_contract_digest(extractor) or "0" * 64
+        return ArtifactExtraction(
+            uuid4(),
+            extractor,
+            contract,
+            digest_value,
+            "failed",
+            None,
+            (ParseDiagnostic(code, "Additive extraction did not complete.", "error"),),
+        )
+
     @staticmethod
     def _skipped(
         analysis_id: UUID, version_id: UUID, artifact: Artifact, code: str
@@ -367,6 +502,7 @@ class StructuralAnalysisService:
             None,
             None,
             (ParseDiagnostic(code, "Artifact was not read during this analysis.", "warning"),),
+            language=_language(artifact),
         )
 
     @staticmethod
@@ -395,6 +531,29 @@ class StructuralAnalysisService:
             )
             for value in result.imports
         )
+
+        def remap(value: UUID | None) -> UUID | None:
+            return symbol_ids.get(value) if value else None
+
+        extractions = tuple(
+            replace(
+                item,
+                symbol_facts=tuple(
+                    replace(fact, symbol_id=symbol_ids[fact.symbol_id])
+                    for fact in item.symbol_facts
+                    if fact.symbol_id in symbol_ids
+                ),
+                references=tuple(
+                    replace(ref, owner_symbol_id=remap(ref.owner_symbol_id))
+                    for ref in item.references
+                ),
+                exports=tuple(
+                    replace(value, owner_symbol_id=remap(value.owner_symbol_id))
+                    for value in item.exports
+                ),
+            )
+            for item in result.extractions
+        )
         return replace(
             result,
             id=artifact_id,
@@ -402,6 +561,7 @@ class StructuralAnalysisService:
             project_version_id=version_id,
             symbols=symbols,
             imports=imports,
+            extractions=extractions,
         )
 
     def require_snapshot(self, project_id: UUID, snapshot_id: UUID) -> None:
@@ -468,6 +628,7 @@ class StructuralAnalysisService:
             kind,
             name,
             self.content_run(project_id, snapshot_id, run_id),
+            current_only=run_id is None,
         )
 
     def symbol(
@@ -475,7 +636,11 @@ class StructuralAnalysisService:
     ) -> Symbol | None:
         self.require_snapshot(project_id, snapshot_id)
         return self._store.symbol(
-            project_id, snapshot_id, symbol_id, self.content_run(project_id, snapshot_id, run_id)
+            project_id,
+            snapshot_id,
+            symbol_id,
+            self.content_run(project_id, snapshot_id, run_id),
+            current_only=run_id is None,
         )
 
     def import_page(
@@ -497,6 +662,7 @@ class StructuralAnalysisService:
             artifact_id,
             owner_id,
             self.content_run(project_id, snapshot_id, run_id),
+            current_only=run_id is None,
         )
 
     def content_run(self, project_id: UUID, snapshot_id: UUID, run_id: UUID | None) -> UUID:

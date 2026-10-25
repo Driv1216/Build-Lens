@@ -173,6 +173,7 @@ class SymbolIdentityRecord(Base):
     scheme: Mapped[str] = mapped_column(
         String(64), nullable=False, default="python-declaration-slot.v1"
     )
+    declaration_space: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class StructuralAnalysisRecord(Base):
@@ -233,6 +234,11 @@ class ArtifactAnalysisRecord(Base):
             "outcome IN ('parsed', 'failed', 'skipped')", name="ck_artifact_analyses_outcome"
         ),
         CheckConstraint("line_count IS NULL OR line_count >= 0", name="ck_artifact_analyses_lines"),
+        CheckConstraint(
+            "outcome <> 'parsed' OR language IS NULL OR language = 'Python' "
+            "OR declaration_extraction_id IS NOT NULL",
+            name="ck_artifact_analyses_declaration_authority",
+        ),
     )
     artifact_identity_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
 
@@ -259,6 +265,10 @@ class ArtifactAnalysisRecord(Base):
     reuse_source_artifact_analysis_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), nullable=True
     )
+    language: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    declaration_extraction_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
 
 
 class SymbolRecord(Base):
@@ -275,7 +285,20 @@ class SymbolRecord(Base):
             ["symbols.id", "symbols.artifact_analysis_id"],
             ondelete="CASCADE",
         ),
-        CheckConstraint("kind IN ('function', 'class', 'method')", name="ck_symbols_kind"),
+        CheckConstraint(
+            "kind IN ('function', 'class', 'method', 'interface', 'type_alias', 'enum', "
+            "'namespace')",
+            name="ck_symbols_kind",
+        ),
+        CheckConstraint(
+            "declaration_space IS NULL OR declaration_space IN ('value', 'type', 'namespace')",
+            name="ck_symbols_declaration_space",
+        ),
+        CheckConstraint(
+            "(start_offset IS NULL) = (end_offset IS NULL) AND "
+            "(start_offset IS NULL OR (start_offset >= 0 AND end_offset >= start_offset))",
+            name="ck_symbols_offsets",
+        ),
         CheckConstraint("ordinal >= 0", name="ck_symbols_ordinal"),
         CheckConstraint("parent_id IS NULL OR parent_id <> id", name="ck_symbols_not_self_parent"),
     )
@@ -305,6 +328,13 @@ class SymbolRecord(Base):
     )
     continuity_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     state_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    declaration_form: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    declaration_space: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    name_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    exported: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    start_offset: Mapped[int | None] = mapped_column(nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(nullable=True)
+    additional_spans: Mapped[list[list[int]] | None] = mapped_column(JSONB, nullable=True)
 
 
 class ImportReferenceRecord(Base):
@@ -320,7 +350,11 @@ class ImportReferenceRecord(Base):
             ["symbols.id", "symbols.artifact_analysis_id"],
             ondelete="CASCADE",
         ),
-        CheckConstraint("form IN ('import', 'from')", name="ck_import_references_form"),
+        CheckConstraint(
+            "form IN ('import', 'from', 'es_import', 'es_import_type', 'dynamic_import', "
+            "'require')",
+            name="ck_import_references_form",
+        ),
         CheckConstraint("resolution_status = 'unresolved'", name="ck_import_references_unresolved"),
         CheckConstraint(
             "statement_ordinal >= 0 AND item_ordinal >= 0", name="ck_import_references_ordinals"
@@ -347,6 +381,145 @@ class ImportReferenceRecord(Base):
     resolution_reason: Mapped[str] = mapped_column(
         String(32), nullable=False, default="not_attempted"
     )
+
+
+def _extraction_owner() -> ForeignKeyConstraint:
+    return ForeignKeyConstraint(
+        ["extraction_id", "artifact_analysis_id"],
+        ["artifact_extractions.id", "artifact_extractions.artifact_analysis_id"],
+        ondelete="CASCADE",
+    )
+
+
+def _symbol_owner(column: str) -> ForeignKeyConstraint:
+    return ForeignKeyConstraint(
+        [column, "artifact_analysis_id"],
+        ["symbols.id", "symbols.artifact_analysis_id"],
+        ondelete="CASCADE",
+    )
+
+
+class ArtifactExtractionRecord(Base):
+    """Stage 13 additive extractor pass with its own producer authority."""
+
+    __tablename__ = "artifact_extractions"
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_analysis_id", "extractor", name="uq_artifact_extractions_analysis_extractor"
+        ),
+        UniqueConstraint("id", "artifact_analysis_id", name="uq_artifact_extractions_id_analysis"),
+        ForeignKeyConstraint(
+            ["artifact_analysis_id", "structural_analysis_id"],
+            ["artifact_analyses.id", "artifact_analyses.structural_analysis_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["reuse_source_extraction_id"],
+            ["artifact_extractions.id"],
+            name="fk_artifact_extraction_reuse",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint(
+            "outcome IN ('extracted', 'partial', 'failed', 'skipped')",
+            name="ck_artifact_extractions_outcome",
+        ),
+        CheckConstraint(
+            "execution_mode IN ('extracted', 'reused')", name="ck_artifact_extractions_mode"
+        ),
+        CheckConstraint(
+            "(execution_mode = 'reused') = (reuse_source_extraction_id IS NOT NULL)",
+            name="ck_artifact_extractions_reuse",
+        ),
+        CheckConstraint(
+            "contract_digest ~ '^[0-9a-f]{64}$'", name="ck_artifact_extractions_contract_digest"
+        ),
+        Index("ix_artifact_extractions_analysis", "structural_analysis_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    extractor: Mapped[str] = mapped_column(String(64), nullable=False)
+    contract: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    contract_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    reuse_source_extraction_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    input_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    diagnostics: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    artifact_facts: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+
+
+class SymbolFactsRecord(Base):
+    __tablename__ = "symbol_facts"
+    __table_args__ = (
+        UniqueConstraint("extraction_id", "symbol_id", name="uq_symbol_facts_extraction_symbol"),
+        _extraction_owner(),
+        _symbol_owner("symbol_id"),
+        Index("ix_symbol_facts_symbol", "symbol_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    extraction_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    symbol_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    facts: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
+class SymbolReferenceRecord(Base):
+    __tablename__ = "symbol_references"
+    __table_args__ = (
+        UniqueConstraint("extraction_id", "ordinal", name="uq_symbol_references_ordinal"),
+        _extraction_owner(),
+        _symbol_owner("owner_symbol_id"),
+        CheckConstraint(
+            "kind IN ('call', 'base', 'decorator', 'jsx_element', 'hook_call', 'raise', "
+            "'type_ref')",
+            name="ck_symbol_references_kind",
+        ),
+        CheckConstraint(
+            "char_length(target) BETWEEN 1 AND 512", name="ck_symbol_references_target"
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_symbol_references_ordinal"),
+        Index("ix_symbol_references_owner", "owner_symbol_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    extraction_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    owner_symbol_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    start_line: Mapped[int] = mapped_column(nullable=False)
+    end_line: Mapped[int] = mapped_column(nullable=False)
+    start_column: Mapped[int | None] = mapped_column(nullable=True)
+    end_column: Mapped[int | None] = mapped_column(nullable=True)
+
+
+class ExportReferenceRecord(Base):
+    __tablename__ = "export_references"
+    __table_args__ = (
+        UniqueConstraint("extraction_id", "ordinal", name="uq_export_references_ordinal"),
+        _extraction_owner(),
+        _symbol_owner("owner_symbol_id"),
+        CheckConstraint(
+            "kind IN ('named', 'default', 'reexport', 'reexport_all', 'commonjs', 'dunder_all')",
+            name="ck_export_references_kind",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_export_references_ordinal"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    extraction_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    owner_symbol_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    local_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_module: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_line: Mapped[int] = mapped_column(nullable=False)
+    end_line: Mapped[int] = mapped_column(nullable=False)
+    start_column: Mapped[int | None] = mapped_column(nullable=True)
+    end_column: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class ProcessingRunRecord(Base):
@@ -385,6 +558,7 @@ class ProcessingRunRecord(Base):
     diagnostics: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
     captured_active_processing_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     captured_latest_revision: Mapped[int] = mapped_column(nullable=False, default=0)
+    processor_set: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
     quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
@@ -430,6 +604,7 @@ class ArtifactProcessingRecord(Base):
     structural_artifact_analysis_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     result_digest: Mapped[str | None] = mapped_column(String(64))
     dependency_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    fingerprint_scheme: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ChunkRecord(Base):
@@ -1137,5 +1312,16 @@ Base.metadata.tables["artifacts"].append_constraint(
         "inventory_status IS NULL OR (locator <> '' AND locator !~ '(^|/)\\.\\.?(/|$)' "
         "AND octet_length(locator) <= 2048)",
         name="ck_artifacts_stage2_locator",
+    )
+)
+
+Base.metadata.tables["artifact_analyses"].append_constraint(
+    ForeignKeyConstraint(
+        ["declaration_extraction_id", "id"],
+        ["artifact_extractions.id", "artifact_extractions.artifact_analysis_id"],
+        name="fk_artifact_analysis_declaration_extraction",
+        use_alter=True,
+        deferrable=True,
+        initially="DEFERRED",
     )
 )

@@ -101,6 +101,7 @@ class ArtifactProcessing:
     result_digest: str | None = None
     dependency_fingerprint: str | None = None
     stored_chunk_count: int | None = None
+    fingerprint_scheme: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +123,7 @@ class ProcessingRun:
 
     quarantined: bool = False
     superseded: bool = False
+    processor_set: tuple[str, ...] | None = None
 
     @property
     def successful_evidence(self) -> bool:

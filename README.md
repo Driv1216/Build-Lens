@@ -368,3 +368,22 @@ framework integrations are installed but not wired. Answer-related outputs come 
 offline models and demonstrate mechanics only. Design, isolation model
 and measured findings: [docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md); verification:
 [CURRENT_STATE.md](CURRENT_STATE.md).
+
+## Stage 13 (in progress): multi-language structure
+
+Milestone A of the Semantic Project Model is implemented. "Analyse source files" now extracts
+parse-only declarations for Python (frozen `ast` producer plus an additive facts pass) and for
+TypeScript/TSX and JavaScript/JSX (`tree-sitter`, base install, nothing executed or resolved).
+TS/JS files are then chunked and searchable through the existing retrieval modes.
+
+API changes:
+- Structural artifact responses add `language` and `extractions` (with `contract_current`).
+- Symbols add TS declaration fields.
+- Imports add ES/CommonJS forms.
+
+Apply migration `0010` with `alembic upgrade head`. It is additive; take a backup first as usual.
+Existing structural and processing evidence stays current, and re-running structure on a new
+snapshot adds the new passes while preserving Python identities. Semantic catalog, AI
+interpretations and the Explore view are later milestones. See
+[docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) for scope, deviations and verification.
+

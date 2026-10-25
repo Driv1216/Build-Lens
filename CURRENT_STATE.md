@@ -1,5 +1,23 @@
 # BuildLens current state
 
+**Stage 13 — Semantic Project Model: Milestone A (multi-language structural foundation)
+implemented and verified locally, 2026-10-25. Milestones B–D are not started; no AI text is
+generated or stored.** Python declarations, contracts and fingerprints are frozen (golden
+parity captured from `816b136`). Additive, separately contracted passes now provide
+`python-facts.v1` and parse-only `tree-sitter` TS/TSX/JS declarations (`tree-sitter` 0.26.0,
+`tree-sitter-typescript` 0.23.2 and `tree-sitter-javascript` 0.25.0 in the base install). Migration
+`0010_multilanguage_structure` is additive only. TS/JS evidence carries its own authority (M4)
+and is chunked, so it is searchable through the unchanged retrieval paths. Verification is
+summarised in [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md):
+- Golden parity holds on Python 3.14.6 and 3.11.15.
+- A real old-code-populated upgrade left every pre-existing data table byte-identical, and old runs stay current.
+- On an upgraded copy of the retained Stage 11 corpus, `eval validate` passed 30/30 and `lab parity` passed 90/90.
+- The TS compiler differential reports one explained disagreement.
+
+A heap-corruption crash in py-tree-sitter 0.26.0 `Point` was found on real files and avoided,
+with a regression test. Deviations from the plan are listed in that document: no in-parse RSS
+sampling, and `.mjs/.cjs/.mts/.cts` unsupported. Nothing is committed and hosted CI has not been run.
+
 **Implemented scope:** Phase 2, Stage 12 — LangChain / LlamaIndex engineering laboratory, on top
 of the closed Stage 11 native evaluation (unchanged).
 
