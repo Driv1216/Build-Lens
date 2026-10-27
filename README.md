@@ -1,11 +1,20 @@
 # BuildLens
 
-BuildLens is a local engineering-intelligence application, implemented through **Phase 2,
-Stage 12 — LangChain / LlamaIndex Laboratory**. It uses a modular Python backend, React/Vite UI,
-and PostgreSQL. **Stage 11 is closed with an inconclusive/partial real-provider benchmark;
-answer quality is not passed. Stage 12 adds an offline framework laboratory; no framework was
-adopted into production.** Operations start only when you
-explicitly request them.
+BuildLens is a local engineering-intelligence application, implemented through **Phase 3,
+Stage 13 — Semantic Project Model**. It uses a modular Python backend, a React/Vite UI and
+PostgreSQL. Operations start only when you explicitly request them.
+
+Status at a glance:
+- **Stage 13** (multi-language structure, deterministic semantic catalog, controlled AI
+  interpretations, evaluation tooling) is implemented. Its real-model quality evaluation is
+  **deferred, not passed**: no real-model output has been produced or judged.
+- **Stage 12** (offline LangChain / LlamaIndex laboratory) is complete. No framework was adopted
+  into production.
+- **Stage 11** is closed with an inconclusive/partial real-provider benchmark; answer quality is
+  not passed.
+- **Stage 14** (Architecture Intelligence) has not started.
+
+See [current state](CURRENT_STATE.md) for what is verified and what is not.
 
 The foundation repair preserves projects, snapshots, and historical records. Pre-repair
 structural and processing runs are quarantined: their content remains stored, but normal and
@@ -19,9 +28,10 @@ a structured, exact-byte-bounded evidence package. Stage 10 adds optional single
 validated statement citations. Interactive Ask data stays in memory; explicitly invoked Stage 11
 evaluation runs retain local observations and review artifacts. Stage 11 adds a CLI evaluation
 layer over the production services, with no new HTTP routes, frontend features, database tables,
-or migrations. Retained history endpoints are metadata-only. No ANN index, import resolution,
-call graph, agents, authentication, background job platform, or automatic history deletion are
-included. See
+or migrations. Retained history endpoints are metadata-only. Stage 13 adds the semantic catalog
+(with import resolution) and controlled interpretations, described below. No ANN index,
+cross-file call graph, agents, authentication, background job platform, or automatic history
+deletion are included. See
 [current verification](CURRENT_STATE.md) and [architecture](docs/ARCHITECTURE.md).
 
 ## Local setup
@@ -344,6 +354,12 @@ and [current verification](CURRENT_STATE.md). **Stage 12** (framework laboratory
 
 ## Stage 12 framework laboratory
 
+**Status: complete, 2026-10-25.** The implementation, 900/900 retrieval benchmark, targeted
+corrections and recorded verification are complete. Completion retains the documented limits
+and does not imply a new independent technical review, hosted-CI execution or real lab
+answer-quality verification. See [current state](CURRENT_STATE.md) for the verification and
+review history.
+
 Optional extras add LangChain and LlamaIndex. Framework code runs only in supervised worker
 processes; the base install and API work without them (`/api/v1/lab/status` reports what is
 missing). Everything is offline by default: no model downloads and no external provider calls.
@@ -362,16 +378,19 @@ The UI is at `http://127.0.0.1:5173/lab`. HTTP routes: `GET /lab/status`, `GET|P
 /lab/loader-diff`. CLI: `buildlens lab status|save|build|probe|bench|report|parity|loader-diff|
 engineering|env sync|db provision`. pgvector store experiments need a **separate** lab database
 (`BUILDLENS_LAB_DATABASE_URL`, provisioned with `buildlens lab db provision`). Real generation was
-not authorized for Stage 12: the lab's `generate` callback is a gated stub (it refuses without
-`BUILDLENS_LAB_GENERATION_ENABLED` and is not implemented beyond that), and the `lab-providers`
-framework integrations are installed but not wired. Answer-related outputs come from deterministic
+not authorized or implemented for Stage 12: status reports it not enabled and not available
+regardless of `BUILDLENS_LAB_GENERATION_ENABLED`, and workers are never offered `generate`.
+The `lab-providers` framework integrations are installed but not wired. Answer-related outputs come from deterministic
 offline models and demonstrate mechanics only. Design, isolation model
 and measured findings: [docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md); verification:
 [CURRENT_STATE.md](CURRENT_STATE.md).
 
-## Stage 13 (in progress): multi-language structure and semantic catalog
 
-Milestone A of the Semantic Project Model is implemented. "Analyse source files" now extracts
+## Stage 13: Semantic Project Model
+
+**Status: implemented (Milestones A–D); real-model evaluation deferred, not passed.**
+
+**Multi-language structure (Milestone A).** "Analyse source files" extracts
 parse-only declarations for Python (frozen `ast` producer plus an additive facts pass) and for
 TypeScript/TSX and JavaScript/JSX (`tree-sitter`, base install, nothing executed or resolved).
 TS/JS files are then chunked and searchable through the existing retrieval modes.
@@ -381,11 +400,11 @@ API changes:
 - Symbols add TS declaration fields.
 - Imports add ES/CommonJS forms.
 
-Apply migrations `0010` and `0011` with `alembic upgrade head`. Both are additive; take a backup
-first as usual. Existing structural and processing evidence stays current, and re-running
+Stage 13 adds migrations `0010`–`0013`; apply them with `alembic upgrade head`. All are additive;
+take a backup first as usual. Existing structural and processing evidence stays current, and re-running
 structure on a new snapshot adds the new passes while preserving Python identities.
 
-Milestone B adds the **deterministic semantic catalog**. After structure and processing, use
+**Deterministic semantic catalog (Milestone B).** After structure and processing, use
 "Build catalog" in the snapshot panel (or `POST …/semantic/catalog`), then open **Explore**
 (`/explore`). The catalog reads only PostgreSQL and never source files. It holds:
 - file, symbol, component, hook, API-endpoint and DB-table entities
@@ -393,7 +412,7 @@ Milestone B adds the **deterministic semantic catalog**. After structure and pro
 - parsed facts and labelled pattern matches, each cited to its structural rows and re-verified on every read
 - import resolution and same-file or one-hop relations
 
-Milestone C adds **controlled AI interpretations** (off by default). Set
+**Controlled AI interpretations (Milestone C)** are off by default. Set
 `BUILDLENS_SEMANTIC_GENERATION_ENABLED=true` and choose `BUILDLENS_SEMANTIC_PROVIDER`:
 - `local`: an OpenAI-compatible loopback endpoint (`BUILDLENS_SEMANTIC_BASE_URL=http://127.0.0.1:<port>`, `BUILDLENS_SEMANTIC_MODEL`)
 - `gemini` or `openai`: reuse the existing `BUILDLENS_GEMINI_API_KEY` / `BUILDLENS_OPENAI_API_KEY`
@@ -403,8 +422,20 @@ would be shared, the bytes, caps, sharing class, retention note and expiry; you 
 that exact plan. The CLI equivalent is `buildlens semantic plan` followed by
 `buildlens semantic generate --plan-id … --plan-digest … --confirm`. Interpretations are cited
 claims only, labelled with provider, returned model and freshness; they are never Ask evidence.
-`buildlens semantic metrics` reports grounding and the two hard gates (no claim failing
-re-validation, no outbound payload outside a plan); quality is judged only by pre-registered
-human review (`buildlens semantic preregister`, `review-packet`, `review-score`).
+**Evaluation and hardening (Milestone D).**
+- `buildlens semantic metrics` reports grounding and the two hard gates: no claim failing
+  re-validation, and no outbound payload outside a plan.
+- Quality is judged only by pre-registered human review: `buildlens semantic preregister`,
+  `sample-freeze`, `review-packet` and `review-score`. Scores report an overall `passed`,
+  `failed` or `inconclusive`; any sampled entity without a model outcome makes the result
+  inconclusive.
+- `recognizer-packet` and `recognizer-score` produce recognizer ground truth.
+
+**Real-model evaluation: deferred.**
+- The pre-registration and a 60-entity sample are frozen.
+- Both approved Gemini pilots and four synthetic diagnostics failed on the provider side (HTTP
+  503/504), so semantic quality is unmeasured.
+- Paid/cloud testing is deferred.
+
 See [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) for scope, deviations and verification.
 

@@ -1,6 +1,6 @@
 # BuildLens architecture
 
-BuildLens is a modular monolith through **Phase 2, Stage 12 — LangChain / LlamaIndex Laboratory**.
+BuildLens is a modular monolith through **Phase 3, Stage 13 — Semantic Project Model**.
 React/Vite calls FastAPI; PostgreSQL is authoritative. Snapshots, structural analysis, and
 processing are explicit user operations; embedding preparation is a separate persistent operation.
 No repository modules are imported or executed.
@@ -341,12 +341,18 @@ Three small finalization tests and native review/zero-denominator/score-integrit
 repeat scoring was byte-identical, and all 180 case files plus manifests, approved dataset,
 authorized scope and retrieval scores stayed unchanged. No new provider request or full gate
 was run. Stage 11 closure records retain partial/inconclusive provider verification separately
-from passed infrastructure and approved retrieval/human-review states. No Stage 12 work or
-production retrieval/reranking policy change was made. See [evaluation workflow and actual
+from passed infrastructure and approved retrieval/human-review states. That Stage 11 closure
+made no Stage 12 or production retrieval/reranking policy change; Stage 12 subsequently
+completed as documented below. See [evaluation workflow and actual
 measurements](EVALUATION.md) and `CURRENT_STATE.md` for retained identities, results and limitations.
 
 
 ## Stage 12 framework laboratory
+
+**Status: complete, 2026-10-25.** The implementation, recorded benchmark and verification,
+including final targeted corrections, are complete with the limitations and review history
+in [CURRENT_STATE.md](../CURRENT_STATE.md). Real lab generation remains unimplemented;
+completion does not imply a new independent review or hosted-CI run.
 
 The laboratory is a separate bounded context; no production table, migration or Stage 5–11
 behaviour changed. `domain/lab.py` holds framework-free contracts (strict experiment schemas,
@@ -380,10 +386,13 @@ least-privilege role. Lab state lives under the already-excluded `.buildlens-eva
 `stage2.v3` policy and the frozen Stage 11 corpus binding are unchanged. Design and measured
 findings: [FRAMEWORK_LAB.md](FRAMEWORK_LAB.md).
 
-## Stage 13 Milestone A — multi-language structure
 
-**Status: Milestones A–C implemented, 2026-10-25; Milestone D hardening and tooling implemented, human review pending.** Design,
-deviations and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
+## Stage 13 — Semantic Project Model
+
+**Status: Milestones A–D implemented (migrations 0010–0013); the real-model quality evaluation is
+deferred, not passed.** Design, deviations and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
+
+**Multi-language structure (Milestone A)**
 
 **Producers**
 - Structural runs keep the frozen Python declaration producer. The run-level `producer_contract` still means *the Python declaration producer only*.
@@ -405,7 +414,7 @@ deviations and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
 **Migration and limits**
 - Migration `0010` is additive, and its downgrade refuses while Stage 13 evidence exists.
 - Nothing is executed or resolved: no Node, no tsconfig, no module resolution in production.
-- AI interpretations belong to later milestones.
+- AI interpretations are a separate record (controlled generation, below).
 
 **Semantic catalog (Milestone B)**
 - `application/semantic_catalog.py` builds a snapshot-owned, immutable catalog run as a pure function of persisted rows: the active structural run, the active fresh processing run's chunks, and the inventory. No source reader is called on this path.

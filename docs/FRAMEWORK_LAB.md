@@ -1,5 +1,11 @@
 # Stage 12 — LangChain / LlamaIndex engineering laboratory
 
+**Status: complete — 2026-10-25, per user instruction.** Implementation, the retained
+900/900 benchmark, final targeted corrections and documented verification are complete.
+Recorded limitations remain, including unimplemented real generation and unrun hosted CI.
+This status update does not assert another independent review; the dated review and test
+history remains in [CURRENT_STATE.md](../CURRENT_STATE.md).
+
 The laboratory runs genuine framework-native RAG pipelines (LangChain 1.x, LlamaIndex 0.14)
 over the **same authoritative BuildLens evidence** as the native Stage 8–11 stack, inspects every
 step, and measures them with the Stage 11 metrics plus engineering metrics. It is a learning and

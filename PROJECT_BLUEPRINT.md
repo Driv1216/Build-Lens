@@ -1574,6 +1574,13 @@ Add answer/citation evaluation.
 
 ## Stage 12 — LangChain / LlamaIndex Laboratory
 
+**Status: complete, 2026-10-25 (user-directed completion).** The laboratory implementation,
+retained benchmark, final targeted corrections and recorded verification are complete.
+Measured results, deviations and review history are in [CURRENT_STATE.md](CURRENT_STATE.md)
+and [docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md); real lab generation remains unimplemented.
+This status records the completed laboratory scope without changing the original planning
+text below.
+
 Only after native RAG exists.
 
 ### LangChain
@@ -1608,6 +1615,13 @@ Framework adoption is determined by evidence, not fashion.
 # PHASE 3 — DEEP PROJECT INTELLIGENCE
 
 ## Stage 13 — Semantic Project Model
+
+**Status: implemented, 2026-10-28 (Milestones A–D).** It covers multi-language structure, a
+deterministic semantic catalog, controlled plan-authorised AI interpretations, and evaluation
+and hardening. **The real-model quality evaluation is deferred, not passed:** provider failures
+prevented any real-model output. Measured results, deviations and limits are in
+[docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) and [CURRENT_STATE.md](CURRENT_STATE.md). The
+original planning text below is unchanged.
 
 Generate semantic descriptions of:
 
