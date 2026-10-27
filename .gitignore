@@ -29,3 +29,14 @@ postgres-data/
 # Evaluation definitions are tracked; generated observations and working reviews are local.
 .buildlens-eval/runs/
 .buildlens-eval/reviews/
+
+# Stage 12 laboratory: configs in experiments/ are tracked; derived state is local.
+.buildlens-eval/lab/indexes/
+.buildlens-eval/lab/runs/
+.buildlens-eval/lab/sandboxes/
+.buildlens-eval/lab/workers/
+.buildlens-eval/lab/authorizations/
+backend/lab_envs/*/.venv/
+
+# Stage 12 review deliverable (generated)
+STAGE12_TECHNICAL_REVIEW.zip

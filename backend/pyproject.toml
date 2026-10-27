@@ -5,8 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "buildlens"
 version = "0.1.0"
-description = "BuildLens Phase 2 Stage 10 grounded Ask mode"
-readme = {text = "BuildLens Phase 2 Stage 10 grounded Ask mode.", content-type = "text/markdown"}
+description = "BuildLens Phase 2 Stage 12 framework laboratory"
+readme = {text = "BuildLens Phase 2 Stage 12 framework laboratory.", content-type = "text/markdown"}
 requires-python = ">=3.11"
 dependencies = [
   "pyyaml>=6.0.2,<7",
@@ -46,6 +46,30 @@ generation = [
   "google-genai==2.25.0",
   "openai==2.37.0",
 ]
+lab-langchain = [
+  "langchain==1.4.7",
+  "langchain-core==1.7.0",
+  "langchain-text-splitters==1.1.3",
+  "langchain-classic==1.0.8",
+  "langchain-community==0.4.2",
+  "bm25s==0.3.15",
+  "psutil==7.0.0",
+]
+lab-llamaindex = [
+  "llama-index-core==0.14.25",
+  "llama-index-retrievers-bm25==0.8.0",
+  "psutil==7.0.0",
+]
+lab-providers = [
+  "langchain-google-genai==4.4.2",
+  "llama-index-llms-google-genai==0.11.3",
+]
+lab-pgvector = [
+  "llama-index-vector-stores-postgres==0.9.0",
+]
+lab-code = [
+  "tree-sitter-language-pack==1.22.1",
+]
 
 [project.scripts]
 buildlens = "buildlens.cli.main:app"
@@ -60,6 +84,7 @@ markers = [
   "integration: requires a running PostgreSQL database and applies real migrations",
   "real_model: requires the explicitly downloaded pinned embedding model",
   "real_provider: explicitly enabled paid Gemini and disposable PostgreSQL verification",
+  "lab: Stage 12 tests that spawn LangChain/LlamaIndex worker processes (lab extras required)",
 ]
 
 [tool.ruff]
@@ -69,6 +94,10 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["B008"] # FastAPI dependency injection intentionally uses Depends defaults.
+
+[tool.ruff.lint.per-file-ignores]
+# Generated synthetic-fixture literals are kept verbatim for readability of the corpus.
+"src/buildlens/infrastructure/lab/synthetic.py" = ["E501"]
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]
@@ -100,4 +129,8 @@ follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["openai", "openai.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["bm25s", "bm25s.*", "psutil", "psutil.*"]
 ignore_missing_imports = true

@@ -1,0 +1,1 @@
+{"contract":"stage12.lab.v1","corpus":{"filters":{"kind":null,"language":null,"locator_prefix":null},"include_unsupported":false,"mode":"native_chunks"},"digest":"17251e48b4e753f3d74122ef80bb223da00613d5941180f70bdcc27835bf06c2","embedding":{"source":"reuse-stored"},"name":"ar1-li-fusion-relative","params":{"fusion_mode":"relative_score","k":32},"pipeline":"llamaindex.fusion"}

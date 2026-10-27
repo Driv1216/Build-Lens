@@ -367,3 +367,17 @@ This is a recorded independent test result; attaching it never changes productio
 human approval, retrieval scores, provider execution, or semantic review. Saved run manifests
 retain their original execution-time states. Repeating the same offline report is deterministic.
 No Stage 12 retrieval or architecture change is part of this closure.
+
+
+## Stage 12 laboratory scoring
+
+`buildlens lab bench` reuses Stage 11 binding (`preflight`) and `score_result` unchanged, but labels
+every metric by tier: **approved** (R1 judgments; only pipelines that return BuildLens chunks),
+**span** (approved required-evidence span coverage for any anchored item, always read with
+delivered context KiB and coverage per KiB), **derived** (`derived.r1-span-projection.v1`, τ = 0.5,
+not human-approved) and **constructed** (synthetic LD-2 spans, not human-approved). Reports add a
+**matched subset** of answerable cases every pipeline could fully see. Per-case records are
+digested in the run manifest; `buildlens lab report` recomputes scores offline and is
+byte-deterministic. Latency is pipeline wall time per query (no corpus verification), p50/p95.
+`buildlens lab parity` re-runs the native pipeline against a retained Stage 11 run. See
+[FRAMEWORK_LAB.md](FRAMEWORK_LAB.md).

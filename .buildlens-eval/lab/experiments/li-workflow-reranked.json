@@ -1,0 +1,1 @@
+{"contract":"stage12.lab.v1","corpus":{"filters":{"kind":null,"language":null,"locator_prefix":null},"include_unsupported":false,"mode":"native_chunks"},"digest":"c729d85bde467d1b139038f244e450107578802f3b8abfccac0cfee9f081477b","embedding":{"source":"reuse-stored"},"name":"li-workflow-reranked","params":{"mode":"hybrid","rerank":true},"pipeline":"llamaindex.workflow"}

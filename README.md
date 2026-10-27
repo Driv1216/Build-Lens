@@ -1,9 +1,10 @@
 # BuildLens
 
 BuildLens is a local engineering-intelligence application, implemented through **Phase 2,
-Stage 11 — Native RAG Evaluation**. It uses a modular Python backend, React/Vite UI,
+Stage 12 — LangChain / LlamaIndex Laboratory**. It uses a modular Python backend, React/Vite UI,
 and PostgreSQL. **Stage 11 is closed with an inconclusive/partial real-provider benchmark;
-answer quality is not passed. Stage 12 has not started.** Operations start only when you
+answer quality is not passed. Stage 12 adds an offline framework laboratory; no framework was
+adopted into production.** Operations start only when you
 explicitly request them.
 
 The foundation repair preserves projects, snapshots, and historical records. Pre-repair
@@ -338,4 +339,32 @@ Offline reports retain compact score references to canonical case artifacts, sup
 independent verification records through `eval report --verification`, and reproduce byte-identical
 output when rescored with the same inputs. Actual offline self-comparison passed; it is a mechanics
 check, not a second live benchmark. See [evaluation usage, results and limitations](docs/EVALUATION.md)
-and [current verification](CURRENT_STATE.md). **Stage 12 has not been started.**
+and [current verification](CURRENT_STATE.md). **Stage 12** (framework laboratory) is described below.
+
+
+## Stage 12 framework laboratory
+
+Optional extras add LangChain and LlamaIndex. Framework code runs only in supervised worker
+processes; the base install and API work without them (`/api/v1/lab/status` reports what is
+missing). Everything is offline by default: no model downloads and no external provider calls.
+
+```sh
+cd backend
+uv sync --frozen --extra dev --extra embeddings --extra reranking \
+  --extra lab-langchain --extra lab-llamaindex --extra lab-pgvector --extra lab-code
+uv run --no-sync buildlens lab status
+uv run --no-sync buildlens lab env sync langchain-postgres   # optional isolated environment
+```
+
+The UI is at `http://127.0.0.1:5173/lab`. HTTP routes: `GET /lab/status`, `GET|POST
+/lab/experiments`, `POST /lab/validate`, `GET /lab/indexes[/{id}[/boundaries]]`, `POST
+…/snapshots/{s}/lab/indexes`, `POST …/snapshots/{s}/lab/probe`, `GET /lab/runs…`, `POST
+/lab/loader-diff`. CLI: `buildlens lab status|save|build|probe|bench|report|parity|loader-diff|
+engineering|env sync|db provision`. pgvector store experiments need a **separate** lab database
+(`BUILDLENS_LAB_DATABASE_URL`, provisioned with `buildlens lab db provision`). Real generation was
+not authorized for Stage 12: the lab's `generate` callback is a gated stub (it refuses without
+`BUILDLENS_LAB_GENERATION_ENABLED` and is not implemented beyond that), and the `lab-providers`
+framework integrations are installed but not wired. Answer-related outputs come from deterministic
+offline models and demonstrate mechanics only. Design, isolation model
+and measured findings: [docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md); verification:
+[CURRENT_STATE.md](CURRENT_STATE.md).

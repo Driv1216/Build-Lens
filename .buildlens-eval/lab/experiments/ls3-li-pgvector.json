@@ -1,0 +1,1 @@
+{"contract":"stage12.lab.v1","corpus":{"filters":{"kind":null,"language":null,"locator_prefix":null},"include_unsupported":false,"mode":"native_chunks"},"digest":"016c7fa2249cecc575d9b456c123b3a3fc992e38867e9c92af1cb696e65d3ce7","embedding":{"source":"reuse-stored"},"name":"ls3-li-pgvector","params":{"k":32},"pipeline":"llamaindex.pgvector"}

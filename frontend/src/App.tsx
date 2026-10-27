@@ -1,8 +1,18 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { Suspense, lazy, useEffect, useState, type FormEvent } from 'react'
+import { BrowserRouter, Link, Route, Routes } from 'react-router'
 import { createProject, listProjects, type Project } from './api/projects'
 import { ProjectSnapshotPanel } from './components/ProjectSnapshotPanel'
+import { ExperimentBuilder } from './components/lab/ExperimentBuilder'
+import { IndexInspector } from './components/lab/IndexInspector'
+import { LabLayout } from './components/lab/LabLayout'
+import { LabOverview } from './components/lab/LabOverview'
+import { LoaderLab } from './components/lab/LoaderLab'
+import { ProbeWorkbench } from './components/lab/ProbeWorkbench'
 
-function App() {
+// Charting/table libraries are only needed on the runs page: keep them out of the main bundle.
+const RunsBrowser = lazy(() => import('./components/lab/RunsBrowser').then((m) => ({ default: m.RunsBrowser })))
+
+function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([])
   const [name, setName] = useState('')
   const [rootPath, setRootPath] = useState('')
@@ -40,9 +50,10 @@ function App() {
   return (
     <main className="shell">
       <header>
-        <p className="eyebrow">Phase 2 · Stage 6 · Local Semantic Search</p>
+        <p className="eyebrow">Phase 2 · Stage 12 · Evidence, retrieval and framework laboratory</p>
         <h1>BuildLens</h1>
         <p className="subtitle">Register local projects, capture snapshots, prepare local embeddings, and search exact source evidence.</p>
+        <nav className="app-nav"><Link to="/lab">Open the LangChain / LlamaIndex laboratory →</Link></nav>
       </header>
 
       <section className="card" aria-labelledby="new-project-heading">
@@ -88,6 +99,24 @@ function App() {
 
 function messageFrom(reason: unknown): string {
   return reason instanceof Error ? reason.message : 'Unable to reach the BuildLens API.'
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/lab" element={<LabLayout />}>
+          <Route index element={<LabOverview />} />
+          <Route path="experiments" element={<ExperimentBuilder />} />
+          <Route path="probe" element={<ProbeWorkbench />} />
+          <Route path="indexes" element={<IndexInspector />} />
+          <Route path="runs" element={<Suspense fallback={<p className="note">Loading runs…</p>}><RunsBrowser /></Suspense>} />
+          <Route path="loaders" element={<LoaderLab />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  )
 }
 
 export default App
