@@ -7,6 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from buildlens import __version__
 from buildlens.cli.evaluation import app as evaluation_app
 from buildlens.cli.lab import app as lab_app
+from buildlens.cli.semantic import app as semantic_app
 from buildlens.core.config import get_settings
 from buildlens.infrastructure.embeddings.model_cache import download_snapshot
 from buildlens.infrastructure.persistence.database import create_database_engine
@@ -15,6 +16,7 @@ from buildlens.infrastructure.reranking.model_cache import download_snapshot as 
 app = typer.Typer(add_completion=False, help="BuildLens command-line interface.")
 app.add_typer(evaluation_app, name="eval")
 app.add_typer(lab_app, name="lab")
+app.add_typer(semantic_app, name="semantic")
 embeddings_app = typer.Typer(help="Manage the pinned local embedding model.")
 app.add_typer(embeddings_app, name="embeddings")
 reranking_app = typer.Typer(help="Manage the pinned local cross-encoder reranker.")
@@ -101,6 +103,18 @@ def diagnostics() -> None:
                     "chunks",
                     "embedding_runs",
                     "chunk_embeddings",
+                    "artifact_extractions",
+                    "semantic_catalog_runs",
+                    "semantic_entities",
+                    "semantic_facts",
+                    "semantic_relations",
+                    "semantic_generation_plans",
+                    "semantic_generation_runs",
+                    "semantic_generation_attempts",
+                    "semantic_generation_late_receipts",
+                    "semantic_interpretations",
+                    "semantic_claims",
+                    "semantic_index_entries",
                 )
             }
             content_bytes = connection.scalar(

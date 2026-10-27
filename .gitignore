@@ -29,6 +29,8 @@ postgres-data/
 # Evaluation definitions are tracked; generated observations and working reviews are local.
 .buildlens-eval/runs/
 .buildlens-eval/reviews/
+# Stage 13: adversarial fixtures, evaluation source exports, plans and authorizations.
+.buildlens-eval/semantic/
 
 # Stage 12 laboratory: configs in experiments/ are tracked; derived state is local.
 .buildlens-eval/lab/indexes/

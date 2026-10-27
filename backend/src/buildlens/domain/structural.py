@@ -14,7 +14,9 @@ from uuid import UUID
 
 AnalysisOutcome = Literal["complete", "partial", "failed"]
 ArtifactOutcome = Literal["parsed", "failed", "skipped"]
-SymbolKind = Literal["function", "class", "method"]
+SymbolKind = Literal["function", "class", "method", "interface", "type_alias", "enum", "namespace"]
+ExtractionOutcome = Literal["extracted", "partial", "failed", "skipped"]
+ImportForm = Literal["import", "from", "es_import", "es_import_type", "dynamic_import", "require"]
 Severity = Literal["warning", "error"]
 ParameterKind = Literal[
     "positional_only",
@@ -94,6 +96,14 @@ class Symbol:
     continuity_reason: str | None = None
     state_fingerprint: str | None = None
     locator: str | None = None
+    # Stage 13 additive fields; always None/empty for the frozen Python declaration producer.
+    declaration_form: str | None = None
+    declaration_space: str | None = None
+    name_source: str | None = None
+    exported: str | None = None
+    start_offset: int | None = None
+    end_offset: int | None = None
+    additional_spans: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +113,7 @@ class ImportReference:
     owner_symbol_id: UUID | None
     statement_ordinal: int
     item_ordinal: int
-    form: Literal["import", "from"]
+    form: ImportForm
     from_module: str | None
     name: str
     alias: str | None
@@ -112,6 +122,59 @@ class ImportReference:
     resolution_status: Literal["unresolved"] = "unresolved"
     resolution_reason: Literal["not_attempted"] = "not_attempted"
     locator: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolFacts:
+    """Bounded syntax-only facts about one declaration observed by an additive pass."""
+
+    symbol_id: UUID
+    facts: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolReference:
+    """Unresolved textual reference (call, base, decorator, JSX element, hook, raise, type)."""
+
+    ordinal: int
+    owner_symbol_id: UUID | None
+    kind: str
+    target: str
+    span: SourceSpan
+
+
+@dataclass(frozen=True, slots=True)
+class ExportReference:
+    ordinal: int
+    owner_symbol_id: UUID | None
+    kind: str
+    name: str
+    local_name: str | None
+    source_module: str | None
+    span: SourceSpan
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactExtraction:
+    """One additive, separately contracted extractor pass over a single artifact.
+
+    Python declarations remain governed by the run-level producer contract; every other
+    language's declarations and every additional fact pass carry their own authority here.
+    """
+
+    id: UUID
+    extractor: str
+    contract: dict[str, str]
+    contract_digest: str
+    outcome: ExtractionOutcome
+    input_fingerprint: str | None
+    diagnostics: tuple[ParseDiagnostic, ...] = ()
+    execution_mode: Literal["extracted", "reused"] = "extracted"
+    reuse_source_extraction_id: UUID | None = None
+    artifact_facts: dict[str, object] | None = None
+    symbol_facts: tuple[SymbolFacts, ...] = ()
+    references: tuple[SymbolReference, ...] = ()
+    exports: tuple[ExportReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +201,15 @@ class ArtifactAnalysis:
     bytes_consumed: int = 0
     stored_symbol_count: int | None = None
     stored_import_count: int | None = None
+    language: str | None = None
+    declaration_extraction_id: UUID | None = None
+    extractions: tuple[ArtifactExtraction, ...] = ()
+
+    @property
+    def declaration_extraction(self) -> ArtifactExtraction | None:
+        return next(
+            (item for item in self.extractions if item.id == self.declaration_extraction_id), None
+        )
 
 
 @dataclass(frozen=True, slots=True)

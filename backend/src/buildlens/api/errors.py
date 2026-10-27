@@ -44,6 +44,27 @@ from buildlens.application.processing import (
     ProcessingUnavailableError,
 )
 from buildlens.application.projects import ProjectNotFoundError
+from buildlens.application.semantic_catalog import (
+    SemanticCatalogBusyError,
+    SemanticCatalogConflictError,
+    SemanticCatalogRequiredError,
+    SemanticCatalogStaleError,
+    SemanticNotFoundError,
+    SemanticPrerequisiteError,
+)
+from buildlens.application.semantic_generation import (
+    BudgetExhaustedError,
+    GenerationConflictError,
+    GenerationDisabledError,
+    GenerationNotFoundError,
+    PlanAlreadyUsedError,
+    PlanChangedError,
+    PlanConfigChangedError,
+    PlanExpiredError,
+    PlanInvalidError,
+    PlanNotFoundError,
+    RunFencedError,
+)
 from buildlens.application.snapshots import (
     ScanBusyError,
     SnapshotConflictError,
@@ -148,6 +169,46 @@ def register_errors(app: FastAPI) -> None:
             "Compatible structural evidence is unavailable.",
         ),
         ProjectNotFoundError: (404, "PROJECT_NOT_FOUND", "Project was not found."),
+        SemanticCatalogRequiredError: (
+            409,
+            "SEMANTIC_CATALOG_REQUIRED",
+            "Build the semantic catalog for this snapshot first.",
+        ),
+        SemanticCatalogStaleError: (
+            409,
+            "SEMANTIC_CATALOG_STALE",
+            "The semantic catalog is stale. Rebuild it explicitly.",
+        ),
+        SemanticNotFoundError: (
+            404,
+            "SEMANTIC_NOT_FOUND",
+            "Semantic catalog record was not found.",
+        ),
+        GenerationDisabledError: (
+            409,
+            "SEMANTIC_GENERATION_DISABLED",
+            "Semantic generation is not enabled (BUILDLENS_SEMANTIC_GENERATION_ENABLED).",
+        ),
+        GenerationNotFoundError: (404, "SEMANTIC_NOT_FOUND", "Semantic record was not found."),
+        PlanNotFoundError: (404, "PLAN_NOT_FOUND", "Generation plan was not found."),
+        PlanInvalidError: (409, "PLAN_INVALID", "The plan or its digest does not verify."),
+        PlanExpiredError: (409, "PLAN_EXPIRED", "The plan has expired; create a new plan."),
+        PlanConfigChangedError: (
+            409,
+            "PLAN_CONFIG_CHANGED",
+            "Provider configuration changed since the plan; create a new plan.",
+        ),
+        PlanChangedError: (
+            409,
+            "PLAN_CHANGED",
+            "Catalog, structure, processing or index authority changed since the plan.",
+        ),
+        PlanAlreadyUsedError: (409, "PLAN_ALREADY_USED", "The plan was already executed."),
+        SemanticPrerequisiteError: (
+            409,
+            "STRUCTURE_UNAVAILABLE",
+            "Compatible structural evidence is unavailable.",
+        ),
         SnapshotNotFoundError: (404, "SNAPSHOT_NOT_FOUND", "Repository snapshot was not found."),
         ProcessingNotFoundError: (
             404,
@@ -202,6 +263,11 @@ def register_errors(app: FastAPI) -> None:
         ScanBusyError,
         ContextBusyError,
         ContextConflictError,
+        SemanticCatalogBusyError,
+        SemanticCatalogConflictError,
+        GenerationConflictError,
+        RunFencedError,
+        BudgetExhaustedError,
     ):
         mapping[error] = (
             409,

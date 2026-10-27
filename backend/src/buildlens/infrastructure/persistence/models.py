@@ -84,6 +84,12 @@ class ProjectVersionRecord(Base):
         String(64), nullable=False, default="stage4.comparison.v1"
     )
     legacy_unverified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    active_semantic_catalog_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
+    active_semantic_index_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
 
 
 class ArtifactIdentityRecord(Base):
@@ -173,6 +179,7 @@ class SymbolIdentityRecord(Base):
     scheme: Mapped[str] = mapped_column(
         String(64), nullable=False, default="python-declaration-slot.v1"
     )
+    declaration_space: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class StructuralAnalysisRecord(Base):
@@ -233,6 +240,11 @@ class ArtifactAnalysisRecord(Base):
             "outcome IN ('parsed', 'failed', 'skipped')", name="ck_artifact_analyses_outcome"
         ),
         CheckConstraint("line_count IS NULL OR line_count >= 0", name="ck_artifact_analyses_lines"),
+        CheckConstraint(
+            "outcome <> 'parsed' OR language IS NULL OR language = 'Python' "
+            "OR declaration_extraction_id IS NOT NULL",
+            name="ck_artifact_analyses_declaration_authority",
+        ),
     )
     artifact_identity_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
 
@@ -259,6 +271,10 @@ class ArtifactAnalysisRecord(Base):
     reuse_source_artifact_analysis_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), nullable=True
     )
+    language: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    declaration_extraction_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
 
 
 class SymbolRecord(Base):
@@ -275,7 +291,20 @@ class SymbolRecord(Base):
             ["symbols.id", "symbols.artifact_analysis_id"],
             ondelete="CASCADE",
         ),
-        CheckConstraint("kind IN ('function', 'class', 'method')", name="ck_symbols_kind"),
+        CheckConstraint(
+            "kind IN ('function', 'class', 'method', 'interface', 'type_alias', 'enum', "
+            "'namespace')",
+            name="ck_symbols_kind",
+        ),
+        CheckConstraint(
+            "declaration_space IS NULL OR declaration_space IN ('value', 'type', 'namespace')",
+            name="ck_symbols_declaration_space",
+        ),
+        CheckConstraint(
+            "(start_offset IS NULL) = (end_offset IS NULL) AND "
+            "(start_offset IS NULL OR (start_offset >= 0 AND end_offset >= start_offset))",
+            name="ck_symbols_offsets",
+        ),
         CheckConstraint("ordinal >= 0", name="ck_symbols_ordinal"),
         CheckConstraint("parent_id IS NULL OR parent_id <> id", name="ck_symbols_not_self_parent"),
     )
@@ -305,6 +334,13 @@ class SymbolRecord(Base):
     )
     continuity_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     state_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    declaration_form: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    declaration_space: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    name_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    exported: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    start_offset: Mapped[int | None] = mapped_column(nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(nullable=True)
+    additional_spans: Mapped[list[list[int]] | None] = mapped_column(JSONB, nullable=True)
 
 
 class ImportReferenceRecord(Base):
@@ -320,7 +356,11 @@ class ImportReferenceRecord(Base):
             ["symbols.id", "symbols.artifact_analysis_id"],
             ondelete="CASCADE",
         ),
-        CheckConstraint("form IN ('import', 'from')", name="ck_import_references_form"),
+        CheckConstraint(
+            "form IN ('import', 'from', 'es_import', 'es_import_type', 'dynamic_import', "
+            "'require')",
+            name="ck_import_references_form",
+        ),
         CheckConstraint("resolution_status = 'unresolved'", name="ck_import_references_unresolved"),
         CheckConstraint(
             "statement_ordinal >= 0 AND item_ordinal >= 0", name="ck_import_references_ordinals"
@@ -347,6 +387,145 @@ class ImportReferenceRecord(Base):
     resolution_reason: Mapped[str] = mapped_column(
         String(32), nullable=False, default="not_attempted"
     )
+
+
+def _extraction_owner() -> ForeignKeyConstraint:
+    return ForeignKeyConstraint(
+        ["extraction_id", "artifact_analysis_id"],
+        ["artifact_extractions.id", "artifact_extractions.artifact_analysis_id"],
+        ondelete="CASCADE",
+    )
+
+
+def _symbol_owner(column: str) -> ForeignKeyConstraint:
+    return ForeignKeyConstraint(
+        [column, "artifact_analysis_id"],
+        ["symbols.id", "symbols.artifact_analysis_id"],
+        ondelete="CASCADE",
+    )
+
+
+class ArtifactExtractionRecord(Base):
+    """Stage 13 additive extractor pass with its own producer authority."""
+
+    __tablename__ = "artifact_extractions"
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_analysis_id", "extractor", name="uq_artifact_extractions_analysis_extractor"
+        ),
+        UniqueConstraint("id", "artifact_analysis_id", name="uq_artifact_extractions_id_analysis"),
+        ForeignKeyConstraint(
+            ["artifact_analysis_id", "structural_analysis_id"],
+            ["artifact_analyses.id", "artifact_analyses.structural_analysis_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["reuse_source_extraction_id"],
+            ["artifact_extractions.id"],
+            name="fk_artifact_extraction_reuse",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint(
+            "outcome IN ('extracted', 'partial', 'failed', 'skipped')",
+            name="ck_artifact_extractions_outcome",
+        ),
+        CheckConstraint(
+            "execution_mode IN ('extracted', 'reused')", name="ck_artifact_extractions_mode"
+        ),
+        CheckConstraint(
+            "(execution_mode = 'reused') = (reuse_source_extraction_id IS NOT NULL)",
+            name="ck_artifact_extractions_reuse",
+        ),
+        CheckConstraint(
+            "contract_digest ~ '^[0-9a-f]{64}$'", name="ck_artifact_extractions_contract_digest"
+        ),
+        Index("ix_artifact_extractions_analysis", "structural_analysis_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    extractor: Mapped[str] = mapped_column(String(64), nullable=False)
+    contract: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    contract_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    reuse_source_extraction_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    input_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    diagnostics: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    artifact_facts: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+
+
+class SymbolFactsRecord(Base):
+    __tablename__ = "symbol_facts"
+    __table_args__ = (
+        UniqueConstraint("extraction_id", "symbol_id", name="uq_symbol_facts_extraction_symbol"),
+        _extraction_owner(),
+        _symbol_owner("symbol_id"),
+        Index("ix_symbol_facts_symbol", "symbol_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    extraction_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    symbol_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    facts: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
+class SymbolReferenceRecord(Base):
+    __tablename__ = "symbol_references"
+    __table_args__ = (
+        UniqueConstraint("extraction_id", "ordinal", name="uq_symbol_references_ordinal"),
+        _extraction_owner(),
+        _symbol_owner("owner_symbol_id"),
+        CheckConstraint(
+            "kind IN ('call', 'base', 'decorator', 'jsx_element', 'hook_call', 'raise', "
+            "'type_ref')",
+            name="ck_symbol_references_kind",
+        ),
+        CheckConstraint(
+            "char_length(target) BETWEEN 1 AND 512", name="ck_symbol_references_target"
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_symbol_references_ordinal"),
+        Index("ix_symbol_references_owner", "owner_symbol_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    extraction_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    owner_symbol_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    start_line: Mapped[int] = mapped_column(nullable=False)
+    end_line: Mapped[int] = mapped_column(nullable=False)
+    start_column: Mapped[int | None] = mapped_column(nullable=True)
+    end_column: Mapped[int | None] = mapped_column(nullable=True)
+
+
+class ExportReferenceRecord(Base):
+    __tablename__ = "export_references"
+    __table_args__ = (
+        UniqueConstraint("extraction_id", "ordinal", name="uq_export_references_ordinal"),
+        _extraction_owner(),
+        _symbol_owner("owner_symbol_id"),
+        CheckConstraint(
+            "kind IN ('named', 'default', 'reexport', 'reexport_all', 'commonjs', 'dunder_all')",
+            name="ck_export_references_kind",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_export_references_ordinal"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    extraction_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    owner_symbol_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    local_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_module: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_line: Mapped[int] = mapped_column(nullable=False)
+    end_line: Mapped[int] = mapped_column(nullable=False)
+    start_column: Mapped[int | None] = mapped_column(nullable=True)
+    end_column: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class ProcessingRunRecord(Base):
@@ -385,6 +564,7 @@ class ProcessingRunRecord(Base):
     diagnostics: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
     captured_active_processing_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     captured_latest_revision: Mapped[int] = mapped_column(nullable=False, default=0)
+    processor_set: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
     quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
@@ -430,6 +610,7 @@ class ArtifactProcessingRecord(Base):
     structural_artifact_analysis_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     result_digest: Mapped[str | None] = mapped_column(String(64))
     dependency_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    fingerprint_scheme: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ChunkRecord(Base):
@@ -663,6 +844,595 @@ class ChunkEmbeddingRecord(Base):
     window_count: Mapped[int] = mapped_column(nullable=False)
     execution_mode: Mapped[str] = mapped_column(String(16), nullable=False)
     reuse_source_embedding_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+
+
+class SemanticCatalogRunRecord(Base):
+    """Stage 13 immutable deterministic catalog run (no AI text; invariant F4)."""
+
+    __tablename__ = "semantic_catalog_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_version_id", "revision", name="uq_semantic_catalog_runs_snapshot_revision"
+        ),
+        UniqueConstraint("id", "project_version_id", name="uq_semantic_catalog_runs_id_snapshot"),
+        ForeignKeyConstraint(
+            ["project_version_id", "project_id"],
+            ["project_versions.id", "project_versions.project_id"],
+            ondelete="CASCADE",
+            name="fk_semantic_catalog_run_snapshot_owner",
+        ),
+        ForeignKeyConstraint(
+            ["structural_analysis_id", "project_version_id"],
+            ["structural_analyses.id", "structural_analyses.project_version_id"],
+            name="fk_semantic_catalog_run_structure",
+        ),
+        ForeignKeyConstraint(
+            ["processing_run_id", "project_version_id", "processing_revision"],
+            [
+                "processing_runs.id",
+                "processing_runs.project_version_id",
+                "processing_runs.revision",
+            ],
+            name="fk_semantic_catalog_run_processing",
+        ),
+        ForeignKeyConstraint(
+            ["captured_active_catalog_run_id", "project_version_id"],
+            ["semantic_catalog_runs.id", "semantic_catalog_runs.project_version_id"],
+            name="fk_semantic_catalog_runs_captured_active",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint("revision > 0", name="ck_semantic_catalog_runs_revision"),
+        CheckConstraint(
+            "outcome IN ('complete', 'partial', 'failed')", name="ck_semantic_catalog_runs_outcome"
+        ),
+        CheckConstraint("completed_at >= started_at", name="ck_semantic_catalog_runs_times"),
+        CheckConstraint(
+            "input_authority_digest ~ '^[0-9a-f]{64}$' AND contract_digest ~ '^[0-9a-f]{64}$'",
+            name="ck_semantic_catalog_runs_authority",
+        ),
+        CheckConstraint(
+            "(outcome = 'failed') = (catalog_digest IS NULL) AND "
+            "(catalog_digest IS NULL) = (portable_digest IS NULL) AND "
+            "(catalog_digest IS NULL OR (catalog_digest ~ '^[0-9a-f]{64}$' "
+            "AND portable_digest ~ '^[0-9a-f]{64}$'))",
+            name="ck_semantic_catalog_runs_digests",
+        ),
+        Index("ix_semantic_catalog_runs_snapshot", "project_version_id", "revision"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    revision: Mapped[int] = mapped_column(nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    structural_revision: Mapped[int] = mapped_column(nullable=False)
+    processing_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    processing_revision: Mapped[int] = mapped_column(nullable=False)
+    processing_contract: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    catalog_contract: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    contract_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_authority_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    catalog_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    portable_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    coverage: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    diagnostics: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    captured_active_catalog_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    captured_latest_revision: Mapped[int] = mapped_column(nullable=False, server_default="0")
+
+
+def _catalog_owner() -> ForeignKeyConstraint:
+    return ForeignKeyConstraint(
+        ["catalog_run_id"], ["semantic_catalog_runs.id"], ondelete="CASCADE"
+    )
+
+
+class SemanticEntityRecord(Base):
+    __tablename__ = "semantic_entities"
+    __table_args__ = (
+        UniqueConstraint("catalog_run_id", "entity_key", name="uq_semantic_entities_run_key"),
+        _catalog_owner(),
+        ForeignKeyConstraint(
+            ["artifact_identity_id"],
+            ["artifact_identities.id"],
+            name="fk_semantic_entity_artifact_identity",
+        ),
+        ForeignKeyConstraint(
+            ["symbol_identity_id"],
+            ["symbol_identities.id"],
+            name="fk_semantic_entity_symbol_identity",
+        ),
+        CheckConstraint(
+            "kind IN ('file', 'symbol', 'component', 'hook', 'api_endpoint', 'db_table')",
+            name="ck_semantic_entities_kind",
+        ),
+        CheckConstraint(
+            "stored_coverage IN ('complete', 'incomplete', 'unavailable', 'coordinate_mismatch')",
+            name="ck_semantic_entities_stored_coverage",
+        ),
+        CheckConstraint(
+            "context_coverage IN ('full', 'outline', 'not_eligible')",
+            name="ck_semantic_entities_context_coverage",
+        ),
+        CheckConstraint(
+            "(context_coverage = 'not_eligible') = (package_digest IS NULL) AND "
+            "(package_digest IS NULL OR package_digest ~ '^[0-9a-f]{64}$')",
+            name="ck_semantic_entities_package",
+        ),
+        CheckConstraint(
+            "context_coverage = 'not_eligible' OR stored_coverage = 'complete'",
+            name="ck_semantic_entities_eligibility",
+        ),
+        CheckConstraint("package_bytes >= 0 AND ordinal >= 0", name="ck_semantic_entities_sizes"),
+        Index("ix_semantic_entities_order", "catalog_run_id", "locator", "ordinal"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    catalog_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    language: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    locator: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_identity_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    symbol_identity_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    subject_entity_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    qualified_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    symbol_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    start_line: Mapped[int | None] = mapped_column(nullable=True)
+    end_line: Mapped[int | None] = mapped_column(nullable=True)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    portable_key: Mapped[str] = mapped_column(Text, nullable=False)
+    stored_coverage: Mapped[str] = mapped_column(String(32), nullable=False)
+    coverage_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    context_coverage: Mapped[str] = mapped_column(String(16), nullable=False)
+    context_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    package_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    package_bytes: Mapped[int] = mapped_column(nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    limitations: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    evidence: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    package: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
+class SemanticFactRecord(Base):
+    __tablename__ = "semantic_facts"
+    __table_args__ = (
+        UniqueConstraint("catalog_run_id", "fact_digest", name="uq_semantic_facts_run_digest"),
+        _catalog_owner(),
+        CheckConstraint(
+            "fact_kind IN ('signature', 'import', 'export', 'reference', 'base', "
+            "'recognizer_match', 'relation', 'limitation')",
+            name="ck_semantic_facts_kind",
+        ),
+        CheckConstraint("fact_digest ~ '^[0-9a-f]{64}$'", name="ck_semantic_facts_digest"),
+        CheckConstraint(
+            "jsonb_typeof(source_refs) = 'array' AND jsonb_array_length(source_refs) > 0",
+            name="ck_semantic_facts_provenance",
+        ),
+        Index("ix_semantic_facts_subject", "catalog_run_id", "subject_entity_key"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    catalog_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    subject_entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    fact_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_refs: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    derived: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    renderer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    rendered_text: Mapped[str] = mapped_column(Text, nullable=False)
+    fact_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class SemanticRelationRecord(Base):
+    __tablename__ = "semantic_relations"
+    __table_args__ = (
+        UniqueConstraint("catalog_run_id", "ordinal", name="uq_semantic_relations_run_ordinal"),
+        _catalog_owner(),
+        ForeignKeyConstraint(
+            ["catalog_run_id", "fact_digest"],
+            ["semantic_facts.catalog_run_id", "semantic_facts.fact_digest"],
+            name="fk_semantic_relation_fact",
+        ),
+        CheckConstraint(
+            "kind IN ('contains', 'imports', 'exports', 'references', 'renders', 'uses_hook', "
+            "'inherits', 'defines_route', 'maps_table')",
+            name="ck_semantic_relations_kind",
+        ),
+        CheckConstraint(
+            "resolution_status IS NULL OR resolution_status IN ('resolved', 'ambiguous', "
+            "'not_found', 'external', 'not_attempted', 'same_file', 'imported', 'unresolved')",
+            name="ck_semantic_relations_resolution",
+        ),
+        CheckConstraint(
+            "(target_entity_key IS NULL) <> (target_text IS NULL)",
+            name="ck_semantic_relations_target",
+        ),
+        Index("ix_semantic_relations_source", "catalog_run_id", "source_entity_key"),
+        Index("ix_semantic_relations_target", "catalog_run_id", "target_entity_key"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    catalog_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    target_entity_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    fact_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class SemanticGenerationPlanRecord(Base):
+    """Stage 13 persisted, immutable, single-use authorization plan (§11.1)."""
+
+    __tablename__ = "semantic_generation_plans"
+    __table_args__ = (
+        UniqueConstraint("plan_nonce", name="uq_semantic_generation_plans_nonce"),
+        UniqueConstraint(
+            "id", "project_version_id", name="uq_semantic_generation_plans_id_snapshot"
+        ),
+        ForeignKeyConstraint(
+            ["project_version_id", "project_id"],
+            ["project_versions.id", "project_versions.project_id"],
+            ondelete="CASCADE",
+            name="fk_semantic_generation_plan_snapshot_owner",
+        ),
+        ForeignKeyConstraint(
+            ["catalog_run_id", "project_version_id"],
+            ["semantic_catalog_runs.id", "semantic_catalog_runs.project_version_id"],
+            name="fk_semantic_generation_plan_catalog",
+        ),
+        CheckConstraint("expires_at > issued_at", name="ck_semantic_generation_plans_expiry"),
+        CheckConstraint(
+            "mode IN ('generate', 'reuse_only')", name="ck_semantic_generation_plans_mode"
+        ),
+        CheckConstraint(
+            "sharing_class IN ('cloud', 'loopback')", name="ck_semantic_generation_plans_sharing"
+        ),
+        CheckConstraint(
+            "plan_digest ~ '^[0-9a-f]{64}$' AND provider_config_digest ~ '^[0-9a-f]{64}$' "
+            "AND generator_profile_digest ~ '^[0-9a-f]{64}$'",
+            name="ck_semantic_generation_plans_digests",
+        ),
+        Index("ix_semantic_generation_plans_snapshot", "project_version_id", "issued_at"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    plan_nonce: Mapped[str] = mapped_column(String(64), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    selection: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    accept_profiles: Mapped[object] = mapped_column(JSONB, nullable=True)
+    provider_config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    provider_config_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    generator_profile_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    sharing_class: Mapped[str] = mapped_column(String(16), nullable=False)
+    catalog_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    processing_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    index_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    caps: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    totals: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    contributing_locators: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    retention_note: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class SemanticGenerationPlanItemRecord(Base):
+    __tablename__ = "semantic_generation_plan_items"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "entity_key", name="uq_semantic_generation_plan_items_entity"),
+        UniqueConstraint("plan_id", "ordinal", name="uq_semantic_generation_plan_items_ordinal"),
+        ForeignKeyConstraint(["plan_id"], ["semantic_generation_plans.id"], ondelete="CASCADE"),
+        CheckConstraint(
+            "disposition IN ('generate', 'reuse', 'ineligible')",
+            name="ck_semantic_generation_plan_items_disposition",
+        ),
+        CheckConstraint(
+            "disposition <> 'generate' OR (request_digest ~ '^[0-9a-f]{64}$' "
+            "AND package_digest IS NOT NULL AND input_key IS NOT NULL)",
+            name="ck_semantic_generation_plan_items_request",
+        ),
+        CheckConstraint(
+            "(disposition = 'reuse') = (reuse_interpretation_id IS NOT NULL)",
+            name="ck_semantic_generation_plan_items_reuse",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    plan_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    disposition: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    context_coverage: Mapped[str] = mapped_column(String(16), nullable=False)
+    package_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_bytes: Mapped[int] = mapped_column(nullable=False)
+    contributing_locators: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    reuse_interpretation_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    reuse_profile_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reuse_provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    reuse_returned_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SemanticGenerationRunRecord(Base):
+    """One explicit, plan-authorised generation run; the only row with a guarded transition."""
+
+    __tablename__ = "semantic_generation_runs"
+    __table_args__ = (
+        UniqueConstraint("plan_id", name="uq_semantic_generation_runs_plan"),
+        UniqueConstraint(
+            "id", "project_version_id", name="uq_semantic_generation_runs_id_snapshot"
+        ),
+        UniqueConstraint("id", "project_id", name="uq_semantic_generation_runs_id_project"),
+        ForeignKeyConstraint(
+            ["project_version_id", "project_id"],
+            ["project_versions.id", "project_versions.project_id"],
+            ondelete="CASCADE",
+            name="fk_semantic_generation_run_snapshot_owner",
+        ),
+        ForeignKeyConstraint(
+            ["plan_id", "project_version_id"],
+            ["semantic_generation_plans.id", "semantic_generation_plans.project_version_id"],
+            name="fk_semantic_generation_run_plan",
+        ),
+        ForeignKeyConstraint(
+            ["catalog_run_id", "project_version_id"],
+            ["semantic_catalog_runs.id", "semantic_catalog_runs.project_version_id"],
+            name="fk_semantic_generation_run_catalog",
+        ),
+        ForeignKeyConstraint(
+            ["captured_index_run_id", "project_version_id"],
+            ["semantic_generation_runs.id", "semantic_generation_runs.project_version_id"],
+            name="fk_semantic_generation_run_captured_index",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint(
+            "state IN ('executing', 'complete', 'partial', 'failed', 'superseded', 'abandoned')",
+            name="ck_semantic_generation_runs_state",
+        ),
+        CheckConstraint(
+            "(state = 'executing') = (completed_at IS NULL)",
+            name="ck_semantic_generation_runs_terminal",
+        ),
+        CheckConstraint(
+            "attempts_started >= 0 AND deadline_at > started_at",
+            name="ck_semantic_generation_runs_bounds",
+        ),
+        Index(
+            "uq_semantic_generation_runs_one_executing",
+            "project_version_id",
+            unique=True,
+            postgresql_where=text("state = 'executing'"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    plan_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    plan_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    catalog_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    processing_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    captured_index_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    caps: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    attempts_started: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    lease_token: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    totals: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    diagnostics: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class SemanticGenerationAttemptRecord(Base):
+    __tablename__ = "semantic_generation_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "entity_key", "attempt_no", name="uq_semantic_generation_attempts_slot"
+        ),
+        ForeignKeyConstraint(["run_id"], ["semantic_generation_runs.id"], ondelete="CASCADE"),
+        CheckConstraint("attempt_no >= 1", name="ck_semantic_generation_attempts_number"),
+        CheckConstraint(
+            "request_digest ~ '^[0-9a-f]{64}$'", name="ck_semantic_generation_attempts_digest"
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(nullable=False)
+    package_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SemanticGenerationOutcomeRecord(Base):
+    __tablename__ = "semantic_generation_attempt_outcomes"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", name="uq_semantic_generation_outcomes_attempt"),
+        ForeignKeyConstraint(
+            ["attempt_id"], ["semantic_generation_attempts.id"], ondelete="CASCADE"
+        ),
+        CheckConstraint(
+            "outcome IN ('accepted', 'accepted_with_conflicts', 'insufficient_evidence', "
+            "'rejected', 'rate_limited', 'provider_unavailable', 'timeout', 'context_rejected', "
+            "'refused', 'token_bound_violated', 'reused_concurrently', 'outcome_unknown', "
+            "'not_sent', 'configuration_invalid')",
+            name="ck_semantic_generation_outcomes_code",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    returned_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(nullable=True)
+    response_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rejection_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    retained_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SemanticGenerationLateReceiptRecord(Base):
+    """A provider response that arrived after fencing: recorded, never stored as a candidate."""
+
+    __tablename__ = "semantic_generation_late_receipts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id"], ["semantic_generation_attempts.id"], ondelete="CASCADE"
+        ),
+        CheckConstraint(
+            "reason IN ('RUN_FENCED', 'RUN_TERMINAL')",
+            name="ck_semantic_generation_late_receipts_reason",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    response_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    reason: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class SemanticInterpretationRecord(Base):
+    """Project-owned, immutable AI interpretation candidate with immutable provenance (F9)."""
+
+    __tablename__ = "semantic_interpretations"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", name="uq_semantic_interpretations_attempt"),
+        UniqueConstraint("id", "project_id", name="uq_semantic_interpretations_id_project"),
+        ForeignKeyConstraint(
+            ["run_id", "project_id"],
+            ["semantic_generation_runs.id", "semantic_generation_runs.project_id"],
+            ondelete="CASCADE",
+            name="fk_semantic_interpretation_run",
+        ),
+        ForeignKeyConstraint(
+            ["attempt_id"], ["semantic_generation_attempts.id"], ondelete="CASCADE"
+        ),
+        CheckConstraint(
+            "status IN ('accepted', 'accepted_with_conflicts', 'insufficient_evidence')",
+            name="ck_semantic_interpretations_status",
+        ),
+        CheckConstraint(
+            "input_key ~ '^[0-9a-f]{64}$' AND generator_profile_digest ~ '^[0-9a-f]{64}$'",
+            name="ck_semantic_interpretations_keys",
+        ),
+        Index(
+            "ix_semantic_interpretations_reuse",
+            "project_id",
+            "entity_key",
+            "input_key",
+            "generator_profile_digest",
+        ),
+        Index("ix_semantic_interpretations_input", "project_id", "input_key"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    input_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    generator_profile_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_model: Mapped[str] = mapped_column(Text, nullable=False)
+    returned_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    validator_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    unknowns: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SemanticClaimRecord(Base):
+    __tablename__ = "semantic_claims"
+    __table_args__ = (
+        UniqueConstraint("interpretation_id", "ordinal", name="uq_semantic_claims_ordinal"),
+        ForeignKeyConstraint(
+            ["interpretation_id"], ["semantic_interpretations.id"], ondelete="CASCADE"
+        ),
+        CheckConstraint(
+            "category IN ('purpose', 'responsibility', 'behavior', 'side_effect', 'dependency', "
+            "'usage_note')",
+            name="ck_semantic_claims_category",
+        ),
+        CheckConstraint(
+            "status IN ('cited', 'conflicts_with_fact')", name="ck_semantic_claims_status"
+        ),
+        CheckConstraint(
+            "basis IN ('code', 'documentation', 'facts')", name="ck_semantic_claims_basis"
+        ),
+        CheckConstraint(
+            "octet_length(text) BETWEEN 1 AND 400 "
+            "AND jsonb_array_length(citations) BETWEEN 1 AND 4",
+            name="ck_semantic_claims_bounds",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    interpretation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    basis: Mapped[str] = mapped_column(String(16), nullable=False)
+    basis_label: Mapped[str] = mapped_column(String(32), nullable=False)
+    assertion: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    assertion_outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scope_warning: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    citations: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+
+
+class SemanticIndexEntryRecord(Base):
+    __tablename__ = "semantic_index_entries"
+    __table_args__ = (
+        UniqueConstraint("run_id", "entity_key", name="uq_semantic_index_entries_entity"),
+        ForeignKeyConstraint(
+            ["run_id", "project_id"],
+            ["semantic_generation_runs.id", "semantic_generation_runs.project_id"],
+            ondelete="CASCADE",
+            name="fk_semantic_index_entry_run",
+        ),
+        ForeignKeyConstraint(
+            ["interpretation_id", "project_id"],
+            ["semantic_interpretations.id", "semantic_interpretations.project_id"],
+            name="fk_semantic_index_entry_interpretation",
+        ),
+        CheckConstraint(
+            "mode IN ('generated', 'reused', 'retained')", name="ck_semantic_index_entries_mode"
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    interpretation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    reused_from_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 # Explicit names and ownership match the forward-migrated PostgreSQL schema.
@@ -1137,5 +1907,38 @@ Base.metadata.tables["artifacts"].append_constraint(
         "inventory_status IS NULL OR (locator <> '' AND locator !~ '(^|/)\\.\\.?(/|$)' "
         "AND octet_length(locator) <= 2048)",
         name="ck_artifacts_stage2_locator",
+    )
+)
+
+Base.metadata.tables["artifact_analyses"].append_constraint(
+    ForeignKeyConstraint(
+        ["declaration_extraction_id", "id"],
+        ["artifact_extractions.id", "artifact_extractions.artifact_analysis_id"],
+        name="fk_artifact_analysis_declaration_extraction",
+        use_alter=True,
+        deferrable=True,
+        initially="DEFERRED",
+    )
+)
+
+Base.metadata.tables["project_versions"].append_constraint(
+    ForeignKeyConstraint(
+        ["active_semantic_catalog_run_id", "id"],
+        ["semantic_catalog_runs.id", "semantic_catalog_runs.project_version_id"],
+        name="fk_project_versions_active_semantic_catalog",
+        use_alter=True,
+        deferrable=True,
+        initially="DEFERRED",
+    )
+)
+
+Base.metadata.tables["project_versions"].append_constraint(
+    ForeignKeyConstraint(
+        ["active_semantic_index_run_id", "id"],
+        ["semantic_generation_runs.id", "semantic_generation_runs.project_version_id"],
+        name="fk_project_versions_active_semantic_index",
+        use_alter=True,
+        deferrable=True,
+        initially="DEFERRED",
     )
 )

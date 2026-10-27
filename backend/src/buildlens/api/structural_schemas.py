@@ -51,6 +51,17 @@ class StructuralAnalysisResponse(BaseModel):
     )
 
 
+class ExtractionSummaryResponse(BaseModel):
+    """One additive extractor pass; ``contract_current`` is per-language authority (M4)."""
+
+    extractor: str
+    outcome: Literal["extracted", "partial", "failed", "skipped"]
+    execution_mode: Literal["extracted", "reused"]
+    contract_digest: str
+    contract_current: bool
+    diagnostics: list[DiagnosticResponse] = []
+
+
 class ArtifactAnalysisResponse(BaseModel):
     id: UUID
     artifact_id: UUID
@@ -68,6 +79,9 @@ class ArtifactAnalysisResponse(BaseModel):
     snapshot_verified: bool = False
     execution_mode: Literal["parsed", "reused"] = "parsed"
     reuse_source_artifact_analysis_id: UUID | None = None
+    language: str | None = None
+    declaration_extraction_id: UUID | None = None
+    extractions: list[ExtractionSummaryResponse] = []
 
 
 class SymbolSummaryResponse(BaseModel):
@@ -75,7 +89,7 @@ class SymbolSummaryResponse(BaseModel):
     id: UUID
     artifact_analysis_id: UUID
     parent_id: UUID | None
-    kind: Literal["function", "class", "method"]
+    kind: Literal["function", "class", "method", "interface", "type_alias", "enum", "namespace"]
     name: str
     qualified_name: str
     is_async: bool
@@ -84,6 +98,13 @@ class SymbolSummaryResponse(BaseModel):
     stable_identity_id: UUID | None = None
     continuity_reason: str | None = None
     state_fingerprint: str | None = None
+    declaration_form: str | None = None
+    declaration_space: Literal["value", "type", "namespace"] | None = None
+    name_source: str | None = None
+    exported: str | None = None
+    start_offset: int | None = None
+    end_offset: int | None = None
+    additional_spans: list[tuple[int, int]] = []
 
 
 class ParameterResponse(BaseModel):
@@ -114,7 +135,7 @@ class ImportReferenceResponse(BaseModel):
     id: UUID
     artifact_analysis_id: UUID
     owner_symbol_id: UUID | None
-    form: Literal["import", "from"]
+    form: Literal["import", "from", "es_import", "es_import_type", "dynamic_import", "require"]
     from_module: str | None
     name: str
     alias: str | None

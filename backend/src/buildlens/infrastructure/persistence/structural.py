@@ -7,15 +7,24 @@ from dataclasses import replace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session, defer, sessionmaker
 
 from buildlens.application.structural import StructuralAnalysisStore
 from buildlens.domain.entities import Artifact, Project, ProjectVersion
+from buildlens.domain.extractors import (
+    LANGUAGES,
+    PYTHON_IDENTITY_SCHEME,
+    TS_IDENTITY_SCHEME,
+    current_declaration_digests,
+    extractor_contract_digest,
+)
 from buildlens.domain.source import structural_contract
 from buildlens.domain.structural import (
     ArtifactAnalysis,
+    ArtifactExtraction,
     DecoratorObservation,
+    ExportReference,
     ImportReference,
     ObservedExpression,
     Parameter,
@@ -24,16 +33,22 @@ from buildlens.domain.structural import (
     SourceSpan,
     StructuralAnalysis,
     Symbol,
+    SymbolFacts,
+    SymbolReference,
 )
 from buildlens.infrastructure.persistence.models import (
     ArtifactAnalysisRecord,
+    ArtifactExtractionRecord,
     ArtifactRecord,
+    ExportReferenceRecord,
     ImportReferenceRecord,
     ProjectRecord,
     ProjectVersionRecord,
     StructuralAnalysisRecord,
+    SymbolFactsRecord,
     SymbolIdentityRecord,
     SymbolRecord,
+    SymbolReferenceRecord,
 )
 from buildlens.infrastructure.persistence.repositories import _to_domain
 from buildlens.infrastructure.persistence.snapshots import _artifact, _version
@@ -167,6 +182,64 @@ def _decorator_from(value: dict[str, Any]) -> DecoratorObservation:
     )
 
 
+def _current_declarations() -> ColumnElement[bool]:
+    """Invariant M4: non-Python evidence is current only under its own current contract."""
+    return or_(
+        ArtifactAnalysisRecord.language.is_(None),
+        ArtifactAnalysisRecord.language == "Python",
+        ArtifactAnalysisRecord.declaration_extraction_id.in_(
+            select(ArtifactExtractionRecord.id).where(
+                ArtifactExtractionRecord.contract_digest.in_(
+                    list(current_declaration_digests().values())
+                )
+            )
+        ),
+    )
+
+
+def _extraction(
+    record: ArtifactExtractionRecord,
+    facts: Sequence[SymbolFactsRecord],
+    references: Sequence[SymbolReferenceRecord],
+    exports: Sequence[ExportReferenceRecord],
+) -> ArtifactExtraction:
+    return ArtifactExtraction(
+        record.id,
+        record.extractor,
+        cast(dict[str, str], record.contract),
+        record.contract_digest,
+        cast(Any, record.outcome),
+        record.input_fingerprint,
+        tuple(_diagnostic_from(cast(dict[str, Any], x)) for x in record.diagnostics),
+        cast(Any, record.execution_mode),
+        record.reuse_source_extraction_id,
+        cast(dict[str, object] | None, record.artifact_facts),
+        tuple(SymbolFacts(item.symbol_id, cast(dict[str, object], item.facts)) for item in facts),
+        tuple(
+            SymbolReference(
+                item.ordinal,
+                item.owner_symbol_id,
+                item.kind,
+                item.target,
+                SourceSpan(item.start_line, item.end_line, item.start_column, item.end_column),
+            )
+            for item in references
+        ),
+        tuple(
+            ExportReference(
+                item.ordinal,
+                item.owner_symbol_id,
+                item.kind,
+                item.name,
+                item.local_name,
+                item.source_module,
+                SourceSpan(item.start_line, item.end_line, item.start_column, item.end_column),
+            )
+            for item in exports
+        ),
+    )
+
+
 class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
@@ -200,7 +273,7 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                     ProjectVersionRecord.project_id == project_id,
                     ArtifactRecord.kind == "file",
                     ArtifactRecord.inventory_status == "included",
-                    ArtifactRecord.language == "Python",
+                    ArtifactRecord.language.in_(list(LANGUAGES)),
                     ArtifactRecord.pruned.is_not(True),
                     ArtifactRecord.exclusion_reasons == [],
                 )
@@ -300,6 +373,8 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
             snapshot_verified=record.snapshot_verified,
             execution_mode=cast(Any, record.execution_mode),
             reuse_source_artifact_analysis_id=record.reuse_source_artifact_analysis_id,
+            language=record.language,
+            declaration_extraction_id=record.declaration_extraction_id,
         )
 
     def baseline_artifact(
@@ -386,8 +461,19 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                         ArtifactRecord.stable_identity_id == current.stable_identity_id,
                     )
                 )
-                if source:
-                    return self._artifact_analysis(session, source)
+                if source is None:
+                    continue
+                candidate = self._artifact_analysis(session, source)
+                if current.language in LANGUAGES and current.language != "Python":
+                    declaration = candidate.declaration_extraction
+                    if (
+                        declaration is None
+                        or declaration.outcome not in {"extracted", "partial"}
+                        or declaration.contract_digest
+                        != extractor_contract_digest(declaration.extractor)
+                    ):
+                        continue
+                return candidate
             return None
 
     def save_replacement(
@@ -472,9 +558,12 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                         execution_mode=artifact.execution_mode,
                         baseline_artifact_analysis_id=artifact.baseline_artifact_analysis_id,
                         reuse_source_artifact_analysis_id=artifact.reuse_source_artifact_analysis_id,
+                        language=artifact.language,
+                        declaration_extraction_id=artifact.declaration_extraction_id,
                     )
                 )
                 session.flush()
+                typescript_slot = artifact.language not in {None, "Python"}
                 source_symbols: Sequence[SymbolRecord] = []
                 if artifact.baseline_artifact_analysis_id:
                     source_symbols = session.scalars(
@@ -532,6 +621,10 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                                     parent_identity_id=parent_identity,
                                     kind=symbol.kind,
                                     name=symbol.name,
+                                    scheme=TS_IDENTITY_SCHEME
+                                    if typescript_slot
+                                    else PYTHON_IDENTITY_SCHEME,
+                                    declaration_space=symbol.declaration_space,
                                 )
                             )
                     session.flush()
@@ -573,6 +666,15 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                                 else "new_or_ambiguous_slot"
                             ),
                             state_fingerprint=symbol.state_fingerprint,
+                            declaration_form=symbol.declaration_form,
+                            declaration_space=symbol.declaration_space,
+                            name_source=symbol.name_source,
+                            exported=symbol.exported,
+                            start_offset=symbol.start_offset,
+                            end_offset=symbol.end_offset,
+                            additional_spans=[list(item) for item in symbol.additional_spans]
+                            if symbol.additional_spans
+                            else None,
                         )
                     )
                     session.flush()
@@ -599,12 +701,110 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                             resolution_reason=item.resolution_reason,
                         )
                     )
+                session.flush()
+                for extraction in artifact.extractions:
+                    self._save_extraction(session, analysis.id, artifact.id, extraction)
             if not superseded and analysis.outcome in {"complete", "partial"}:
                 version.active_analysis_id = analysis.id
             session.flush()
             record = session.get(StructuralAnalysisRecord, analysis.id)
             assert record is not None
             return self._analysis(session, record, True)
+
+    @staticmethod
+    def _save_extraction(
+        session: Session, analysis_id: UUID, artifact_analysis_id: UUID, value: ArtifactExtraction
+    ) -> None:
+        session.add(
+            ArtifactExtractionRecord(
+                id=value.id,
+                artifact_analysis_id=artifact_analysis_id,
+                structural_analysis_id=analysis_id,
+                extractor=value.extractor,
+                contract=value.contract,
+                contract_digest=value.contract_digest,
+                outcome=value.outcome,
+                execution_mode=value.execution_mode,
+                reuse_source_extraction_id=value.reuse_source_extraction_id,
+                input_fingerprint=value.input_fingerprint,
+                diagnostics=[_diagnostic(item) for item in value.diagnostics],
+                artifact_facts=value.artifact_facts,
+            )
+        )
+        session.flush()
+        for fact in value.symbol_facts:
+            session.add(
+                SymbolFactsRecord(
+                    id=uuid4(),
+                    extraction_id=value.id,
+                    artifact_analysis_id=artifact_analysis_id,
+                    symbol_id=fact.symbol_id,
+                    facts=fact.facts,
+                )
+            )
+        for reference in value.references:
+            span = reference.span
+            session.add(
+                SymbolReferenceRecord(
+                    id=uuid4(),
+                    extraction_id=value.id,
+                    artifact_analysis_id=artifact_analysis_id,
+                    owner_symbol_id=reference.owner_symbol_id,
+                    ordinal=reference.ordinal,
+                    kind=reference.kind,
+                    target=reference.target,
+                    start_line=span.start_line or 0,
+                    end_line=span.end_line or 0,
+                    start_column=span.start_column,
+                    end_column=span.end_column,
+                )
+            )
+        for export in value.exports:
+            span = export.span
+            session.add(
+                ExportReferenceRecord(
+                    id=uuid4(),
+                    extraction_id=value.id,
+                    artifact_analysis_id=artifact_analysis_id,
+                    owner_symbol_id=export.owner_symbol_id,
+                    ordinal=export.ordinal,
+                    kind=export.kind,
+                    name=export.name,
+                    local_name=export.local_name,
+                    source_module=export.source_module,
+                    start_line=span.start_line or 0,
+                    end_line=span.end_line or 0,
+                    start_column=span.start_column,
+                    end_column=span.end_column,
+                )
+            )
+        session.flush()
+
+    def extractions(
+        self, session: Session, artifact_analysis_id: UUID
+    ) -> tuple[ArtifactExtraction, ...]:
+        records = session.scalars(
+            select(ArtifactExtractionRecord)
+            .where(ArtifactExtractionRecord.artifact_analysis_id == artifact_analysis_id)
+            .order_by(ArtifactExtractionRecord.extractor)
+        ).all()
+        values = []
+        for record in records:
+            facts = session.scalars(
+                select(SymbolFactsRecord).where(SymbolFactsRecord.extraction_id == record.id)
+            ).all()
+            references = session.scalars(
+                select(SymbolReferenceRecord)
+                .where(SymbolReferenceRecord.extraction_id == record.id)
+                .order_by(SymbolReferenceRecord.ordinal)
+            ).all()
+            exports = session.scalars(
+                select(ExportReferenceRecord)
+                .where(ExportReferenceRecord.extraction_id == record.id)
+                .order_by(ExportReferenceRecord.ordinal)
+            ).all()
+            values.append(_extraction(record, facts, references, exports))
+        return tuple(values)
 
     def artifact_page(
         self,
@@ -645,12 +845,22 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                     .group_by(ImportReferenceRecord.artifact_analysis_id)
                 )
             }
+            extractions: dict[UUID, list[ArtifactExtraction]] = {}
+            for item in session.scalars(
+                select(ArtifactExtractionRecord)
+                .where(ArtifactExtractionRecord.artifact_analysis_id.in_(ids))
+                .order_by(ArtifactExtractionRecord.extractor)
+            ):
+                extractions.setdefault(item.artifact_analysis_id, []).append(
+                    _extraction(item, (), (), ())
+                )
             return (
                 [
                     replace(
                         self._artifact_summary(session, record),
                         stored_symbol_count=symbols.get(record.id, 0),
                         stored_import_count=imports.get(record.id, 0),
+                        extractions=tuple(extractions.get(record.id, ())),
                     )
                     for record in records
                 ],
@@ -668,6 +878,7 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
         kind: str | None,
         name: str | None,
         run_id: UUID | None = None,
+        current_only: bool = False,
     ) -> tuple[list[Symbol], int, UUID | None]:
         with self._session_factory() as session:
             analysis_id = self._analysis_id(session, project_id, snapshot_id, run_id)
@@ -681,6 +892,8 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                 )
                 .where(SymbolRecord.structural_analysis_id == analysis_id)
             )
+            if run_id is None or current_only:
+                base = base.where(_current_declarations())
             if artifact_id:
                 base = base.where(ArtifactAnalysisRecord.artifact_id == artifact_id)
             if kind:
@@ -717,15 +930,26 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
             )
 
     def symbol(
-        self, project_id: UUID, snapshot_id: UUID, symbol_id: UUID, run_id: UUID | None = None
+        self,
+        project_id: UUID,
+        snapshot_id: UUID,
+        symbol_id: UUID,
+        run_id: UUID | None = None,
+        current_only: bool = False,
     ) -> Symbol | None:
         with self._session_factory() as session:
             analysis_id = self._analysis_id(session, project_id, snapshot_id, run_id)
             record = (
                 session.scalar(
-                    select(SymbolRecord).where(
+                    select(SymbolRecord)
+                    .join(
+                        ArtifactAnalysisRecord,
+                        ArtifactAnalysisRecord.id == SymbolRecord.artifact_analysis_id,
+                    )
+                    .where(
                         SymbolRecord.id == symbol_id,
                         SymbolRecord.structural_analysis_id == analysis_id,
+                        _current_declarations() if run_id is None or current_only else True,
                     )
                 )
                 if analysis_id
@@ -743,6 +967,7 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
         artifact_id: UUID | None,
         owner_id: UUID | None,
         run_id: UUID | None = None,
+        current_only: bool = False,
     ) -> tuple[list[ImportReference], int, UUID | None]:
         with self._session_factory() as session:
             analysis_id = self._analysis_id(session, project_id, snapshot_id, run_id)
@@ -756,6 +981,8 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                 )
                 .where(ImportReferenceRecord.structural_analysis_id == analysis_id)
             )
+            if run_id is None or current_only:
+                base = base.where(_current_declarations())
             if artifact_id:
                 base = base.where(ArtifactAnalysisRecord.artifact_id == artifact_id)
             if owner_id:
@@ -869,6 +1096,9 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
             cast(Any, record.execution_mode),
             record.baseline_artifact_analysis_id,
             record.reuse_source_artifact_analysis_id,
+            language=record.language,
+            declaration_extraction_id=record.declaration_extraction_id,
+            extractions=self.extractions(session, record.id),
         )
 
     @staticmethod
@@ -900,6 +1130,15 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
             item.stable_identity_id,
             item.continuity_reason,
             item.state_fingerprint,
+            declaration_form=item.declaration_form,
+            declaration_space=item.declaration_space,
+            name_source=item.name_source,
+            exported=item.exported,
+            start_offset=item.start_offset,
+            end_offset=item.end_offset,
+            additional_spans=tuple(
+                (int(pair[0]), int(pair[1])) for pair in (item.additional_spans or [])
+            ),
         )
 
     @staticmethod

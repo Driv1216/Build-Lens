@@ -53,8 +53,22 @@ describe('evidence request scopes', () => {
     mocked.mockImplementation(path => Promise.resolve(path.endsWith('/status') ? { latest_attempt: null, active_run: null } : empty))
     const refresh = vi.fn()
     render(<StructuralAnalysisPanel projectId="p" snapshotId="s" onRefresh={refresh} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Analyse Python files' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse source files' }))
     await waitFor(() => expect(refresh).toHaveBeenCalledOnce())
+  })
+  it('shows per-language extractor authority and ES import forms', async () => {
+    const structure = { analysis_id: 'a1', revision: 1, outcome: 'complete', quarantined: false, superseded: false, summary: { modules: 1, symbols: 1, imports: 1, failed: 0, skipped: 0 }, reuse_count: 0, reparse_count: 1, observation_note: 'note' }
+    mocked.mockImplementation(path => {
+      if (path.endsWith('/status')) return Promise.resolve({ latest_attempt: structure, active_run: structure })
+      if (path.includes('/artifacts')) return Promise.resolve({ ...empty, total: 1, items: [{ id: 'x', artifact_id: 'y', locator: 'web/api.ts', outcome: 'parsed', execution_mode: 'parsed', symbol_count: 1, import_count: 1, diagnostics: [], language: 'TypeScript', extractions: [{ extractor: 'typescript-declarations.v1', outcome: 'partial', execution_mode: 'extracted', contract_digest: 'd', contract_current: false, diagnostics: [] }] }] })
+      if (path.includes('/symbols')) return Promise.resolve({ ...empty, total: 1, items: [{ id: 's1', locator: 'web/api.ts', kind: 'function', qualified_name: 'get', declaration_form: 'overload_group', exported: 'named', declaration_span: { start_line: 1 } }] })
+      if (path.includes('/imports')) return Promise.resolve({ ...empty, total: 1, items: [{ id: 'i1', locator: 'web/api.ts', form: 'es_import_type', from_module: './t', name: 'T', alias: null, level: 0 }] })
+      return Promise.resolve(empty)
+    })
+    render(<StructuralAnalysisPanel projectId="p" snapshotId="s" />)
+    expect(await screen.findByText(/typescript-declarations\.v1 \(partial, extracted, contract changed — not current\)/)).toBeInTheDocument()
+    expect(await screen.findByText(/function get · overload group · exported \(named\)/)).toBeInTheDocument()
+    expect(await screen.findByText(/es import type T from '\.\/t'/)).toBeInTheDocument()
   })
   it('ignores late semantic results after switching snapshots', async () => {
     const late = deferred<unknown>()

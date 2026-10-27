@@ -379,3 +379,53 @@ persisted vectors match the stored digests. pgvector experiments use a separate 
 least-privilege role. Lab state lives under the already-excluded `.buildlens-eval/lab/`, so the
 `stage2.v3` policy and the frozen Stage 11 corpus binding are unchanged. Design and measured
 findings: [FRAMEWORK_LAB.md](FRAMEWORK_LAB.md).
+
+## Stage 13 Milestone A — multi-language structure
+
+**Status: Milestones A–C implemented, 2026-10-25; Milestone D hardening and tooling implemented, human review pending.** Design,
+deviations and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
+
+**Producers**
+- Structural runs keep the frozen Python declaration producer. The run-level `producer_contract` still means *the Python declaration producer only*.
+- Additive per-artifact passes are recorded in `artifact_extractions`, each with its own contract digest:
+  - `python-facts.v1`, a second `ast` + `tokenize` pass beside the unchanged parser
+  - `typescript-declarations.v1` and `javascript-declarations.v1`, parse-only `tree-sitter` in the same supervised worker, with a canary handshake and fail-closed grammar checks
+- `domain/extractors.py` is the language registry.
+
+**Authority**
+- A parsed non-Python artifact must reference its declaration extraction (DB CHECK).
+- It is current only while that contract is current (M4). Python evidence in the same run is unaffected.
+
+**Processing**
+- Processing admits `.ts/.tsx/.js/.jsx` (not `.min.js`) behind the same structural prerequisite.
+- Chunks are cut from offset-precise declaration regions.
+- `artifact_processings.fingerprint_scheme` tags TS/JS dependencies (`ts-declarations-dependency.v1`); `NULL` remains the legacy Python fingerprint.
+- A TS extractor contract change makes processing runs that contain TS dependencies stale, because Stage 5 freshness is run-level. Runs without TS dependencies are unaffected.
+
+**Migration and limits**
+- Migration `0010` is additive, and its downgrade refuses while Stage 13 evidence exists.
+- Nothing is executed or resolved: no Node, no tsconfig, no module resolution in production.
+- AI interpretations belong to later milestones.
+
+**Semantic catalog (Milestone B)**
+- `application/semantic_catalog.py` builds a snapshot-owned, immutable catalog run as a pure function of persisted rows: the active structural run, the active fresh processing run's chunks, and the inventory. No source reader is called on this path.
+- `application/fact_renderer.py` renders every `F#` fact from its cited rows. Read-time detail re-loads those rows with the same normalisers and compares digests.
+- `application/recognizers.py` holds the six labelled recognizers.
+- `infrastructure/persistence/semantic.py` publishes under the snapshot lock with captured authority and a `superseded` flag; failures are retained.
+- Migration `0011` adds the four catalog tables and `project_versions.active_semantic_catalog_run_id`. Its downgrade refuses while catalog runs exist.
+- A catalog is stale when its captured structural or processing authority changes, processing freshness fails, or the catalog contract changes. Current reads then return 409; explicit history stays readable.
+- The `/explore` UI and the snapshot panel's "Semantic catalog" section sit over `api/semantic_routes.py`.
+
+**Controlled generation (Milestone C)**
+- `application/semantic_generation.py` owns plans, the T0–T4 lifecycle, reuse and read-time entry state; `infrastructure/persistence/semantic_generation.py` does all coordination with rows, row locks and `clock_timestamp()` (no job platform).
+- `application/outbound_gate.py` is the only path to provider traffic: single-use tickets minted in T1 and redeemed against the exact canonical bytes.
+- `application/semantic_prompt.py` rebuilds and integrity-checks packages; `application/semantic_validation.py` validates claims deterministically.
+- Adapters live in `infrastructure/generation/semantic_{local,openai,gemini}.py`; the Ask adapters are unchanged.
+- Migration `0012` adds plans, runs, attempts, outcomes, late receipts, interpretations, claims, index entries, the active index pointer and `semantic_entities.content_digest`.
+
+**Evaluation and hardening (Milestone D)**
+- `application/semantic_metrics.py` reports grounding metrics and hard gates H1/H2; `application/semantic_review.py` holds the v2 pre-registration (rubric and denominators bound to code), a catalog-frozen stratified sample with a disjoint pilot, outcome classification without replacement, digest-bound packets, scoring with operational, quality and gate sections kept separate, and recognizer ground truth.
+- Plans carry `max_consecutive_provider_failures`: persistent rate limits or outages stop a run (`PROVIDER_FAILURES`); there is no model fallback. Failed attempts record their HTTP status and exception class names only, never provider messages or bodies.
+- The validator rejects bidi controls; Explore renders them visibly; mixed-script identifiers are a catalog limitation.
+- Review integrity: packets are bound to the sample's snapshot and catalog and to the pre-registered provider and model. Scores recompute the hard gates within the sample's scope and report an overall `passed`, `failed` or `inconclusive`. Migration `0013` adds the `configuration_invalid` attempt outcome.
+

@@ -66,6 +66,20 @@ class Settings(BaseSettings):
     generation_provider: Literal["gemini", "openai"] = "gemini"
     gemini_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
+    # Stage 13 controlled semantic generation: off by default, explicit plans only, no fallback.
+    semantic_generation_enabled: bool = False
+    semantic_provider: Literal["local", "gemini", "openai"] = "local"
+    semantic_model: str | None = None
+    semantic_base_url: str | None = None
+    semantic_max_output_tokens: int = 2048
+    semantic_request_byte_ceiling: int = 64_000
+    semantic_max_outbound_requests: int = 10
+    semantic_max_attempts_per_entity: int = 2
+    semantic_max_consecutive_provider_failures: int = 2
+    semantic_deadline_seconds: float = 300
+    semantic_plan_ttl_seconds: float = 1800
+    semantic_request_timeout_seconds: float = 60
+    semantic_retain_rejected_output: bool = False
     # Stage 12 framework laboratory. Lab state defaults to <repo>/.buildlens-eval/lab.
     lab_root: str | None = None
     lab_database_url: SecretStr | None = None

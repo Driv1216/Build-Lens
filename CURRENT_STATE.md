@@ -1,5 +1,68 @@
 # BuildLens current state
 
+**Stage 13 Milestone D (evaluation and hardening), in progress 2026-10-25.** Implemented and
+verified locally: an adversarial repository with end-to-end tests (nothing executes; secrets,
+symlinks, bundles and oversized files stay out; injected claims are rejected or labelled),
+bidi and mixed-script hardening (catalog contract v3), grounding metrics with hard gates H1/H2,
+a plan-bound stop after consecutive provider failures, and pre-registered human-review and
+recognizer ground-truth tooling. **Evaluation prepared, nothing sent:** the pre-registration is
+locked (correctness ≥ 0.90, overclaim ≤ 0.05, omission ≤ 0.25, usefulness ≥ 2.4; H1/H2
+unchanged); a 60-entity sample and a disjoint 6-entity pilot are frozen from a clean export of
+`abd447b`. The approved Gemini `gemini-3.8-flash` pilot ran once (2026-10-26) and stopped by
+rule after 2 consecutive `provider_unavailable` failures. 4 entities were never sent; H1/H2 = 0;
+cause undetermined; no retry and no model change. Failures now record their HTTP status and
+exception class only. A second, identical pilot (approved, run once) stopped the same way. Gemini
+returned HTTP 503 for both requests sent; 4 entities were never sent; H1/H2 = 0. Backend 316 passed,
+1 skipped on Python 3.14.6 and 3.11.15; frontend 30 tests. Four synthetic one-line diagnostics
+(2026-10-26/27) also failed: three HTTP 504 at the deadline, one HTTP 503 reporting high demand
+for the model. **Paid/cloud-model testing is deferred (2026-10-27).** The independent deep review
+(2026-10-28) found six evaluation-integrity defects (F1–F6), all corrected with regression tests,
+including migration `0013_semantic_config_outcome` (details in `docs/SEMANTIC_MODEL.md`). **Pending:** the evaluation
+run, human review, the recognizer review, final verification and an independent technical review. Stage 13 is not complete. Not committed; hosted CI not run. Details:
+[docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md).
+
+**Stage 13 — Semantic Project Model: Milestone C (controlled AI generation) implemented and
+verified locally, 2026-10-25, on top of Milestones A and B** (commit `abd447b`).
+Generation is off by default and runs only from a persisted, single-use, expiring plan whose
+digest the user confirms. Every outbound request is budgeted in PostgreSQL first, re-checked
+against current authority and the exact planned bytes, and sent only through `OutboundGate`
+with a single-use ticket. Runs are fenced by DB-time leases; late responses are recorded as
+receipts, never as candidates. Claims are validated deterministically (checks 1–9) and their
+citations re-verified on every read. Migration `0012_semantic_generation` is additive; the
+freshness key now uses a per-entity content digest (catalog contract v2).
+- Backend: 307 passed, 1 skipped on Python 3.14.6 and 3.11.15; ruff, format and mypy clean. Frontend: 29 tests, lint, types and build.
+- No real provider was called; OpenAI and Gemini adapters were verified only through mock transports.
+- Stage 11 corpus copy upgraded 0009 → 0012: pre-existing tables byte-identical, `eval validate` 30/30, `lab parity` 90/90. Hosted CI has not been run.
+
+**Stage 13 Milestone B (deterministic semantic catalog) implemented and
+verified locally, 2026-10-25, on top of Milestone A** (commit `5428f66`; no AI text in the
+catalog). Migration `0011_semantic_catalog` (additive) adds immutable catalog
+runs, entities, `F#` facts and relations, built from PostgreSQL only with zero source reads.
+Every fact is re-rendered from its cited structural rows and digest-checked at read time. The
+read-only `/explore` view shows entities, stored-chunk source, labelled facts and relations.
+- Backend: 261 passed, 1 skipped on Python 3.14.6 and 3.11.15; ruff, format and mypy clean.
+- On BuildLens itself: 2,825 entities with no coordinate mismatch, and catalog and portable digests reproduce after a reprocess.
+- On an upgraded copy of the retained Stage 11 corpus (0009 → 0011): the 14 pre-existing tables are byte-identical; a legacy catalog builds with the source reader disabled; `eval validate` passes 30/30 and `lab parity` 90/90. Hosted CI has not been run.
+
+Details, deviations and limits: [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md).
+
+**Stage 13 Milestone A (multi-language structural foundation), implemented and verified locally
+2026-10-25.** Python declarations, contracts and fingerprints are frozen (golden
+parity captured from `816b136`). Additive, separately contracted passes now provide
+`python-facts.v1` and parse-only `tree-sitter` TS/TSX/JS declarations (`tree-sitter` 0.26.0,
+`tree-sitter-typescript` 0.23.2 and `tree-sitter-javascript` 0.25.0 in the base install). Migration
+`0010_multilanguage_structure` is additive only. TS/JS evidence carries its own authority (M4)
+and is chunked, so it is searchable through the unchanged retrieval paths. Verification is
+summarised in [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md):
+- Golden parity holds on Python 3.14.6 and 3.11.15.
+- A real old-code-populated upgrade left every pre-existing data table byte-identical, and old runs stay current.
+- On an upgraded copy of the retained Stage 11 corpus, `eval validate` passed 30/30 and `lab parity` passed 90/90.
+- The TS compiler differential reports one explained disagreement.
+
+A heap-corruption crash in py-tree-sitter 0.26.0 `Point` was found on real files and avoided,
+with a regression test. Deviations from the plan are listed in that document: no in-parse RSS
+sampling, and `.mjs/.cjs/.mts/.cts` unsupported. Nothing is committed and hosted CI has not been run.
+
 **Implemented scope:** Phase 2, Stage 12 — LangChain / LlamaIndex engineering laboratory, on top
 of the closed Stage 11 native evaluation (unchanged).
 

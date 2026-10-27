@@ -127,3 +127,41 @@ def test_metadata_queries_never_select_chunk_content(pg_engine: Engine, tmp_path
         )
         for statement in captured
     )
+
+
+def test_api_serves_typescript_structure_and_chunks(pg_engine: Engine, tmp_path: Path) -> None:
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "api.ts").write_text(
+        'import type { T } from "./t";\n'
+        "export function get(a: string): void;\n"
+        "export function get(a: any) { return a; }\n"
+        "export interface Options { a: string }\n"
+        "export type Alias = Options[];\n"
+    )
+    app = create_app(Settings(database_url=pg_engine.url.render_as_string(hide_password=False)))
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects", json={"name": "TypeScript", "root_path": str(tmp_path)}
+        ).json()["id"]
+        base = f"/api/v1/projects/{project}/snapshots"
+        scope = f"{base}/{client.post(base, json={}).json()['id']}"
+        assert client.post(scope + "/structure", json={}).status_code == 200
+        artifacts = client.get(scope + "/structure/artifacts").json()["items"]
+        assert artifacts[0]["language"] == "TypeScript"
+        assert artifacts[0]["extractions"][0]["extractor"] == "typescript-declarations.v1"
+        assert artifacts[0]["extractions"][0]["contract_current"] is True
+        symbols = client.get(scope + "/structure/symbols").json()["items"]
+        assert {(s["kind"], s["qualified_name"], s["declaration_form"]) for s in symbols} == {
+            ("function", "get", "overload_group"),
+            ("interface", "Options", "def"),
+            ("type_alias", "Alias", "def"),
+        }
+        detail = client.get(scope + "/structure/symbols/" + symbols[0]["id"])
+        assert detail.status_code == 200, detail.text
+        imports = client.get(scope + "/structure/imports").json()["items"]
+        assert [(i["form"], i["from_module"], i["name"]) for i in imports] == [
+            ("es_import_type", "./t", "T")
+        ]
+        assert client.post(scope + "/processing", json={}).status_code == 200
+        chunks = client.get(scope + "/processing/chunks").json()["items"]
+        assert {c["kind"] for c in chunks} == {"typescript"}

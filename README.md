@@ -368,3 +368,43 @@ framework integrations are installed but not wired. Answer-related outputs come 
 offline models and demonstrate mechanics only. Design, isolation model
 and measured findings: [docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md); verification:
 [CURRENT_STATE.md](CURRENT_STATE.md).
+
+## Stage 13 (in progress): multi-language structure and semantic catalog
+
+Milestone A of the Semantic Project Model is implemented. "Analyse source files" now extracts
+parse-only declarations for Python (frozen `ast` producer plus an additive facts pass) and for
+TypeScript/TSX and JavaScript/JSX (`tree-sitter`, base install, nothing executed or resolved).
+TS/JS files are then chunked and searchable through the existing retrieval modes.
+
+API changes:
+- Structural artifact responses add `language` and `extractions` (with `contract_current`).
+- Symbols add TS declaration fields.
+- Imports add ES/CommonJS forms.
+
+Apply migrations `0010` and `0011` with `alembic upgrade head`. Both are additive; take a backup
+first as usual. Existing structural and processing evidence stays current, and re-running
+structure on a new snapshot adds the new passes while preserving Python identities.
+
+Milestone B adds the **deterministic semantic catalog**. After structure and processing, use
+"Build catalog" in the snapshot panel (or `POST …/semantic/catalog`), then open **Explore**
+(`/explore`). The catalog reads only PostgreSQL and never source files. It holds:
+- file, symbol, component, hook, API-endpoint and DB-table entities
+- stored-source and generation-context coverage
+- parsed facts and labelled pattern matches, each cited to its structural rows and re-verified on every read
+- import resolution and same-file or one-hop relations
+
+Milestone C adds **controlled AI interpretations** (off by default). Set
+`BUILDLENS_SEMANTIC_GENERATION_ENABLED=true` and choose `BUILDLENS_SEMANTIC_PROVIDER`:
+- `local`: an OpenAI-compatible loopback endpoint (`BUILDLENS_SEMANTIC_BASE_URL=http://127.0.0.1:<port>`, `BUILDLENS_SEMANTIC_MODEL`)
+- `gemini` or `openai`: reuse the existing `BUILDLENS_GEMINI_API_KEY` / `BUILDLENS_OPENAI_API_KEY`
+
+In Explore, the Generate tab first creates a plan (nothing is sent) listing every file that
+would be shared, the bytes, caps, sharing class, retention note and expiry; you then confirm
+that exact plan. The CLI equivalent is `buildlens semantic plan` followed by
+`buildlens semantic generate --plan-id … --plan-digest … --confirm`. Interpretations are cited
+claims only, labelled with provider, returned model and freshness; they are never Ask evidence.
+`buildlens semantic metrics` reports grounding and the two hard gates (no claim failing
+re-validation, no outbound payload outside a plan); quality is judged only by pre-registered
+human review (`buildlens semantic preregister`, `review-packet`, `review-score`).
+See [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) for scope, deviations and verification.
+
