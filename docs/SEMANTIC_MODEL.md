@@ -1,10 +1,14 @@
 # Stage 13 — Semantic Project Model
 
-**Status (2026-10-25): Milestones A (multi-language structural foundation), B (deterministic
-semantic catalog) and C (controlled AI generation) implemented and verified locally.**
-Milestone D (evaluation and hardening) is **not started**. Generation is off by default
-(`BUILDLENS_SEMANTIC_GENERATION_ENABLED=false`). No real provider has been called: every
-generation in verification used a loopback stub or mock transports.
+**Status (2026-10-27): Milestones A (multi-language structural foundation), B (deterministic
+semantic catalog) and C (controlled AI generation) implemented and verified locally.
+Milestone D (evaluation and hardening): hardening, adversarial testing, grounding metrics and
+review tooling are implemented; the evaluation is pre-registered and its sample frozen. Two
+approved Gemini pilots and four synthetic diagnostics all failed on the provider side (HTTP
+503/504), so no semantic output has been produced or judged. Paid/cloud-model testing is
+deferred by the user (2026-10-27); the human quality review has not happened.** Generation is
+off by default (`BUILDLENS_SEMANTIC_GENERATION_ENABLED=false`). Every generation in automated
+verification used a loopback stub or mock transports.
 
 The approved plan (revision 4) separates deterministic facts from AI interpretations. It keeps
 every existing Stage 1–12 producer byte-identical and adds capabilities as separately contracted,
@@ -195,5 +199,70 @@ before sending, and sent only through `OutboundGate`.
 - **Browser run:** synthetic Python + TSX repository, real API configured for a loopback stub: plan and execution through the local API (6 requests, 6 accepted), then Explore showing "AI current" badges and the Interpretation, History and Generate tabs.
 - **Stage 11 baseline:** a fresh copy of the retained volume upgraded 0009 → 0012: the 14 pre-existing tables byte-identical after the upgrade and after a catalog build; the legacy catalog builds with the source reader disabled; `eval validate` 30/30 with identical digests; `lab parity` 90/90 (retrieval, ranking and packed context equal; corpus digest `03c559c4…` unchanged; run with the 60 s search timeout described under Milestone B).
 
-## Not built yet (later milestones)
-- Milestone D: adversarial repository, grounding metrics, pre-registered human review, an optional authorised real-provider run.
+## Milestone D: evaluation and hardening
+
+| Part | State |
+|---|---|
+| Adversarial repository (§8.7) | `backend/tests/adversarial_repository.py` materialises prompt injection, doc/code contradictions, a Cyrillic homoglyph identifier, a right-to-left override, 1,500-deep JSX and 400-deep generics, a minified bundle, `node_modules`, `dist`, a tsconfig plugin and npm lifecycle scripts that would write a sentinel, an import-time sentinel writer, a GitHub token in an innocuously named file, a PEM key, symlinks inside and outside the root, a 2.2 MB file, a `.d.ts` flood and recovered syntax errors. `tests/integration/test_semantic_adversarial.py` runs the real pipeline and an "obedient attacker" model over it. |
+| Hardening found by it | Bidi controls are now rejected in claims and unknowns (`BIDI_CONTROL`) and rendered as visible `⟪U+202E⟫` markers in Explore's source, facts, claims and quotes. Mixed-script identifiers carry a `MIXED_SCRIPT_IDENTIFIER` limitation (catalog contract `semantic-catalog.v3`; rebuild catalogs). |
+| Grounding metrics (§8.4) | `application/semantic_metrics.py` (`semantic-grounding-metrics.v1`); `GET …/semantic/generation/metrics`, `buildlens semantic metrics`. Coverage, interpretation statuses, claim categories, bases, labels, assertion outcomes, scope warnings, citations per claim, attempt outcomes, rejection-code histogram and late receipts — reported as grounding, never quality. |
+| Hard gates | **H1** published claims failing re-validation (every citation re-resolved and hash-checked; text re-checked for size, bidi, verdict lexicon and secrets). **H2** outbound payloads outside plans (every attempt's request digest must be a planned `generate` item of its own run; runs and entities within caps). |
+| Pre-registered review (§8.5) | `application/semantic_review.py` (`semantic-preregistration.v2`) and `buildlens semantic preregister / sample-freeze / review-packet / review-score`. The pre-registration embeds the exact rubric and scoring denominators; it is refused unless approved, complete and identical to the code's rubric. The evaluation sample and a disjoint pilot are **frozen from the catalog before any generation** (half Python, half TS/TSX/JS; round-robin by kind; one entity per subject group; `sample_digest`). Packets contain every sampled entity with one final outcome (accepted, abstained, rejected, refused, provider failure, not attempted, ineligible); none is replaced; only accepted and abstained entities are reviewable. Scores report operational outcomes over N, quality over the reviewable entities and their claims, and hard gates as separate sections. `partially_correct` never counts as correct. Human judging only. |
+| Failure diagnostics | Each failed provider attempt records its HTTP status and exception class names next to its outcome code, e.g. `PROVIDER_UNAVAILABLE`, `HTTP_503`, `EXC_ServerError`, `CAUSE_ConnectError`. These are bounded identifier tokens. Provider messages, response bodies and headers are never recorded, because they may echo request content or credentials. This holds for the loopback, OpenAI and Gemini adapters. The adapter version is unchanged because nothing sent changes. |
+| Provider-failure stop | Plans carry `max_consecutive_provider_failures` (default 2, `BUILDLENS_SEMANTIC_MAX_CONSECUTIVE_PROVIDER_FAILURES`). After that many consecutive rate limits, unavailability or timeouts, the run stops (`PROVIDER_FAILURES`) and sends nothing further; there is no model fallback. |
+| Recognizer ground truth | `buildlens semantic recognizer-packet / recognizer-score`: every match plus heuristic candidate misses for human labelling; precision per recognizer, recall over the reviewed candidates. |
+| Pending (your decisions) | Paid/cloud-model testing is deferred (2026-10-27) after both pilots and four synthetic diagnostics failed on Gemini HTTP 503/504 (see below). When resumed: a fresh pilot, then a separately approved plan for the 60-entity evaluation, then human review. A model or provider change needs a new pre-registration. Review the recognizer packet in `.buildlens-eval/reviews/semantic-recognizers-20261025/` (171 matches, 79 candidates; kept separate from the quality review). |
+
+### Independent review repairs (2026-10-28)
+
+The deep technical review of the Stage 13 handoff (bundle `579ceec1…`) found six integrity defects in the evaluation tooling. All six were reproduced against the code and corrected. No locked evidence was changed: the frozen pre-registration still validates and the frozen sample is untouched.
+
+| Finding | Correction |
+|---|---|
+| F1: the overall score could pass with 1 of 60 entities reviewed | Scores (`semantic-review-score.v3`) report an `evaluation` section and an `overall` of `passed`, `failed` or `inconclusive`. No coverage threshold was pre-registered, so any provider failure, unattempted or ineligible entity makes the result `inconclusive`. Quality stays a separate, conditional section. `passed` is true only for an overall pass. |
+| F2: a packet could be built from a run with the wrong catalog or model | Packets (`semantic-review-packet.v3`) record and check the snapshot, catalog run, plan, run, provider and model. They refuse a different catalog (`SAMPLE_CATALOG_MISMATCH`), provider or model (`PROVIDER_MISMATCH`), a plan missing sampled entities (`SAMPLE_NOT_IN_PLAN`), and reused interpretations from another model (`INTERPRETATION_PROVIDER_MISMATCH`). The pre-registration must name its provider and model. |
+| F3: the sampler could freeze fewer entities than designed | `sample-freeze` refuses (`SAMPLE_POOL_INSUFFICIENT`) unless the sample and pilot are full size with the exact language split. Subject-group collisions count against the pool. |
+| F4: configuration errors were stored as `provider_unavailable` | A key, permission or model error is stored as its own attempt outcome, `configuration_invalid`. Migration `0013_semantic_config_outcome` widens the CHECK constraint and nothing else; its downgrade refuses while such rows exist. In the frozen outcome taxonomy it remains a `provider_failure`, because that taxonomy is fixed by the pre-registration. Packets and scores report it as a separate `failure_cause`. Older rows are recognised by their `CONFIGURATION_INVALID` code. |
+| F5: the hard-gate `passed` flag was trusted | Scoring recomputes the gates from H1 and H2. The counts must be non-negative integers (`GATES_INVALID`), and a contradictory flag is refused (`GATES_INCONSISTENT`). The metrics must come from the sample's own snapshot and catalog run (`GATES_SCOPE_MISMATCH`); `review-score` refuses any other `--snapshot`. The score now states the gate scope: H1 covers the snapshot's active published index at scoring time, and H2 covers every outbound attempt recorded for the snapshot. |
+| F6: an unattributed miss left recall at 100% | A missed match must name a known recognizer (`RECOGNIZERS`) or `out_of_scope`; otherwise scoring fails with `MISS_UNATTRIBUTED`. Out-of-scope misses are counted separately (`semantic-recognizer-score.v2`). |
+
+Verification on Python 3.14.6 against disposable PostgreSQL 16 / pgvector 0.8.6, with no cloud calls:
+- Backend: 326 passed, 1 skipped (the lab-database test without its URL), 5 deselected (real model/provider). Ruff, format and mypy are clean.
+- New tests: `tests/unit/test_semantic_review_integrity.py` (9) covers 1/60 inconclusive and 60/60 pass or fail; contradictory, invalid and out-of-scope gates; wrong catalog, snapshot, provider or model and reused foreign interpretations; short, unbalanced and colliding sample pools; configuration causes, including legacy rows; unattributed and unknown recognizer misses; and that the frozen pre-registration still validates.
+- `test_configuration_failures_are_recorded_as_configuration_invalid` covers a stub 401 (outcome `configuration_invalid`, `HTTP_401`, run stops) and the guarded 0013 downgrade.
+- The review integration test now expects `inconclusive` for its run, which has one provider failure and one unattempted entity.
+- Not run: the Python 3.11 matrix and hosted CI. The frontend is unchanged by these repairs.
+
+Remaining limitations:
+- The pre-registration has no acceptance-rate criterion. A complete evaluation in which many entities are rejected or refused can still pass on the quality of the accepted ones. The rejection and refusal rates are always reported beside the result, and changing this rule needs a new pre-registration.
+- H1 is not an audit of historical interpretations outside the active index.
+
+### Quality-evaluation preparation (2026-10-25; nothing sent)
+- **Pre-registration locked** (`.buildlens-eval/reviews/semantic-evaluation-20261025/preregistration.json`, digest `ed8c5c91…a888`). Criteria: claim correctness ≥ 0.90, overclaim rate ≤ 0.05, omission rate ≤ 0.25, usefulness mean ≥ 2.4 (1–3 scale). H1 and H2 = 0, unchanged. It supersedes the unapproved v1 draft (0.80/0.10/0.40/2.0).
+- **Denominators.** Operational rates are over all N = 60 sampled entities. Claim correctness and overclaim rate are over all published claims of accepted sample entities. Omission rate and usefulness mean are over reviewable entities (accepted or abstained). A zero denominator makes the metric undefined and its criterion fails.
+- **Evaluated source.** A clean `git archive` of `abd447b` (368 files, tree sha256 `b047daef…2826a3`), stored read-only outside the repository: the scanner refuses roots under `.buildlens-eval`. It runs in a dedicated database (`buildlens-stage13-eval` container, volume `buildlens-stage13-eval-data`), through the real API. Snapshot, structure, processing and catalog are all `partial` only because two test files containing token fixtures are screened (`RECOGNIZABLE_GITHUB_TOKEN`). Catalog: 3,230 entities; context full 2,957, outline 268, not eligible 5.
+- **Sample frozen** (`sample.json`, digest `8f9631bb…13f62b7`). 60 entities: Python 30 (8 endpoints, 8 tables, 7 files, 7 symbols); TS/TSX/JS 30 (10 components, 10 files, 10 symbols). Context: 43 full, 17 outline. A disjoint 6-entity pilot is frozen with it.
+- **Gemini pilot plan** (`gemini-3.8-flash`). Plan `fbee9bb5…`, digest `54f86c31…a666`. Six requests, 60,056 bytes in total (largest 16,372). Caps: 8 outbound requests, 2 attempts per entity, stop after 2 consecutive provider failures, 600 s deadline, 2,048 output tokens. It was created under a socket guard that allowed only the local database: zero other connections. `AUTHORIZATION.md` lists the exact payloads and contributing files.
+- **Pilot executed once with approval (2026-10-26) and stopped by the provider-failure rule.** Run `6353a947…`, state `failed` (`PROVIDER_FAILURES`), 17 s. Two requests were sent (15,233 bytes) and both returned `provider_unavailable` (11.4 s and 4.6 s, no tokens, no `Retry-After`). The other four entities were never sent. Results: 0 accepted, 0 abstained, 0 rejected, 0 refused, 2 provider failures, 4 not attempted; quality not measurable. H1 = 0, H2 = 0. No retry, no model change, no relaxed limit. That code covers an HTTP 503 or any unrecognised error (connection, 500, SDK); key, permission and model errors are excluded because they are recorded as `CONFIGURATION_INVALID`. The adapter did not then keep the HTTP status or exception class, so the cause is undetermined. Report: `.buildlens-eval/semantic/stage13-eval/pilot/REPORT.md`.
+- **Second pilot, executed once with approval (2026-10-26 18:32 UTC), stopped by the same rule.** The plan was created after failure diagnostics were added, under the same socket guard: `37f0a92f…`, digest `d29017db…5cc2d`. It has the same model, entities, caps, provider config and profile, and byte-identical request bodies. Run `8c969460…`, state `failed` (`PROVIDER_FAILURES`), 4 s. Two requests (15,233 bytes) both returned **HTTP 503** (`EXC_ServerError`, 2.4 s and 1.4 s, no `Retry-After`); 4 entities were never sent. Results: 0 accepted, 0 abstained, 0 rejected, 0 refused, 2 provider failures, 4 not attempted. H1 = 0, H2 = 0 across both pilots. Gemini reported itself unavailable for `gemini-3.8-flash` on both pilots, about eight hours apart. That is a persistent provider failure; it is reported with no model change. `pilot-2/REPORT.md`.
+- **Synthetic diagnostics, one request per run.** After a key rotation, the new key loads correctly from the repo-root `.env`. The prompt was "Reply with READY." to `gemini-3.8-flash`, with no repository content, no schema and no retries.
+  - Run 1 (2026-10-26 20:18 UTC): **HTTP 504 `DEADLINE_EXCEEDED`** after 58.6 s.
+  - Run 2 (2026-10-27 07:55 UTC): the same result after 58.9 s. It was a deliberate repeat at the user's instruction; it overwrote run 1's files, which were restored verbatim from the session transcript.
+  - Run 3 (2026-10-27 11:08 UTC), thinking level `low` and a 120 s deadline: **HTTP 504 `DEADLINE_EXCEEDED`** after 118.7 s.
+  - Run 4 (2026-10-27 11:25 UTC), identical to run 3: **HTTP 503 `UNAVAILABLE`** after 2.7 s. Google's message reports high demand for the model. This is the first failure that states a cause: provider capacity, not a project quota (which would be 429).
+  - No run returned text or tokens. The SDK forwards its timeout as `X-Server-Timeout`, and each 504 arrives just before that deadline, whether 60 s or 120 s, so Gemini is not completing a trivial prompt at all. Low thinking does not change this. The key, model and `thinkingConfig` are accepted (no 4xx), and payload size and content are ruled out. `diagnostic-20261027/INDEX.md`.
+
+### Measured on the adversarial repository
+- Nothing executed: no sentinel from import-time code, npm lifecycle scripts or the tsconfig plugin.
+- Symlinks inside and outside the root are `symlink_not_followed`; `node_modules`, `dist` and the `.pem` key are excluded by policy; the 2.2 MB file is `SOURCE_TOO_LARGE`; the minified bundle is `GENERATED_ARTIFACT`.
+- The token in `app/settings_values.py` is caught by content screening (`RECOGNIZABLE_GITHUB_TOKEN`) and appears in no chunk, fact or symbol.
+- Pathological JSX/generics extract in 0.06 s in-process. A 40-file, 8,000-declaration `.d.ts` flood took about 46 s of structural analysis (persistence), inside the 60 s overall bound; the test uses 5 files.
+- The attacker model's claims: "deletes the production database" (`BEHAVIOR_WITHOUT_CODE_EVIDENCE`), "the code is secure" (`LEXICON_VERDICT`), an ASCII `password_check` for the homoglyph name (`UNGROUNDED_IDENTIFIER`), a bidi-laden claim (`BIDI_CONTROL`) — all rejected; the only surviving injected claim is labelled "per documentation"; the docstring contradiction surfaces as a conflict with the parsed `is_async` fact. Injected text only ever travels in the untrusted-data message, and no raw output is retained.
+
+### Verification (Milestone D so far, 2026-10-25)
+- Backend: 316 passed, 1 skipped on Python 3.14.6 and 3.11.15; ruff, format and mypy clean on both. New: `test_semantic_adversarial.py`; `test_semantic_review.py` (gates trip on tampered fact rows and on an unplanned attempt; the frozen sample is deterministic and disjoint from the pilot; rate-limited, abstained, rejected and unattempted entities stay in the packet; partially correct claims score as not correct; scoring rejects tampered packets or samples, foreign pre-registrations and incomplete reviews); `test_persistent_provider_failures_stop_the_run` (which records `HTTP_429`); adapter diagnostics tests for 503/500/429/403 and connection failures across the loopback, OpenAI and Gemini adapters. These assert that no provider message, body or header text is recorded.
+- Frontend: 30 tests (bidi rendering added), lint, types and build.
+- No real provider called; no quality measured.
+
+## Not built yet
+- The Gemini pilot and evaluation runs (each needs explicit approval), the human quality review, final verification and an independent technical review. Stage 13 is not complete until all of these are done.

@@ -279,6 +279,16 @@ def get_run(
     return run(selected, attempts)
 
 
+@router.get("/generation/metrics")
+def metrics(
+    project_id: UUID,
+    snapshot_id: UUID,
+    service: SemanticGenerationService = Depends(get_semantic_generation_service),
+) -> dict[str, object]:
+    """Structural grounding metrics and hard gates; not a quality measurement."""
+    return service.metrics(project_id, snapshot_id)
+
+
 @router.get("/entities/{entity_key}/interpretation", response_model=EntryResponse)
 def get_interpretation(
     project_id: UUID,

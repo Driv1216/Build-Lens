@@ -48,6 +48,7 @@ from buildlens.domain.semantic import (
     SemanticRelation,
     StoredCoverage,
     catalog_contract,
+    mixed_script,
     package_digest_of,
 )
 from buildlens.domain.source import digest
@@ -547,6 +548,8 @@ class _Builder:
                 self._limit(symbol_entity, "DYNAMIC_FEATURES", ("symbol_facts", facts_row, file))
             if facts.get("ambient") and facts_row:
                 self._limit(symbol_entity, "AMBIENT_DECLARATION", ("symbol_facts", facts_row, file))
+            if mixed_script(str(row["name"])):
+                self._limit(symbol_entity, "MIXED_SCRIPT_IDENTIFIER", symbol_row)
             parent = row.get("parent_id")
             if parent is None:
                 self._relate("contains", entity.key, analysis_row, key, None, None, (), symbol_row)

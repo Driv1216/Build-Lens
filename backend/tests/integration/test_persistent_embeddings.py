@@ -470,5 +470,5 @@ def test_persistence_restart_exact_search_and_unchanged_reuse(
     with pg_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0012_semantic_generation"
+            == "0013_semantic_config_outcome"
         )

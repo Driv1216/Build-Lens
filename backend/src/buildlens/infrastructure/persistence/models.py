@@ -1271,7 +1271,7 @@ class SemanticGenerationOutcomeRecord(Base):
             "outcome IN ('accepted', 'accepted_with_conflicts', 'insufficient_evidence', "
             "'rejected', 'rate_limited', 'provider_unavailable', 'timeout', 'context_rejected', "
             "'refused', 'token_bound_violated', 'reused_concurrently', 'outcome_unknown', "
-            "'not_sent')",
+            "'not_sent', 'configuration_invalid')",
             name="ck_semantic_generation_outcomes_code",
         ),
     )

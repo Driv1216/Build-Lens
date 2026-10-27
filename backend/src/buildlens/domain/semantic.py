@@ -18,7 +18,7 @@ from buildlens.domain.extractors import PYTHON_FACTS, current_declaration_digest
 from buildlens.domain.extractors import extractor_contract_digest as _extractor_digest
 from buildlens.domain.source import digest
 
-CATALOG_VERSION = "semantic-catalog.v2"
+CATALOG_VERSION = "semantic-catalog.v3"
 RENDERER_VERSION = "fact-renderer.v1"
 RESOLUTION_VERSION = "import-resolution.v1"
 PACKAGE_VERSION = "semantic-package.v1"
@@ -96,6 +96,23 @@ def catalog_contract() -> dict[str, object]:
         "neighbor_fact_limit": NEIGHBOR_FACT_LIMIT,
         "extractors": dict(sorted(extractors.items())),
     }
+
+
+_SCRIPTS = ("LATIN", "CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE")
+
+
+def mixed_script(name: str) -> bool:
+    """True when an identifier mixes letters from more than one confusable script."""
+    import unicodedata
+
+    scripts = {
+        script
+        for character in name
+        if character.isalpha()
+        for script in _SCRIPTS
+        if unicodedata.name(character, "").startswith(script)
+    }
+    return len(scripts) > 1
 
 
 def package_digest_of(

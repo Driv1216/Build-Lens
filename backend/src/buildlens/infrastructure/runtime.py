@@ -95,6 +95,7 @@ def generation_settings(settings: Settings) -> GenerationSettings:
         request_byte_ceiling=settings.semantic_request_byte_ceiling,
         max_outbound_requests=settings.semantic_max_outbound_requests,
         max_attempts_per_entity=settings.semantic_max_attempts_per_entity,
+        max_consecutive_provider_failures=settings.semantic_max_consecutive_provider_failures,
         deadline_seconds=settings.semantic_deadline_seconds,
         plan_ttl_seconds=settings.semantic_plan_ttl_seconds,
         request_timeout_seconds=settings.semantic_request_timeout_seconds,

@@ -136,31 +136,35 @@ class LoopbackGenerator:
                 headers={"Content-Type": "application/json"},
                 timeout=timeout_seconds,
             ) as response:
-                if response.status_code == 429:
-                    raise ProviderCallError("rate_limited", retry_after(response.headers))
-                if response.status_code == 503:
-                    raise ProviderCallError("provider_unavailable", retry_after(response.headers))
-                if response.status_code in (400, 413):
-                    raise ProviderCallError("context_rejected")
-                if response.status_code in (401, 403, 404):
-                    raise ProviderCallError("configuration_invalid")
-                if response.status_code != 200:
-                    raise ProviderCallError("provider_unavailable")
+                status = response.status_code
+                headers = response.headers
+                if status == 429:
+                    raise ProviderCallError("rate_limited", retry_after(headers), status=status)
+                if status == 503:
+                    raise ProviderCallError(
+                        "provider_unavailable", retry_after(headers), status=status
+                    )
+                if status in (400, 413):
+                    raise ProviderCallError("context_rejected", status=status)
+                if status in (401, 403, 404):
+                    raise ProviderCallError("configuration_invalid", status=status)
+                if status != 200:
+                    raise ProviderCallError("provider_unavailable", status=status)
                 body = bytearray()
                 async for part in response.aiter_bytes():
                     body.extend(part)
                     if len(body) > RESPONSE_CAP_BYTES:
-                        raise ProviderCallError("provider_unavailable")
+                        raise ProviderCallError("provider_unavailable", status=status)
         except httpx.TimeoutException as error:
-            raise ProviderCallError("timeout") from error
+            raise ProviderCallError("timeout", error=error) from error
         except httpx.HTTPError as error:
-            raise ProviderCallError("provider_unavailable") from error
+            raise ProviderCallError("provider_unavailable", error=error) from error
         try:
             parsed = json.loads(bytes(body))
             choice = parsed["choices"][0]
             text = choice["message"]["content"] or ""
         except (ValueError, KeyError, IndexError, TypeError) as error:
-            raise ProviderCallError("provider_unavailable") from error
+            raise ProviderCallError("provider_unavailable", status=200, error=error) from error
         finish = choice.get("finish_reason")
         usage = parsed.get("usage") or {}
         state: Literal["completed", "incomplete", "refused"] = (

@@ -224,6 +224,57 @@ def test_plan_integrity_expiry_configuration_and_authority(
     assert server.requests == []
 
 
+def test_persistent_provider_failures_stop_the_run(
+    pg_engine: Engine, tmp_path: Path, server: StubModelServer
+) -> None:
+    stack, snapshot = _stack(pg_engine, tmp_path)
+    project, snap = stack.project.id, snapshot.id
+    keys = _keys(stack, snapshot, "load", "session", "get_user")
+    server.reply = lambda request: (429, {"error": "slow down"}, {})  # no Retry-After
+    service = generation_service(stack, server)
+    plan = _plan(service, stack, snapshot, *keys)
+    assert plan.caps["max_consecutive_provider_failures"] == 2
+    run = service.execute(project, snap, plan.id, plan.plan_digest, True)
+    # Two consecutive failures stop sending: the third entity is never sent, no model switch.
+    assert run.state == "failed" and run.diagnostics == ("PROVIDER_FAILURES",)
+    assert len(server.requests) == 2 and run.attempts_started == 2
+    _, attempts = service.run(project, snap, run.id)
+    assert [a.outcome for a in attempts] == ["rate_limited", "rate_limited"]
+    # Each failure records its HTTP status, never the provider's message or body.
+    assert all(a.rejection_codes == ("RATE_LIMITED", "HTTP_429") for a in attempts)
+
+
+def test_configuration_failures_are_recorded_as_configuration_invalid(
+    pg_engine: Engine, tmp_path: Path, server: StubModelServer
+) -> None:
+    from alembic.config import Config
+
+    from alembic import command
+
+    stack, snapshot = _stack(pg_engine, tmp_path)
+    project, snap = stack.project.id, snapshot.id
+    keys = _keys(stack, snapshot, "load", "session")
+    server.reply = lambda request: (401, {"error": "bad key"}, {})
+    service = generation_service(stack, server)
+    plan = _plan(service, stack, snapshot, *keys)
+    run = service.execute(project, snap, plan.id, plan.plan_digest, True)
+    # A broken key stops at once and is never mistaken for a provider outage.
+    assert run.diagnostics == ("CONFIGURATION_INVALID",) and len(server.requests) == 1
+    _, attempts = service.run(project, snap, run.id)
+    assert [(a.outcome, a.rejection_codes) for a in attempts] == [
+        ("configuration_invalid", ("CONFIGURATION_INVALID", "HTTP_401"))
+    ]
+    # Migration 0013 widened the outcome CHECK; its downgrade refuses while such rows exist.
+    config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
+    config.set_main_option("script_location", str(Path(__file__).parents[2] / "alembic"))
+    with pytest.raises(Exception, match="configuration_invalid attempt outcomes exist"):
+        command.downgrade(config, "0012_semantic_generation")
+    with pg_engine.begin() as connection:
+        connection.execute(text("DELETE FROM semantic_generation_attempt_outcomes"))
+    command.downgrade(config, "0012_semantic_generation")
+    command.upgrade(config, "head")
+
+
 def test_budget_explicit_retry_token_bound_and_rejection(
     pg_engine: Engine, tmp_path: Path, server: StubModelServer
 ) -> None:

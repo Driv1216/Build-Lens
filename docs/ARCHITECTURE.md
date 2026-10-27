@@ -382,7 +382,7 @@ findings: [FRAMEWORK_LAB.md](FRAMEWORK_LAB.md).
 
 ## Stage 13 Milestone A — multi-language structure
 
-**Status: Milestones A–C implemented, 2026-10-25; Milestone D not started.** Design,
+**Status: Milestones A–C implemented, 2026-10-25; Milestone D hardening and tooling implemented, human review pending.** Design,
 deviations and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
 
 **Producers**
@@ -422,4 +422,10 @@ deviations and verification: [SEMANTIC_MODEL.md](SEMANTIC_MODEL.md).
 - `application/semantic_prompt.py` rebuilds and integrity-checks packages; `application/semantic_validation.py` validates claims deterministically.
 - Adapters live in `infrastructure/generation/semantic_{local,openai,gemini}.py`; the Ask adapters are unchanged.
 - Migration `0012` adds plans, runs, attempts, outcomes, late receipts, interpretations, claims, index entries, the active index pointer and `semantic_entities.content_digest`.
+
+**Evaluation and hardening (Milestone D)**
+- `application/semantic_metrics.py` reports grounding metrics and hard gates H1/H2; `application/semantic_review.py` holds the v2 pre-registration (rubric and denominators bound to code), a catalog-frozen stratified sample with a disjoint pilot, outcome classification without replacement, digest-bound packets, scoring with operational, quality and gate sections kept separate, and recognizer ground truth.
+- Plans carry `max_consecutive_provider_failures`: persistent rate limits or outages stop a run (`PROVIDER_FAILURES`); there is no model fallback. Failed attempts record their HTTP status and exception class names only, never provider messages or bodies.
+- The validator rejects bidi controls; Explore renders them visibly; mixed-script identifiers are a catalog limitation.
+- Review integrity: packets are bound to the sample's snapshot and catalog and to the pre-registered provider and model. Scores recompute the hard gates within the sample's scope and report an overall `passed`, `failed` or `inconclusive`. Migration `0013` adds the `configuration_invalid` attempt outcome.
 

@@ -18,6 +18,7 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, insert, select, tuple_, update
+from sqlalchemy import text as text_sql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -859,6 +860,9 @@ class SqlAlchemyGenerationStore:
             self._abandon(session, [record.id])
             return True
 
+    def outbound_audit(self, snapshot_id: UUID) -> dict[str, Any]:
+        return outbound_audit(self._session_factory, snapshot_id)
+
     # ----------------------------------------------------------------- reads
 
     def run(self, project_id: UUID, snapshot_id: UUID, run_id: UUID) -> GenerationRun | None:
@@ -980,6 +984,16 @@ class SqlAlchemyGenerationStore:
             ).all()
             return _interpretation(record, claims)
 
+    def attempt_interpretation(self, project_id: UUID, attempt_id: UUID) -> Interpretation | None:
+        with self._session_factory() as session:
+            interpretation_id = session.scalar(
+                select(SemanticInterpretationRecord.id).where(
+                    SemanticInterpretationRecord.attempt_id == attempt_id,
+                    SemanticInterpretationRecord.project_id == project_id,
+                )
+            )
+        return self.interpretation(project_id, interpretation_id) if interpretation_id else None
+
     def history(self, project_id: UUID, entity_key: str) -> list[Interpretation]:
         with self._session_factory() as session:
             return [
@@ -1078,3 +1092,92 @@ class SqlAlchemyGenerationStore:
                 for claim in interpretation.claims
             ),
         )
+
+
+def outbound_audit(session_factory: sessionmaker[Session], snapshot_id: UUID) -> dict[str, Any]:
+    """Hard gate H2 inputs: every attempt must match a planned generate item of its own run."""
+    with session_factory() as session:
+        outside = session.execute(
+            text_sql(
+                "SELECT count(*) FROM semantic_generation_attempts a "
+                "JOIN semantic_generation_runs r ON r.id = a.run_id "
+                "WHERE r.project_version_id = :snapshot AND NOT EXISTS ("
+                "  SELECT 1 FROM semantic_generation_plan_items i WHERE i.plan_id = r.plan_id "
+                "  AND i.disposition = 'generate' AND i.entity_key = a.entity_key "
+                "  AND i.request_digest = a.request_digest)"
+            ),
+            {"snapshot": snapshot_id},
+        ).scalar_one()
+        over_run = session.execute(
+            text_sql(
+                "SELECT count(*) FROM semantic_generation_runs r WHERE r.project_version_id = :s "
+                "AND r.attempts_started > (r.caps->>'max_outbound_requests')::int"
+            ),
+            {"s": snapshot_id},
+        ).scalar_one()
+        over_entity = session.execute(
+            text_sql(
+                "SELECT count(*) FROM (SELECT a.run_id, a.entity_key, count(*) AS n, "
+                "max((r.caps->>'max_attempts_per_entity')::int) AS cap "
+                "FROM semantic_generation_attempts a JOIN semantic_generation_runs r "
+                "ON r.id = a.run_id WHERE r.project_version_id = :s "
+                "GROUP BY a.run_id, a.entity_key) t WHERE t.n > t.cap"
+            ),
+            {"s": snapshot_id},
+        ).scalar_one()
+        outcomes = dict(
+            session.execute(
+                text_sql(
+                    "SELECT coalesce(o.outcome, 'pending'), count(*) "
+                    "FROM semantic_generation_attempts a "
+                    "JOIN semantic_generation_runs r ON r.id = a.run_id "
+                    "LEFT JOIN semantic_generation_attempt_outcomes o ON o.attempt_id = a.id "
+                    "WHERE r.project_version_id = :s GROUP BY 1"
+                ),
+                {"s": snapshot_id},
+            ).all()
+        )
+        codes = (
+            session.execute(
+                text_sql(
+                    "SELECT o.rejection_codes FROM semantic_generation_attempt_outcomes o "
+                    "JOIN semantic_generation_attempts a ON a.id = o.attempt_id "
+                    "JOIN semantic_generation_runs r ON r.id = a.run_id "
+                    "WHERE r.project_version_id = :s"
+                ),
+                {"s": snapshot_id},
+            )
+            .scalars()
+            .all()
+        )
+        receipts = session.execute(
+            text_sql(
+                "SELECT count(*) FROM semantic_generation_late_receipts l "
+                "JOIN semantic_generation_attempts a ON a.id = l.attempt_id "
+                "JOIN semantic_generation_runs r ON r.id = a.run_id "
+                "WHERE r.project_version_id = :s"
+            ),
+            {"s": snapshot_id},
+        ).scalar_one()
+        states = dict(
+            session.execute(
+                text_sql(
+                    "SELECT state, count(*) FROM semantic_generation_runs "
+                    "WHERE project_version_id = :s GROUP BY state"
+                ),
+                {"s": snapshot_id},
+            ).all()
+        )
+    histogram: dict[str, int] = defaultdict(int)
+    for values in codes:
+        for code in values or []:
+            histogram[str(code).split(":", 1)[-1]] += 1
+    return {
+        "attempts_outside_plans": int(outside),
+        "runs_over_request_cap": int(over_run),
+        "entities_over_attempt_cap": int(over_entity),
+        "attempt_outcomes": {str(k): int(v) for k, v in sorted(outcomes.items())},
+        "rejection_codes": dict(sorted(histogram.items())),
+        "late_receipts": int(receipts),
+        "run_states": {str(k): int(v) for k, v in sorted(states.items())},
+    }

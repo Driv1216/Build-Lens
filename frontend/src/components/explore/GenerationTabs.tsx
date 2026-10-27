@@ -10,6 +10,7 @@ import {
   type GenerationPlan,
   type GenerationRun,
 } from '../../api/semantic'
+import { visible } from './visible'
 
 const LABELS: Record<Claim['basis_label'], string> = {
   cited: 'cited',
@@ -35,7 +36,7 @@ export function InterpretationTab({ entry }: { entry: Entry | null }) {
     <p className="note">Context coverage: {value.context_coverage ?? 'unknown'} · status {value.status.replaceAll('_', ' ')}. "Cited" means the quotes are real code or facts, not that the claim is true.</p>
     {accepted.map(claim => <ClaimItem key={claim.ordinal} claim={claim} />)}
     {conflicts.length > 0 && <><h3>Conflicts with parsed facts</h3>{conflicts.map(claim => <ClaimItem key={claim.ordinal} claim={claim} />)}</>}
-    {value.unknowns.length > 0 && <><h3>Unknowns</h3><ul>{value.unknowns.map(text => <li key={text}>{text}</li>)}</ul></>}
+    {value.unknowns.length > 0 && <><h3>Unknowns</h3><ul>{value.unknowns.map(text => <li key={text}>{visible(text)}</li>)}</ul></>}
   </div>
 }
 
@@ -47,10 +48,10 @@ function ClaimItem({ claim }: { claim: Claim }) {
       {claim.assertion_outcome === 'matches_fact' && <span className="tier tier-span">matches parsed fact</span>}
       {claim.scope_warning && <span className="tier tier-derived">scope warning</span>}
     </p>
-    <p>{claim.text ?? 'Withheld: a citation failed read-time verification.'}</p>
+    <p>{claim.text === null ? 'Withheld: a citation failed read-time verification.' : visible(claim.text)}</p>
     <ul className="relations">{claim.citations.map(citation => <li key={`${citation.evidence_id}-${citation.kind}`}>
       <code>{citation.evidence_id}</code> {citation.locator ?? ''}{citation.start_line ? ` line ${citation.start_line}` : ''} · {citation.basis}
-      {citation.quote ? <> · <q>{citation.quote}</q></> : <span className="error"> · {citation.verification}</span>}
+      {citation.quote ? <> · <q>{visible(citation.quote)}</q></> : <span className="error"> · {citation.verification}</span>}
     </li>)}</ul>
   </article>
 }

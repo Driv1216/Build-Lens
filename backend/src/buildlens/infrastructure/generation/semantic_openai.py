@@ -147,20 +147,23 @@ class OpenAISemanticGenerator:
         from openai import APIConnectionError, APIStatusError, APITimeoutError
 
         if isinstance(error, APITimeoutError):
-            return ProviderCallError("timeout")
+            return ProviderCallError("timeout", error=error)
+        status = None
         if isinstance(error, APIStatusError):
             headers = dict(error.response.headers) if error.response is not None else None
-            if error.status_code == 429:
-                return ProviderCallError("rate_limited", retry_after(headers))
-            if error.status_code == 503:
-                return ProviderCallError("provider_unavailable", retry_after(headers))
-            if error.status_code in (400, 413):
-                return ProviderCallError("context_rejected")
-            if error.status_code in (401, 403, 404):
-                return ProviderCallError("configuration_invalid")
-        if isinstance(error, (APIConnectionError, APIStatusError)):
-            return ProviderCallError("provider_unavailable")
-        return ProviderCallError("provider_unavailable")
+            status = error.status_code
+            seen = {"status": status, "error": error}
+            if status == 429:
+                return ProviderCallError("rate_limited", retry_after(headers), **seen)
+            if status == 503:
+                return ProviderCallError("provider_unavailable", retry_after(headers), **seen)
+            if status in (400, 413):
+                return ProviderCallError("context_rejected", **seen)
+            if status in (401, 403, 404):
+                return ProviderCallError("configuration_invalid", **seen)
+        if isinstance(error, APIConnectionError):
+            return ProviderCallError("provider_unavailable", error=error)
+        return ProviderCallError("provider_unavailable", status=status, error=error)
 
     async def close(self) -> None:
         if self._client is not None:

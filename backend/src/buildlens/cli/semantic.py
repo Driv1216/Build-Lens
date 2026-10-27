@@ -11,6 +11,7 @@ import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
@@ -108,7 +109,140 @@ def generate(
     _generation(run)
 
 
+@app.command("metrics")
+def metrics(project: UUID = typer.Option(...), snapshot: UUID = typer.Option(...)) -> None:
+    """Grounding metrics and hard gates H1/H2 (not quality)."""
+    _generation(lambda service: service.metrics(project, snapshot))
+
+
 @app.command("recover")
 def recover(project: UUID = typer.Option(...), snapshot: UUID = typer.Option(...)) -> None:
     """Abandon expired-lease runs; outcome-unknown attempts are recorded, never retried."""
     _generation(lambda service: {"abandoned": service.recover(project, snapshot)})
+
+
+# ---------------------------------------------------------------- Milestone D: human review
+
+
+def _write(path: Path, value: Any, text: bool = False) -> None:
+    from buildlens.infrastructure.evaluation.local import atomic_write
+
+    atomic_write(path, value, text=text)
+    typer.echo(f"wrote {path}")
+
+
+def _read(path: Path) -> Any:
+    from buildlens.infrastructure.evaluation.local import read_json
+
+    return read_json(path)
+
+
+@app.command("preregister")
+def preregister(out: Path = typer.Option(..., "--out")) -> None:
+    """Write a draft pre-registration; criteria must be agreed and approved before review."""
+    from buildlens.application.semantic_review import preregistration_template
+
+    _write(out, preregistration_template())
+
+
+@app.command("sample-freeze")
+def sample_freeze(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    preregistration: Path = typer.Option(..., "--preregistration"),
+    source: Path = typer.Option(..., "--source", help="JSON describing the evaluated source."),
+    out: Path = typer.Option(..., "--out"),
+) -> None:
+    """Freeze the evaluation sample and disjoint pilot before any generation (write-once)."""
+    with _runtime() as runtime:
+        sample = semantic_generation_service(runtime).freeze_sample(
+            project, snapshot, _read(preregistration), _read(source)
+        )
+    _write(out, sample)
+    _emit({key: sample[key] for key in ("sample_digest", "population")})
+
+
+@app.command("review-packet")
+def review_packet(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    preregistration: Path = typer.Option(..., "--preregistration"),
+    sample: Path = typer.Option(..., "--sample"),
+    run: UUID = typer.Option(..., "--run"),
+    out: Path = typer.Option(..., "--out"),
+) -> None:
+    """Create a digest-bound packet for every frozen-sample entity (no replacement)."""
+    from buildlens.application.semantic_review import render_markdown, review_template
+
+    with _runtime() as runtime:
+        packet = semantic_generation_service(runtime).review_packet(
+            project, snapshot, _read(preregistration), _read(sample), run
+        )
+    _write(out / "packet.json", packet)
+    _write(out / "REVIEW.md", render_markdown(packet), text=True)
+    _write(out / "reviews.template.json", review_template(packet))
+
+
+@app.command("review-score")
+def review_score(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    packet: Path = typer.Option(..., "--packet"),
+    reviews: Path = typer.Option(..., "--reviews"),
+    preregistration: Path = typer.Option(..., "--preregistration"),
+    sample: Path = typer.Option(..., "--sample"),
+    out: Path = typer.Option(..., "--out"),
+) -> None:
+    """Score reviews: operational outcomes, quality and hard gates as separate sections.
+
+    Hard gates are measured on the frozen sample's own snapshot; any other is refused."""
+    from buildlens.application.semantic_review import score
+
+    frozen = _read(sample)
+    if frozen.get("snapshot_id") != str(snapshot):
+        raise typer.BadParameter("--snapshot must be the frozen sample's snapshot")
+    with _runtime() as runtime:
+        metrics = semantic_generation_service(runtime).metrics(project, snapshot)
+    result = score(_read(packet), _read(reviews), _read(preregistration), frozen, metrics)
+    _write(out, result)
+    _emit(result)
+
+
+@app.command("recognizer-packet")
+def recognizer_packet(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    out: Path = typer.Option(..., "--out"),
+) -> None:
+    """Recognizer matches and candidate misses for human-approved ground truth."""
+    from buildlens.application.recognizers import RECOGNIZERS
+    from buildlens.application.semantic_review import OUT_OF_SCOPE
+
+    with _runtime() as runtime:
+        packet = semantic_generation_service(runtime).recognizer_packet(project, snapshot)
+    _write(out / "recognizer-packet.json", packet)
+    _write(
+        out / "recognizer-reviews.template.json",
+        {
+            "packet_digest": packet["packet_digest"],
+            "matches": [
+                {"entity_key": m["entity_key"], "is_correct": None} for m in packet["matches"]
+            ],
+            "candidates": [
+                {"entity_key": c["entity_key"], "is_missed_match": None, "recognizer": None}
+                for c in packet["candidates"]
+            ],
+            "instructions": "A missed match must name the recognizer that should have matched it "
+            f"({', '.join(RECOGNIZERS)}) or '{OUT_OF_SCOPE}'; unattributed misses are refused.",
+        },
+    )
+
+
+@app.command("recognizer-score")
+def recognizer_score(
+    packet: Path = typer.Option(..., "--packet"), reviews: Path = typer.Option(..., "--reviews")
+) -> None:
+    """Precision (and recall over reviewed candidates) per recognizer."""
+    from buildlens.application.semantic_review import recognizer_score as score
+
+    _emit(score(_read(packet), _read(reviews)))

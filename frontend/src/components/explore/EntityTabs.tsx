@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Entry, EntityDetail, Fact, Relation } from '../../api/semantic'
 import { GenerateTab, HistoryTab, InterpretationTab } from './GenerationTabs'
+import { visible } from './visible'
 
 type Tab = 'facts' | 'relations' | 'coverage' | 'interpretation' | 'history' | 'generate'
 const BASIS: Record<Fact['basis'], string> = {
@@ -50,7 +51,7 @@ function FactItem({ fact }: { fact: Fact }) {
       <span className="tier tier-constructed">{fact.fact_kind.replace('_', ' ')}</span>
       <span className={`tier ${fact.verification === 'verified' ? 'tier-approved' : 'tier-derived'}`}>{fact.verification ?? 'unverified'}</span>
     </p>
-    <p>{fact.rendered_text}</p>
+    <p>{visible(fact.rendered_text)}</p>
     {fact.fact_kind === 'recognizer_match' && <p className="note">Met: {(fact.derived.met ?? []).join(', ') || 'none'} · Unmet: {(fact.derived.unmet ?? []).join(', ') || 'none'}</p>}
     <details><summary>Source rows ({fact.source_refs.length})</summary>
       <ul>{fact.source_refs.map(ref => <li key={`${ref.table}:${ref.id}`}><code>{ref.table}</code> · <code>{ref.locator}</code> · <code>{ref.id.slice(0, 8)}</code></li>)}</ul>

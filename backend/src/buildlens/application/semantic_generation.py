@@ -114,6 +114,8 @@ class GenerationSettings:
     request_byte_ceiling: int = 64_000
     max_outbound_requests: int = 10
     max_attempts_per_entity: int = 2
+    # Consecutive provider failures (rate limits, unavailability, timeouts) that stop a run.
+    max_consecutive_provider_failures: int = 2
     deadline_seconds: float = 300
     plan_ttl_seconds: float = 1800
     request_timeout_seconds: float = 60
@@ -194,6 +196,7 @@ class RunResults:
     failed: int = 0
     not_attempted: int = 0
     stop_reason: str | None = None
+    provider_failure_streak: int = 0
 
 
 class GenerationStore(Protocol):
@@ -239,10 +242,14 @@ class GenerationStore(Protocol):
     def interpretation(
         self, project_id: UUID, interpretation_id: UUID
     ) -> Interpretation | None: ...
+    def attempt_interpretation(
+        self, project_id: UUID, attempt_id: UUID
+    ) -> Interpretation | None: ...
     def history(self, project_id: UUID, entity_key: str) -> list[Interpretation]: ...
     def resolve_citations(
         self, project_id: UUID, interpretation: Interpretation
     ) -> Interpretation: ...
+    def outbound_audit(self, snapshot_id: UUID) -> dict[str, Any]: ...
 
 
 def _manifest(package: Package, catalog_run_id: UUID) -> dict[str, Any]:
@@ -333,6 +340,7 @@ class SemanticGenerationService:
             "max_outbound_requests": min(
                 s.max_outbound_requests, generate_count * s.max_attempts_per_entity
             ),
+            "max_consecutive_provider_failures": s.max_consecutive_provider_failures,
             "deadline_seconds": s.deadline_seconds,
             "max_output_tokens": s.max_output_tokens,
             "request_timeout_seconds": s.request_timeout_seconds,
@@ -830,12 +838,10 @@ class SemanticGenerationService:
                 result = await gate.send(generator, canonical, ticket, remaining)
             except ProviderCallError as error:
                 latency = int((time.monotonic() - started) * 1000)
-                code = (
-                    "provider_unavailable" if error.code == "configuration_invalid" else error.code
-                )
+                codes = (error.code.upper(), *error.diagnostics)
                 stop = self._record(
-                    run, attempt, OutcomeRecord(code, latency_ms=latency,
-                                                rejection_codes=(error.code.upper(),)),
+                    run, attempt,
+                    OutcomeRecord(error.code, latency_ms=latency, rejection_codes=codes),
                     None, results,
                 )  # fmt: skip
                 if stop:
@@ -856,7 +862,13 @@ class SemanticGenerationService:
                     await asyncio.sleep(wait)
                     continue  # explicit retry: a new T1, a new ticket, the same digest
                 results.failed += 1
+                results.provider_failure_streak += 1
+                limit = plan.caps.get("max_consecutive_provider_failures")
+                if limit is not None and results.provider_failure_streak >= int(limit):
+                    results.stop_reason = "PROVIDER_FAILURES"  # stop, never switch models
+                    return True
                 return False
+            results.provider_failure_streak = 0
             latency = int((time.monotonic() - started) * 1000)
             base = OutcomeRecord(
                 "rejected",
@@ -969,6 +981,152 @@ class SemanticGenerationService:
             datetime.now().astimezone(),
             validation.claims,
         )
+
+    # ----------------------------------------------------------------- metrics (§8.4)
+
+    def resolve(self, project_id: UUID, interpretation: Interpretation) -> Interpretation:
+        return self._store.resolve_citations(project_id, interpretation)
+
+    def outbound_audit(self, snapshot_id: UUID) -> dict[str, Any]:
+        return self._store.outbound_audit(snapshot_id)
+
+    def eligible_count(self, catalog_run_id: UUID) -> int:
+        _, full = self._catalog_store.entity_page(
+            catalog_run_id, EntityFilters(context_coverage="full"), 1, 0
+        )
+        _, outline = self._catalog_store.entity_page(
+            catalog_run_id, EntityFilters(context_coverage="outline"), 1, 0
+        )
+        return full + outline
+
+    def metrics(self, project_id: UUID, snapshot_id: UUID) -> dict[str, Any]:
+        from buildlens.application.semantic_metrics import grounding_metrics
+
+        self._catalog.require_snapshot(project_id, snapshot_id)
+        return grounding_metrics(self, project_id, snapshot_id)
+
+    # ----------------------------------------------------------------- human review (§8.5)
+
+    def _all_entities(self, run: SemanticCatalogRun) -> dict[str, SemanticEntity]:
+        values = self._entities(run, None)
+        return {key: value for key, value in values.items() if value is not None}
+
+    def freeze_sample(
+        self,
+        project_id: UUID,
+        snapshot_id: UUID,
+        preregistration: dict[str, Any],
+        source: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Freeze the evaluation sample and pilot from the catalog, before any generation."""
+        from buildlens.application.semantic_review import freeze_sample, require_approved
+
+        approved = require_approved(preregistration)
+        design = preregistration["sample"]
+        run, _ = self._catalog.select(project_id, snapshot_id, None)
+        return freeze_sample(
+            list(self._all_entities(run).values()),
+            size=int(design["size"]),
+            pilot_size=int(design["pilot_size"]),
+            seed=int(design["seed"]),
+            preregistration_digest=approved,
+            snapshot_id=str(snapshot_id),
+            catalog_run_id=str(run.id),
+            source=source,
+        )
+
+    def review_packet(
+        self,
+        project_id: UUID,
+        snapshot_id: UUID,
+        preregistration: dict[str, Any],
+        sample: dict[str, Any],
+        run_id: UUID,
+    ) -> dict[str, Any]:
+        """Every frozen-sample entity with its final outcome in ``run_id``; none is replaced."""
+        from buildlens.application.semantic_review import (
+            ReviewError,
+            build_packet,
+            classify,
+            failure_cause,
+            require_approved,
+            verify_sample,
+        )
+
+        require_approved(preregistration)
+        verify_sample(sample)
+        if sample["snapshot_id"] != str(snapshot_id):
+            raise ReviewError("SAMPLE_SNAPSHOT_MISMATCH")
+        run, attempts = self.run(project_id, snapshot_id, run_id)
+        plan = self.get_plan(project_id, snapshot_id, run.plan_id)
+        if plan.catalog_run_id != run.catalog_run_id:
+            raise ReviewError("SAMPLE_CATALOG_MISMATCH")
+        authority = {
+            "snapshot_id": str(run.snapshot_id),
+            "catalog_run_id": str(run.catalog_run_id),
+            "plan_id": str(plan.id),
+            "run_id": str(run.id),
+            "provider": str(plan.provider_config.get("provider")),
+            "model": str(plan.provider_config.get("model")),
+        }
+        items = {item.entity_key: item for item in plan.items}
+        if any(entry["entity_key"] not in items for entry in sample["sample"]):
+            raise ReviewError("SAMPLE_NOT_IN_PLAN")
+        last: dict[str, Attempt] = {}
+        for value in attempts:
+            last[value.entity_key] = value
+        outcomes: dict[str, dict[str, Any]] = {}
+        interpretations: dict[str, Interpretation] = {}
+        for entry in sample["sample"]:
+            key = entry["entity_key"]
+            item = items.get(key)
+            attempt = last.get(key)
+            interpretation = None
+            if item is not None and item.disposition == "reuse" and item.reuse_interpretation_id:
+                interpretation = self._store.interpretation(
+                    project_id, item.reuse_interpretation_id
+                )
+            elif attempt is not None:
+                interpretation = self._store.attempt_interpretation(project_id, attempt.id)
+            outcome = classify(
+                item.disposition if item else None,
+                attempt.outcome if attempt else None,
+                interpretation.status if interpretation else None,
+            )
+            outcomes[key] = {
+                "outcome": outcome,
+                "disposition": item.disposition if item else None,
+                "plan_reason": item.reason if item else None,
+                "attempts": sum(1 for value in attempts if value.entity_key == key),
+                "last_attempt_outcome": attempt.outcome if attempt else None,
+                "rejection_codes": list(attempt.rejection_codes) if attempt else [],
+                "failure_cause": failure_cause(
+                    attempt.outcome if attempt else None,
+                    attempt.rejection_codes if attempt else (),
+                ),
+            }
+            if interpretation is not None and outcome in {"accepted", "abstained"}:
+                interpretations[key] = self._store.resolve_citations(project_id, interpretation)
+        return build_packet(
+            sample=sample,
+            preregistration=preregistration,
+            authority=authority,
+            outcomes=outcomes,
+            interpretations=interpretations,
+        )
+
+    def recognizer_packet(self, project_id: UUID, snapshot_id: UUID) -> dict[str, Any]:
+        from buildlens.application.semantic_review import recognizer_packet
+
+        run, _ = self._catalog.select(project_id, snapshot_id, None)
+        entities = list(self._all_entities(run).values())
+        roles: dict[str, dict[str, Any]] = {}
+        for item in entities:
+            if item.kind in {"api_endpoint", "db_table", "component", "hook"}:
+                for fact in self._catalog_store.subject_facts(run.id, item.entity_key):
+                    if fact.fact_kind == "recognizer_match":
+                        roles[item.entity_key] = dict(fact.derived)
+        return recognizer_packet(entities, roles)
 
     # ----------------------------------------------------------------- recovery and reads
 

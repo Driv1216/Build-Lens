@@ -59,6 +59,7 @@ AttemptOutcomeCode = Literal[
     "reused_concurrently",
     "outcome_unknown",
     "not_sent",
+    "configuration_invalid",
 ]
 EntryMode = Literal["generated", "reused", "retained"]
 EntryState = Literal["current", "stale", "absent"]

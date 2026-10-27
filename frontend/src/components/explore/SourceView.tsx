@@ -1,4 +1,5 @@
 import type { EntityDetail, EvidenceChunk } from '../../api/semantic'
+import { visible } from './visible'
 
 /** Source assembled from stored, hash-verified chunks; nothing is read from disk. */
 export function SourceView({ detail, cited = new Set<number>() }: { detail: EntityDetail | null; cited?: Set<number> }) {
@@ -28,6 +29,6 @@ function Chunk({ chunk, omitted, cited }: { chunk: EvidenceChunk; omitted: boole
   const lines = chunk.content.split(/\r\n|\r|\n/)
   if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
   return <pre className={`source ${omitted ? 'omitted' : ''}`} aria-label={`Lines ${chunk.start_line}–${chunk.end_line}`}>
-    {lines.map((line, offset) => <span key={offset} className={`source-line${cited.has(chunk.start_line + offset) ? ' cited' : ''}`}><span className="line-number">{chunk.start_line + offset}</span>{line}{'\n'}</span>)}
+    {lines.map((line, offset) => <span key={offset} className={`source-line${cited.has(chunk.start_line + offset) ? ' cited' : ''}`}><span className="line-number">{chunk.start_line + offset}</span>{visible(line)}{'\n'}</span>)}
   </pre>
 }

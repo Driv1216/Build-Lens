@@ -41,6 +41,7 @@ _VERDICT = re.compile(
 _QUANTIFIER = re.compile(
     r"\b(always|never|all|every|none|any|only|entirely|everything|nothing)\b", re.IGNORECASE
 )
+_BIDI = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 _BOOLEAN_ASSERTIONS = {"is_async", "awaits", "returns_value", "defines_route", "maps_table"}
 
 
@@ -114,6 +115,21 @@ def _classify(package: Package, item: PackageChunk, start: int, end: int) -> str
     return "documentation" if in_doc else "string" if in_string else "code"
 
 
+def static_claim_problem(text: str) -> str | None:
+    """Re-validation of a stored claim's text: the checks that need no package."""
+    if not text.strip() or len(text.encode("utf-8")) > CLAIM_TEXT_BYTES:
+        return "CLAIM_STRUCTURE"
+    if _BIDI.search(text):
+        return "BIDI_CONTROL"
+    if _VERDICT.search(_BACKTICK.sub(" ", text)):
+        return "LEXICON_VERDICT"
+    try:
+        screen_content(text)
+    except ContentRejectedError:
+        return "SECRET_SCREENED"
+    return None
+
+
 def _assertion_outcome(
     package: Package, assertion: dict[str, Any] | None
 ) -> AssertionOutcome | None:
@@ -164,7 +180,9 @@ def _claim(package: Package, ordinal: int, raw: Any) -> Claim:
         or not isinstance(assertion.get("target"), (str, type(None)))
     ):
         raise _Rejected("CLAIM_STRUCTURE")
-    # Check 9: screening (before anything is stored).
+    # Check 9: screening (before anything is stored); bidi controls could disguise text.
+    if _BIDI.search(text):
+        raise _Rejected("BIDI_CONTROL")
     try:
         screen_content(text)
     except ContentRejectedError as error:
@@ -283,6 +301,8 @@ def _unknown(package: Package, raw: Any) -> str:
         raise _Rejected("UNKNOWN_STRUCTURE")
     if re.search(r"[.!?]\s+\S", text):
         raise _Rejected("UNKNOWN_NOT_ONE_SENTENCE")
+    if _BIDI.search(text):
+        raise _Rejected("BIDI_CONTROL")
     try:
         screen_content(text)
     except ContentRejectedError as error:

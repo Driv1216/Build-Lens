@@ -28,6 +28,7 @@ _LIMITATIONS = {
     "REFERENCES_TRUNCATED": "Reference extraction reached its cap; some references are missing",
     "DYNAMIC_FEATURES": "The declaration uses dynamic features that static facts cannot follow",
     "AMBIENT_DECLARATION": "The declaration is ambient (type-level only; no runtime body)",
+    "MIXED_SCRIPT_IDENTIFIER": "The name mixes letters from different scripts (possible homoglyph)",
     "UNRESOLVED_ALIAS_IMPORTS": "Some imports use path aliases that are not resolved",
 }
 
@@ -315,6 +316,8 @@ def _limitation(refs: Sequence[Row], rows: Sequence[Row], derived: Row) -> str:
     if code == "PARTIAL_PARSE_ARTIFACT":
         ranges = (row.get("artifact_facts") or {}).get("dropped_line_ranges") or []
         detail = ": dropped " + ", ".join(f"lines {a}–{b}" for a, b in ranges[:8])
+    elif code == "MIXED_SCRIPT_IDENTIFIER":
+        detail = ": " + ascii(str(row.get("name")))
     elif code == "DYNAMIC_FEATURES":
         detail = ": " + ", ".join((row.get("facts") or {}).get("dynamic_features") or [])
     elif code == "REFERENCES_TRUNCATED":

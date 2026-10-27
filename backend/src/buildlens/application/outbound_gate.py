@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Literal, Protocol
@@ -30,11 +31,46 @@ ProviderErrorCode = Literal[
 ]
 
 
+_CLASS_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def _class_name(error: BaseException | None) -> str | None:
+    if error is None:
+        return None
+    name = type(error).__name__
+    return name if _CLASS_NAME.fullmatch(name) else "UNNAMED"
+
+
 class ProviderCallError(Exception):
-    def __init__(self, code: ProviderErrorCode, retry_after: float | None = None) -> None:
+    """A failed provider call. Diagnostics are an HTTP status and exception class names only:
+    never messages, bodies or headers, which may echo request content or credentials."""
+
+    def __init__(
+        self,
+        code: ProviderErrorCode,
+        retry_after: float | None = None,
+        *,
+        status: int | None = None,
+        error: BaseException | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.retry_after = retry_after
+        self.status = status if isinstance(status, int) and 100 <= status <= 599 else None
+        self.exception_class = _class_name(error)
+        cause = (error.__cause__ or error.__context__) if error is not None else None
+        self.cause_class = _class_name(cause)
+
+    @property
+    def diagnostics(self) -> tuple[str, ...]:
+        values = []
+        if self.status is not None:
+            values.append(f"HTTP_{self.status}")
+        if self.exception_class:
+            values.append(f"EXC_{self.exception_class}")
+        if self.cause_class:
+            values.append(f"CAUSE_{self.cause_class}")
+        return tuple(values)
 
 
 def canonical_json(value: Any) -> bytes:

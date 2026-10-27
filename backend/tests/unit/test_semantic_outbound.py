@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -211,6 +212,71 @@ def test_rate_limit_is_one_request_without_sdk_retry() -> None:
             await generator.close()
 
     asyncio.run(scenario())
+
+
+SECRET_ECHO = "sk-echoed-secret-in-provider-body"
+
+
+def _failing(status: int) -> Callable[[httpx.Request], httpx.Response]:
+    def respond(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status,
+            headers={"X-Echo": SECRET_ECHO},
+            json={"error": {"code": status, "message": SECRET_ECHO, "status": "UNAVAILABLE"}},
+        )
+
+    return respond
+
+
+def _unreachable(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError(f"cannot connect {SECRET_ECHO}", request=request)
+
+
+def _diagnosed(respond: Callable[[httpx.Request], httpx.Response]) -> dict[str, ProviderCallError]:
+    async def scenario() -> dict[str, ProviderCallError]:
+        caught: dict[str, ProviderCallError] = {}
+        for name, generator, counter in _generators(
+            {"local": respond, "openai": respond, "gemini": respond}
+        ):
+            gate = OutboundGate(uuid4(), uuid4())
+            canonical = _canonical(generator)
+            with pytest.raises(ProviderCallError) as error:
+                await gate.send(generator, canonical, gate.mint(uuid4(), canonical.digest), 5)
+            assert len(counter.requests) == 1, name  # diagnostics never cost a request
+            caught[name] = error.value
+            await generator.close()
+        return caught
+
+    return asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", [503, 500, 429, 403])
+def test_failures_record_http_status_and_class_but_no_content(status: int) -> None:
+    expected = {503: "provider_unavailable", 500: "provider_unavailable",
+                429: "rate_limited", 403: "configuration_invalid"}[status]  # fmt: skip
+    for name, error in _diagnosed(_failing(status)).items():
+        assert error.code == expected, name
+        assert f"HTTP_{status}" in error.diagnostics, (name, error.diagnostics)
+        if name != "local":  # SDK adapters also name the SDK exception class
+            assert any(item.startswith("EXC_") for item in error.diagnostics), name
+        rendered = " ".join(error.diagnostics) + str(error) + repr(error.args)
+        assert SECRET_ECHO not in rendered and "UNAVAILABLE" not in rendered, name
+
+
+def test_transport_failures_record_exception_classes_only() -> None:
+    for name, error in _diagnosed(_unreachable).items():
+        assert error.code == "provider_unavailable", name
+        assert error.status is None, name
+        assert any(item.startswith(("EXC_", "CAUSE_")) for item in error.diagnostics), name
+        assert all(re.fullmatch(r"(EXC|CAUSE)_[A-Za-z0-9_]+", item) for item in error.diagnostics)
+        assert SECRET_ECHO not in " ".join(error.diagnostics) + str(error), name
+
+
+def test_diagnostics_are_bounded_tokens() -> None:
+    weird = type("Bad Name!", (Exception,), {})("message with secret")
+    error = ProviderCallError("provider_unavailable", status=99999, error=weird)
+    assert error.diagnostics == ("EXC_UNNAMED",)
+    assert ProviderCallError("timeout").diagnostics == ()
 
 
 def test_loopback_transmits_exactly_the_canonical_bytes() -> None:

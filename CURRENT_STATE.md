@@ -1,7 +1,28 @@
 # BuildLens current state
 
+**Stage 13 Milestone D (evaluation and hardening), in progress 2026-10-25.** Implemented and
+verified locally: an adversarial repository with end-to-end tests (nothing executes; secrets,
+symlinks, bundles and oversized files stay out; injected claims are rejected or labelled),
+bidi and mixed-script hardening (catalog contract v3), grounding metrics with hard gates H1/H2,
+a plan-bound stop after consecutive provider failures, and pre-registered human-review and
+recognizer ground-truth tooling. **Evaluation prepared, nothing sent:** the pre-registration is
+locked (correctness ≥ 0.90, overclaim ≤ 0.05, omission ≤ 0.25, usefulness ≥ 2.4; H1/H2
+unchanged); a 60-entity sample and a disjoint 6-entity pilot are frozen from a clean export of
+`abd447b`. The approved Gemini `gemini-3.8-flash` pilot ran once (2026-10-26) and stopped by
+rule after 2 consecutive `provider_unavailable` failures. 4 entities were never sent; H1/H2 = 0;
+cause undetermined; no retry and no model change. Failures now record their HTTP status and
+exception class only. A second, identical pilot (approved, run once) stopped the same way. Gemini
+returned HTTP 503 for both requests sent; 4 entities were never sent; H1/H2 = 0. Backend 316 passed,
+1 skipped on Python 3.14.6 and 3.11.15; frontend 30 tests. Four synthetic one-line diagnostics
+(2026-10-26/27) also failed: three HTTP 504 at the deadline, one HTTP 503 reporting high demand
+for the model. **Paid/cloud-model testing is deferred (2026-10-27).** The independent deep review
+(2026-10-28) found six evaluation-integrity defects (F1–F6), all corrected with regression tests,
+including migration `0013_semantic_config_outcome` (details in `docs/SEMANTIC_MODEL.md`). **Pending:** the evaluation
+run, human review, the recognizer review, final verification and an independent technical review. Stage 13 is not complete. Not committed; hosted CI not run. Details:
+[docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md).
+
 **Stage 13 — Semantic Project Model: Milestone C (controlled AI generation) implemented and
-verified locally, 2026-10-25, on top of Milestones A and B. Milestone D is not started.**
+verified locally, 2026-10-25, on top of Milestones A and B** (commit `abd447b`).
 Generation is off by default and runs only from a persisted, single-use, expiring plan whose
 digest the user confirms. Every outbound request is budgeted in PostgreSQL first, re-checked
 against current authority and the exact planned bytes, and sent only through `OutboundGate`

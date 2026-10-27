@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     semantic_request_byte_ceiling: int = 64_000
     semantic_max_outbound_requests: int = 10
     semantic_max_attempts_per_entity: int = 2
+    semantic_max_consecutive_provider_failures: int = 2
     semantic_deadline_seconds: float = 300
     semantic_plan_ttl_seconds: float = 1800
     semantic_request_timeout_seconds: float = 60

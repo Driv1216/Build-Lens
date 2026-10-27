@@ -81,3 +81,11 @@ describe('SemanticCatalogPanel', () => {
     expect(screen.getByText('file: 2')).toBeInTheDocument()
   })
 })
+
+describe('bidi controls', () => {
+  it('are shown as markers instead of reordering source text', async () => {
+    const { visible } = await import('./visible')
+    expect(visible('access = "user\u202enimda"')).toBe('access = "user⟪U+202E⟫nimda"')
+    expect(visible('plain')).toBe('plain')
+  })
+})

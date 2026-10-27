@@ -403,5 +403,8 @@ would be shared, the bytes, caps, sharing class, retention note and expiry; you 
 that exact plan. The CLI equivalent is `buildlens semantic plan` followed by
 `buildlens semantic generate --plan-id … --plan-digest … --confirm`. Interpretations are cited
 claims only, labelled with provider, returned model and freshness; they are never Ask evidence.
+`buildlens semantic metrics` reports grounding and the two hard gates (no claim failing
+re-validation, no outbound payload outside a plan); quality is judged only by pre-registered
+human review (`buildlens semantic preregister`, `review-packet`, `review-score`).
 See [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) for scope, deviations and verification.
 

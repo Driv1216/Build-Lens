@@ -145,22 +145,25 @@ class GeminiSemanticGenerator:
     def _translate(error: Exception) -> ProviderCallError:
         from google.genai.errors import APIError
 
+        status = None
         if isinstance(error, APIError):
             response = getattr(error, "response", None)
             headers = getattr(response, "headers", None)
-            if error.code == 429:
-                return ProviderCallError("rate_limited", retry_after(headers))
-            if error.code == 503:
-                return ProviderCallError("provider_unavailable", retry_after(headers))
-            if error.code in (400, 413):
-                return ProviderCallError("context_rejected")
-            if error.code in (401, 403, 404):
-                return ProviderCallError("configuration_invalid")
-            if error.code in (408, 504):
-                return ProviderCallError("timeout")
+            status = error.code if isinstance(error.code, int) else None
+            seen = {"status": status, "error": error}
+            if status == 429:
+                return ProviderCallError("rate_limited", retry_after(headers), **seen)
+            if status == 503:
+                return ProviderCallError("provider_unavailable", retry_after(headers), **seen)
+            if status in (400, 413):
+                return ProviderCallError("context_rejected", **seen)
+            if status in (401, 403, 404):
+                return ProviderCallError("configuration_invalid", **seen)
+            if status in (408, 504):
+                return ProviderCallError("timeout", **seen)
         if isinstance(error, httpx.TimeoutException):
-            return ProviderCallError("timeout")
-        return ProviderCallError("provider_unavailable")
+            return ProviderCallError("timeout", error=error)
+        return ProviderCallError("provider_unavailable", status=status, error=error)
 
     async def close(self) -> None:
         if self._client is not None:

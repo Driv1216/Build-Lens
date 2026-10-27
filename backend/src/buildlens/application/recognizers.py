@@ -15,6 +15,14 @@ from typing import Literal
 from buildlens.domain.semantic import Row
 
 Strength = Literal["pattern_with_local_evidence", "pattern_only"]
+RECOGNIZERS: tuple[str, ...] = (
+    "fastapi-route.v1",
+    "flask-route.v1",
+    "sqlalchemy-declarative.v1",
+    "alembic-table.v1",
+    "react-component.v1",
+    "react-hook.v1",
+)
 
 _ROUTE = re.compile(
     r"^(?P<receiver>[A-Za-z_][\w.]*)\.(?P<verb>get|post|put|patch|delete|options|head|trace|"
