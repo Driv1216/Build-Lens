@@ -7,7 +7,8 @@ semantic / retrieval order, hybrid / retrieval order, and hybrid / local cross-e
 
 **Stage 11 closed, 2026-10-02.** All scoped implementation, verification, approval and
 reporting work is finalized. Provider execution is **inconclusive/partial**; answer quality
-is **not passed**. Stage 12 has not started.
+is **not passed**. Stage 12 had not started at that closure; its laboratory work is now
+complete (2026-10-25), as documented below.
 
 ## Current verification states
 
@@ -210,7 +211,8 @@ passed. No full gate or provider request was repeated. Stage 11 is **closed with
 inconclusive/partial real-provider outcome**, retaining answer quality as **not passed**.
 Final gate statuses, proof and limitations are in
 `.buildlens-eval/runs/stage11-closure-20261002/{closure.json,REPORT.md,verification.json}`.
-No required human decision remains. No Stage 12 work was started.
+No required Stage 11 human decision remains. No Stage 12 work was started during that
+closure; Stage 12 subsequently completed as documented below.
 
 ## Definitions and corpus preparation
 
@@ -370,6 +372,12 @@ No Stage 12 retrieval or architecture change is part of this closure.
 
 
 ## Stage 12 laboratory scoring
+
+**Status: complete, 2026-10-25.** The retained benchmark completed 900/900 evaluations;
+recorded verification and final targeted corrections are complete. The scoring tiers and
+limitations below remain in force: completion does not approve derived/constructed ground
+truth or establish real lab answer quality. Independent review history and unrun hosted CI
+remain explicit in [CURRENT_STATE.md](../CURRENT_STATE.md).
 
 `buildlens lab bench` reuses Stage 11 binding (`preflight`) and `score_result` unchanged, but labels
 every metric by tier: **approved** (R1 judgments; only pipelines that return BuildLens chunks),

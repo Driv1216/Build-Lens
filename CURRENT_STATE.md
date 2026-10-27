@@ -1,74 +1,131 @@
 # BuildLens current state
 
-**Stage 13 Milestone D (evaluation and hardening), in progress 2026-10-25.** Implemented and
-verified locally: an adversarial repository with end-to-end tests (nothing executes; secrets,
-symlinks, bundles and oversized files stay out; injected claims are rejected or labelled),
-bidi and mixed-script hardening (catalog contract v3), grounding metrics with hard gates H1/H2,
-a plan-bound stop after consecutive provider failures, and pre-registered human-review and
-recognizer ground-truth tooling. **Evaluation prepared, nothing sent:** the pre-registration is
-locked (correctness ≥ 0.90, overclaim ≤ 0.05, omission ≤ 0.25, usefulness ≥ 2.4; H1/H2
-unchanged); a 60-entity sample and a disjoint 6-entity pilot are frozen from a clean export of
-`abd447b`. The approved Gemini `gemini-3.8-flash` pilot ran once (2026-10-26) and stopped by
-rule after 2 consecutive `provider_unavailable` failures. 4 entities were never sent; H1/H2 = 0;
-cause undetermined; no retry and no model change. Failures now record their HTTP status and
-exception class only. A second, identical pilot (approved, run once) stopped the same way. Gemini
-returned HTTP 503 for both requests sent; 4 entities were never sent; H1/H2 = 0. Backend 316 passed,
-1 skipped on Python 3.14.6 and 3.11.15; frontend 30 tests. Four synthetic one-line diagnostics
-(2026-10-26/27) also failed: three HTTP 504 at the deadline, one HTTP 503 reporting high demand
-for the model. **Paid/cloud-model testing is deferred (2026-10-27).** The independent deep review
-(2026-10-28) found six evaluation-integrity defects (F1–F6), all corrected with regression tests,
-including migration `0013_semantic_config_outcome` (details in `docs/SEMANTIC_MODEL.md`). **Pending:** the evaluation
-run, human review, the recognizer review, final verification and an independent technical review. Stage 13 is not complete. Not committed; hosted CI not run. Details:
-[docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md).
+**As of 2026-10-28, BuildLens is implemented through Phase 3, Stage 13 — Semantic Project Model
+(Milestones A–D).** Stage 12 (framework laboratory) is complete and Stage 11 is closed. The
+real-model quality evaluation of Stage 13 is **deferred, not passed**. Stage 14 — Architecture
+Intelligence — has not started.
 
-**Stage 13 — Semantic Project Model: Milestone C (controlled AI generation) implemented and
-verified locally, 2026-10-25, on top of Milestones A and B** (commit `abd447b`).
-Generation is off by default and runs only from a persisted, single-use, expiring plan whose
-digest the user confirms. Every outbound request is budgeted in PostgreSQL first, re-checked
-against current authority and the exact planned bytes, and sent only through `OutboundGate`
-with a single-use ticket. Runs are fenced by DB-time leases; late responses are recorded as
-receipts, never as candidates. Claims are validated deterministically (checks 1–9) and their
-citations re-verified on every read. Migration `0012_semantic_generation` is additive; the
-freshness key now uses a per-entity content digest (catalog contract v2).
-- Backend: 307 passed, 1 skipped on Python 3.14.6 and 3.11.15; ruff, format and mypy clean. Frontend: 29 tests, lint, types and build.
-- No real provider was called; OpenAI and Gemini adapters were verified only through mock transports.
-- Stage 11 corpus copy upgraded 0009 → 0012: pre-existing tables byte-identical, `eval validate` 30/30, `lab parity` 90/90. Hosted CI has not been run.
+| Stage | Implementation | Quality and real-provider evidence |
+| --- | --- | --- |
+| 1–4: platform, onboarding, structure, stable identities | Implemented | Deterministic; verified locally |
+| 5–10: processing, embeddings, vector storage, lexical/hybrid retrieval, reranking and context, grounded Ask | Implemented | Verified locally; see the stage records below |
+| 11: RAG evaluation | Closed 2026-10-02 | **Inconclusive/partial**: 88/90 provider requests failed; answer quality **not passed** |
+| 12: LangChain / LlamaIndex laboratory | Complete 2026-10-25 | 900/900 offline retrieval benchmark; no framework adopted; real lab generation not implemented |
+| 13: Semantic Project Model | Complete: multi-language structure, deterministic catalog, controlled generation, evaluation and hardening, independent review repairs | **Deferred**: no real-model output has been produced or judged |
+| 14: Architecture Intelligence | Not started | — |
 
-**Stage 13 Milestone B (deterministic semantic catalog) implemented and
-verified locally, 2026-10-25, on top of Milestone A** (commit `5428f66`; no AI text in the
-catalog). Migration `0011_semantic_catalog` (additive) adds immutable catalog
-runs, entities, `F#` facts and relations, built from PostgreSQL only with zero source reads.
-Every fact is re-rendered from its cited structural rows and digest-checked at read time. The
-read-only `/explore` view shows entities, stored-chunk source, labelled facts and relations.
-- Backend: 261 passed, 1 skipped on Python 3.14.6 and 3.11.15; ruff, format and mypy clean.
-- On BuildLens itself: 2,825 entities with no coordinate mismatch, and catalog and portable digests reproduce after a reprocess.
-- On an upgraded copy of the retained Stage 11 corpus (0009 → 0011): the 14 pre-existing tables are byte-identical; a legacy catalog builds with the source reader disabled; `eval validate` passes 30/30 and `lab parity` 90/90. Hosted CI has not been run.
+## What works now
 
-Details, deviations and limits: [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md).
+- **Explicit local operations.** These run on a registered repository: snapshots; structural analysis (Python, and parse-only TypeScript/TSX/JavaScript/JSX); processing into chunks; embeddings; and exact, lexical, semantic and hybrid retrieval with optional reranking. They also cover bounded context packages, optional single-turn grounded Ask, and the CLI evaluation layer. Nothing runs automatically, and no repository code is executed.
+- **Framework laboratory** (`/lab`, `buildlens lab …`): offline LangChain / LlamaIndex experiments in supervised workers. See [docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md).
+- **Semantic catalog** (`/explore`, `buildlens semantic catalog`):
+  - What it holds: file, symbol, component, hook, API-endpoint and DB-table entities, built from PostgreSQL only, with parsed facts, labelled recognizer matches, import resolution and relations.
+  - Every fact is re-verified against its cited rows when read.
+- **Controlled AI interpretations**:
+  - Off by default.
+  - Each run needs a persisted, single-use plan whose digest the user confirms.
+  - Adapters: loopback, OpenAI and Gemini.
+  - Output is cited claims only, validated deterministically, kept separate from facts and never used as Ask evidence.
+- **Evaluation tooling**:
+  - Grounding metrics with hard gates H1 and H2.
+  - A pre-registration, and a frozen stratified sample with a disjoint pilot.
+  - Digest-bound review packets.
+  - Scoring with an overall `passed`, `failed` or `inconclusive`.
+  - Recognizer ground truth.
 
-**Stage 13 Milestone A (multi-language structural foundation), implemented and verified locally
-2026-10-25.** Python declarations, contracts and fingerprints are frozen (golden
-parity captured from `816b136`). Additive, separately contracted passes now provide
-`python-facts.v1` and parse-only `tree-sitter` TS/TSX/JS declarations (`tree-sitter` 0.26.0,
-`tree-sitter-typescript` 0.23.2 and `tree-sitter-javascript` 0.25.0 in the base install). Migration
-`0010_multilanguage_structure` is additive only. TS/JS evidence carries its own authority (M4)
-and is chunked, so it is searchable through the unchanged retrieval paths. Verification is
-summarised in [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md):
-- Golden parity holds on Python 3.14.6 and 3.11.15.
-- A real old-code-populated upgrade left every pre-existing data table byte-identical, and old runs stay current.
-- On an upgraded copy of the retained Stage 11 corpus, `eval validate` passed 30/30 and `lab parity` passed 90/90.
-- The TS compiler differential reports one explained disagreement.
+## Verified (local, 2026-10-28, on `main` at `b9811f9`)
 
-A heap-corruption crash in py-tree-sitter 0.26.0 `Point` was found on real files and avoided,
-with a regression test. Deviations from the plan are listed in that document: no in-parse RSS
-sampling, and `.mjs/.cjs/.mts/.cts` unsupported. Nothing is committed and hosted CI has not been run.
+- **Backend**, Python 3.14.6 against disposable PostgreSQL 16 / pgvector 0.8.6: 325 passed, 2 skipped, 5 deselected (real model/provider). Ruff, format and mypy are clean. The two skips:
+  - the lab-database test, which runs only with `BUILDLENS_TEST_LAB_DATABASE_URL`;
+  - the frozen-pre-registration check, which needs the git-ignored local evidence. It passes in a checkout that has the evidence.
+- **Frontend:** 30 tests, ESLint and the production build passed.
+- **Migrations:**
+  - The chain 0001–0013 is linear, with a single head, `0013_semantic_config_outcome`.
+  - Upgrading an empty database to head gives 32 tables.
+  - Head → 0012 → head, and head → 0009 → head, both work; the schema after the round trip is byte-identical.
+  - `0007` is one-way by design: restore a backup instead of downgrading.
+- **Python 3.11.15** was last run in full at Milestone D, before the review repairs: 316 passed, 1 skipped.
 
-**Implemented scope:** Phase 2, Stage 12 — LangChain / LlamaIndex engineering laboratory, on top
-of the closed Stage 11 native evaluation (unchanged).
+## Not verified or deferred
 
-**Stage 12 implementation and verification, 2026-10-24.** Baseline: Stages 9–11 committed as
-`8c7fad5` (tag `stage11-closed`), Stage 12 diff base `stage12-base` (`e326126`), work on branch
-`stage12/framework-lab`. No production tables, migrations or Stage 5–11 behaviour changed; no
+- **Stage 13 real-model evaluation.**
+  - Prepared: the pre-registration is locked (claim correctness ≥ 0.90, overclaim ≤ 0.05, omission ≤ 0.25, usefulness ≥ 2.4; H1 = H2 = 0), and a 60-entity sample plus a 6-entity pilot are frozen.
+  - What happened: both approved Gemini `gemini-3.8-flash` pilots and four synthetic diagnostics failed on the provider side (HTTP 503 and 504; the last reported high demand).
+  - Result: no output was produced, so quality is unmeasured. The human review and the recognizer review have not happened.
+  - Status: paid/cloud testing is deferred (2026-10-27). Changing the model or provider requires a new pre-registration.
+- Whether OpenAI or Gemini accept the strict output schema. Both adapters have only run against mock transports.
+- Hosted CI has never run (`.github/workflows/verify.yml` exists), and the Python 3.11 suite has not been re-run since the review repairs.
+- Stage 11's provider benchmark is inconclusive, and Stage 12 lab answers come from deterministic offline models only.
+
+## Intentional limits
+
+- Not built: a cross-file call graph, an ANN index, agents, authentication, a background job platform and automatic history deletion.
+- tree-sitter memory is contained by process isolation, a deadline and a post-parse peak-RSS check, not a mid-parse bound. `.mjs/.cjs/.mts/.cts` are unsupported.
+- Stage 13 limits are placeholders: a 48,000-byte package ceiling, 20 neighbour facts, 10 requests per run, 300 s per run and a 30-minute plan TTL.
+- The pre-registration has no acceptance-rate criterion, and H1 covers only the active published index.
+
+Details: [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md),
+[docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md), [docs/EVALUATION.md](docs/EVALUATION.md) and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Retained local evidence (git-ignored)
+
+These stay local by design; they are not in Git.
+
+| What | Where |
+| --- | --- |
+| Stage 13 pre-registration and frozen sample (read-only) | `.buildlens-eval/reviews/semantic-evaluation-20261025/` |
+| Stage 13 recognizer review packet | `.buildlens-eval/reviews/semantic-recognizers-20261025/` |
+| Stage 13 pilots and provider diagnostics | `.buildlens-eval/semantic/stage13-eval/` |
+| Stage 11 runs | `.buildlens-eval/runs/` |
+| Stage 12 lab runs | `.buildlens-eval/lab/runs/` |
+
+Tracked in Git: the evaluation datasets (`.buildlens-eval/datasets/`) and the lab experiment configurations (`.buildlens-eval/lab/experiments/`).
+
+## Next stage
+
+Stage 14 — Architecture Intelligence (module dependencies and higher-level maps; see
+`PROJECT_BLUEPRINT.md`). Not started.
+
+---
+
+# Stage records
+
+## Stage 13 — Semantic Project Model (2026-10-25 … 2026-10-28)
+
+- **Milestone A, multi-language structural foundation.**
+  - Frozen: the Python declarations, contracts and fingerprints (golden parity captured from `816b136`).
+  - Added: separately contracted passes for `python-facts.v1`, and parse-only `tree-sitter` TS/TSX/JS declarations (`tree-sitter` 0.26.0, `tree-sitter-typescript` 0.23.2, `tree-sitter-javascript` 0.25.0).
+  - TS/JS evidence carries its own authority and is chunked, so the existing retrieval finds it.
+  - Migration `0010` is additive.
+  - Verification: golden parity on Python 3.14.6 and 3.11.15; an old-code-populated upgrade left every pre-existing table byte-identical; `eval validate` 30/30 and `lab parity` 90/90 on an upgraded copy of the Stage 11 corpus.
+  - A heap-corruption crash in py-tree-sitter 0.26.0 `Point` was found on real files and avoided, with a regression test.
+- **Milestone B, deterministic semantic catalog.**
+  - Migration `0011` adds immutable catalog runs, entities, `F#` facts and relations, built from PostgreSQL with zero source reads and re-verified on read.
+  - On BuildLens itself: 2,825 entities with no coordinate mismatch, and the catalog and portable digests reproduce after a reprocess.
+- **Milestone C, controlled AI generation.**
+  - Runs require persisted, single-use, expiring plans.
+  - Every request is budgeted in PostgreSQL first, rechecked against current authority and the exact planned bytes, and sent only through `OutboundGate`.
+  - Runs are fenced by DB-time leases, and claims are validated deterministically (checks 1–9).
+  - Migration `0012` is additive.
+- **Milestone D, evaluation and hardening.**
+  - An adversarial repository with an end-to-end test. Nothing executes; secrets, symlinks, bundles and oversized files stay out; injected claims are rejected or labelled.
+  - Bidi and mixed-script hardening (catalog contract v3).
+  - Grounding metrics with H1/H2, and a plan-bound stop after consecutive provider failures. Failures record their HTTP status and exception class only.
+  - Pre-registered human-review and recognizer tooling.
+  - The evaluation preparation and the provider attempts are described under "Not verified or deferred" above.
+- **Independent deep review (2026-10-28).** It found six evaluation-integrity defects (F1–F6), all corrected with regression tests, including migration `0013_semantic_config_outcome`. See [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md).
+
+## Stage 12 — LangChain / LlamaIndex laboratory
+
+**Stage 12 status: complete — 2026-10-25, as requested by the user.** Implementation, the
+900/900 benchmark, final targeted corrections and recorded verification are complete. The
+review chronology below preserves acceptance status at the time each review was recorded;
+this completion update does not claim a further independent technical review. Documented
+limitations, unimplemented real lab generation and unrun hosted CI remain unchanged.
+
+**Stage 12 implementation and verification, 2026-10-24.** Baseline: Stages 9–11 (`8c7fad5`,
+tag `stage11-closed`); Stage 12 diff base `stage12-base` (`e326126`). No production tables, migrations or Stage 5–11 behaviour changed; no
 framework was adopted into production. Design: [docs/FRAMEWORK_LAB.md](docs/FRAMEWORK_LAB.md).
 
 | Stage 12 dimension | Actual state |
@@ -112,7 +169,7 @@ error echoing a (never-used) generated password; RSS supervision silently skippe
 (now fails closed).
 
 **Corrections after independent technical review, 2026-10-24 (commits `bcf2a98`, `14ff248`;
-awaiting focused re-review; not accepted).** The review of bundle `04a32260…` accepted the benchmark evidence but
+historical review status then: awaiting focused re-review; not accepted).** The review of bundle `04a32260…` accepted the benchmark evidence but
 reproduced worker defects, now corrected with regression tests that fail on the unfixed code:
 S12-SEC-01 the audit-hook guard checked only the source of rename/replace and only the destination
 of hard links (a protected file could be overwritten, linked and read) — both paths are now
@@ -132,8 +189,8 @@ clean; frontend unchanged. The first gate run exposed a startup race in the new 
 the slower base install (reported `…_LOST` instead of `…_UNAVAILABLE`, both fail closed); fixed in
 `14ff248`, then 20/20 repeated runs passed.
 
-**Focused re-review, 2026-10-24: S12-SEC-06 corrected in `4706af0` (awaiting re-review; not
-accepted).** The re-review confirmed the other four corrections but reproduced a guard bypass: the
+**Focused re-review, 2026-10-24: S12-SEC-06 corrected in `4706af0` (historical status then:
+awaiting re-review; not accepted).** The re-review confirmed the other four corrections but reproduced a guard bypass: the
 `open` audit event omits `dir_fd`, so descending from an unprotected ancestor with descriptor-relative
 `os.open` read (and, with a writable cwd, wrote) protected files. The guard now denies every relative
 open (fail closed, including legitimate descriptor-relative opens in a write root), applies the
@@ -142,11 +199,11 @@ symlink creation; vendored copy identical. A spawned-worker regression test (two
 on the unfixed guard and passes now; 195 passed on Python 3.14.6 and 3.11.15, base install 176. All
 framework pipelines and LD-1 loaders were qualified under the stricter guard. Unaudited calls
 (`os.stat`/`access`/`readlink`, `mkfifo`/`mknod`) and native code remain outside the guard; it is
-still defense in depth, not a sandbox. Open item from the re-review: provisioning preflights only
+still defense in depth, not a sandbox. Then-open item from the re-review (corrected below): provisioning preflights only
 PUBLIC CONNECT, not direct grants to a pre-existing role.
 
-**Final targeted corrections, 2026-10-24 (commits `9be09a4`, `4a684c7`; awaiting review; not
-accepted).** (1) Composite evidence: LlamaIndex sentence windows were credited for their whole
+**Final targeted corrections, 2026-10-24 (commits `9be09a4`, `4a684c7`; historical status then:
+awaiting review; not accepted).** (1) Composite evidence: LlamaIndex sentence windows were credited for their whole
 bounding span without any parent check; the worker now reports each constituent's span and hash,
 the parent verifies every constituent against the source and the delivered text, and coverage
 credits only verified segments (LangChain windows are exact slices and are hash-verified as
@@ -171,10 +228,13 @@ defense in depth, not a sandbox. (3) Offline models are mechanics only. (4) `Gen
 (6) `@tanstack/react-table` pinned to 8.21.3 instead of the planned 9.x (v9 API redesign).
 (7) Derived and constructed tiers are not human-approved. Hosted CI has not been run.
 
+## Earlier stages
+
 **Stage 11 closed, 2026-10-02:** implementation, verification, approved retrieval scoring,
 authorized provider execution and human review are finalized. The real-provider benchmark is
 **inconclusive/partial** because 88/90 requests failed operationally; answer quality is **not
-passed**. Closure records the measured outcome and limitations. Stage 12 has not started.
+passed**. Closure records the measured outcome and limitations. Stage 12 had not started at
+that Stage 11 closure; it is now complete as recorded above.
 
 **Stage 11 implementation, 2026-10-01:** Added the shared `.buildlens-eval` exclusion boundary
 (`stage2.v3`), secure source-read eligibility (`posix-secure-reader.v3`), passive ranking and
@@ -554,8 +614,8 @@ Operational diagnostics on the browser fixture reported 3 snapshots, 3 structura
 - Runtime/producer contract changes intentionally invalidate reuse. Chunking does not claim full
   semantic parsing of every Markdown/TOML/YAML construct; unsupported boundaries use explicit
   fallback diagnostics and exact slices.
-- This workspace has no Git repository. No commit, PR, or hosted CI run was created. The workflow
-  file is ready for a repository; required local equivalents passed.
+- Hosted CI has not been run. The workflow (`.github/workflows/verify.yml`) is in the repository
+  and its local equivalents pass.
 
 No ANN index, agents, authentication system, background job platform, automatic regeneration, or
 automatic deletion were added. Stage 7 candidates and database result sets are bounded; retention

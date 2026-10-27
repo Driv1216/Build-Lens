@@ -1,19 +1,28 @@
 # Stage 13 — Semantic Project Model
 
-**Status (2026-10-27): Milestones A (multi-language structural foundation), B (deterministic
-semantic catalog) and C (controlled AI generation) implemented and verified locally.
-Milestone D (evaluation and hardening): hardening, adversarial testing, grounding metrics and
-review tooling are implemented; the evaluation is pre-registered and its sample frozen. Two
-approved Gemini pilots and four synthetic diagnostics all failed on the provider side (HTTP
-503/504), so no semantic output has been produced or judged. Paid/cloud-model testing is
-deferred by the user (2026-10-27); the human quality review has not happened.** Generation is
-off by default (`BUILDLENS_SEMANTIC_GENERATION_ENABLED=false`). Every generation in automated
-verification used a loopback stub or mock transports.
+**Status (2026-10-28): Milestones A–D are implemented and verified locally.** They are:
+- A, the multi-language structural foundation;
+- B, the deterministic semantic catalog;
+- C, controlled AI generation;
+- D, evaluation and hardening, including the independent review repairs F1–F6.
+
+The migrations are 0010–0013. **The real-model quality evaluation is deferred, not passed:**
+- It is prepared: the pre-registration is locked and the sample frozen.
+- Both approved Gemini pilots and four synthetic diagnostics failed on the provider side (HTTP 503/504), so no semantic output has been produced or judged.
+- Paid/cloud testing is deferred, and the human review has not happened.
+
+Generation is off by default (`BUILDLENS_SEMANTIC_GENERATION_ENABLED=false`), and every generation in automated verification used a loopback stub or mock transports.
+
+Current verification, on `main` at `b9811f9` (2026-10-28):
+- Backend: 325 passed, 2 skipped, 5 deselected.
+- Frontend: 30 tests, lint and build.
+- Migrations: a single head, `0013`; the round trip to `0009` and back gives an identical schema.
+
+Details are in [CURRENT_STATE.md](../CURRENT_STATE.md). The milestone sections below are the dated records of what each milestone built and verified.
 
 The approved plan (revision 4) separates deterministic facts from AI interpretations. It keeps
 every existing Stage 1–12 producer byte-identical and adds capabilities as separately contracted,
-per-artifact passes. This document records what Milestones A–C actually built and verified.
-The contracts for later milestones are design commitments, not implemented behaviour.
+per-artifact passes. This document records what Milestones A–D actually built and verified.
 
 ## Milestone A: what exists
 
@@ -119,7 +128,7 @@ published with the existing pattern: snapshot `FOR UPDATE`, captured authority a
 - **Coverage strictness.** A symbol is `incomplete` when any declaration inside it has no stored chunk (`DECLARATION_WITHOUT_CHUNK`), not only when its own region lacks one.
 - **Alembic table names** are not captured, because call arguments are not extracted. The entities are named `table #n in <file>`.
 - **Concurrency.** Catalog builds use the in-process lock plus captured-revision publication (a late concurrent build is retained as `superseded`). The DB-enforced leases in the plan apply to generation (Milestone C).
-- **Not yet built:** entity history, interpretations, generation tabs and a catalog CLI command. They belong to Milestone C.
+- **Built later, in Milestone C:** entity history, interpretations, the generation tabs and the catalog CLI command.
 - **Placeholder policy.** The 48,000-byte package ceiling and the 20 neighbour-fact limit are recorded in the catalog contract, pending tuning (§10.7).
 
 ### Verification (Milestone B, 2026-10-25)
@@ -211,7 +220,7 @@ before sending, and sent only through `OutboundGate`.
 | Failure diagnostics | Each failed provider attempt records its HTTP status and exception class names next to its outcome code, e.g. `PROVIDER_UNAVAILABLE`, `HTTP_503`, `EXC_ServerError`, `CAUSE_ConnectError`. These are bounded identifier tokens. Provider messages, response bodies and headers are never recorded, because they may echo request content or credentials. This holds for the loopback, OpenAI and Gemini adapters. The adapter version is unchanged because nothing sent changes. |
 | Provider-failure stop | Plans carry `max_consecutive_provider_failures` (default 2, `BUILDLENS_SEMANTIC_MAX_CONSECUTIVE_PROVIDER_FAILURES`). After that many consecutive rate limits, unavailability or timeouts, the run stops (`PROVIDER_FAILURES`) and sends nothing further; there is no model fallback. |
 | Recognizer ground truth | `buildlens semantic recognizer-packet / recognizer-score`: every match plus heuristic candidate misses for human labelling; precision per recognizer, recall over the reviewed candidates. |
-| Pending (your decisions) | Paid/cloud-model testing is deferred (2026-10-27) after both pilots and four synthetic diagnostics failed on Gemini HTTP 503/504 (see below). When resumed: a fresh pilot, then a separately approved plan for the 60-entity evaluation, then human review. A model or provider change needs a new pre-registration. Review the recognizer packet in `.buildlens-eval/reviews/semantic-recognizers-20261025/` (171 matches, 79 candidates; kept separate from the quality review). |
+| Deferred | Paid/cloud-model testing is deferred (2026-10-27) after both pilots and four synthetic diagnostics failed on Gemini HTTP 503/504 (see below). When resumed: a fresh pilot, then a separately approved plan for the 60-entity evaluation, then human review. A model or provider change needs a new pre-registration. Review the recognizer packet in `.buildlens-eval/reviews/semantic-recognizers-20261025/` (171 matches, 79 candidates; kept separate from the quality review). |
 
 ### Independent review repairs (2026-10-28)
 
@@ -259,10 +268,20 @@ Remaining limitations:
 - Pathological JSX/generics extract in 0.06 s in-process. A 40-file, 8,000-declaration `.d.ts` flood took about 46 s of structural analysis (persistence), inside the 60 s overall bound; the test uses 5 files.
 - The attacker model's claims: "deletes the production database" (`BEHAVIOR_WITHOUT_CODE_EVIDENCE`), "the code is secure" (`LEXICON_VERDICT`), an ASCII `password_check` for the homoglyph name (`UNGROUNDED_IDENTIFIER`), a bidi-laden claim (`BIDI_CONTROL`) — all rejected; the only surviving injected claim is labelled "per documentation"; the docstring contradiction surfaces as a conflict with the parsed `is_async` fact. Injected text only ever travels in the untrusted-data message, and no raw output is retained.
 
-### Verification (Milestone D so far, 2026-10-25)
+### Verification (Milestone D before the review repairs, 2026-10-25)
 - Backend: 316 passed, 1 skipped on Python 3.14.6 and 3.11.15; ruff, format and mypy clean on both. New: `test_semantic_adversarial.py`; `test_semantic_review.py` (gates trip on tampered fact rows and on an unplanned attempt; the frozen sample is deterministic and disjoint from the pilot; rate-limited, abstained, rejected and unattempted entities stay in the packet; partially correct claims score as not correct; scoring rejects tampered packets or samples, foreign pre-registrations and incomplete reviews); `test_persistent_provider_failures_stop_the_run` (which records `HTTP_429`); adapter diagnostics tests for 503/500/429/403 and connection failures across the loopback, OpenAI and Gemini adapters. These assert that no provider message, body or header text is recorded.
 - Frontend: 30 tests (bidi rendering added), lint, types and build.
-- No real provider called; no quality measured.
+- No real provider had been called by that date; no quality measured.
 
-## Not built yet
-- The Gemini pilot and evaluation runs (each needs explicit approval), the human quality review, final verification and an independent technical review. Stage 13 is not complete until all of these are done.
+## Deferred (not passed)
+- **The real-model evaluation.** When paid/cloud testing resumes, the order is:
+  1. a fresh pilot;
+  2. a separately approved plan for the 60-entity sample;
+  3. human review and scoring against the locked pre-registration.
+  
+  A model or provider change needs a new pre-registration.
+- **The recognizer ground-truth review** (packet prepared, unlabelled).
+- **Real-provider confirmation that the strict output schema is accepted.**
+- **Hosted CI, and a Python 3.11 run after the review repairs.**
+
+Done: the independent technical review (findings F1–F6, corrected) and final local verification on `main`.
