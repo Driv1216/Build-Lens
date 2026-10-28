@@ -18,6 +18,11 @@ from sqlalchemy import func, insert, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from buildlens.application.architecture import ArchitectureConflictError, StoredGraph
+from buildlens.application.architecture_api import (
+    EndpointInput,
+    extraction_row_digest,
+    literal_row_digest,
+)
 from buildlens.application.architecture_builder import (
     ArchitectureInput,
     architecture_input,
@@ -41,6 +46,7 @@ from buildlens.domain.architecture import (
     evidence_digest,
     node_digest,
 )
+from buildlens.domain.extractors import LITERAL_EXTRACTORS
 from buildlens.domain.semantic import Row, SemanticCatalogRun
 from buildlens.domain.source import digest
 from buildlens.infrastructure.persistence.models import (
@@ -51,6 +57,7 @@ from buildlens.infrastructure.persistence.models import (
     ArchitectureEdgeRecord,
     ArchitectureEvidenceLinkRecord,
     ArchitectureEvidenceRecord,
+    ArchitectureLiteralRecord,
     ArchitectureNodeRecord,
     ArchitectureRunRecord,
     ArtifactAnalysisRecord,
@@ -124,6 +131,23 @@ def _links(records: Iterable[ArchitectureEvidenceLinkRecord]) -> tuple[EvidenceL
         for record in records
     ]
     return tuple(sorted(values, key=lambda link: (link.source, link.digest)))
+
+
+def _literal_row(record: ArchitectureLiteralRecord, extraction: ArtifactExtractionRecord) -> Row:
+    return {
+        "id": str(record.id),
+        "extraction_id": str(record.extraction_id),
+        "extractor": extraction.extractor,
+        "contract_digest": extraction.contract_digest,
+        "ordinal": record.ordinal,
+        "kind": record.kind,
+        "subject": record.subject,
+        "attributes": record.attributes,
+        "start_line": record.start_line,
+        "end_line": record.end_line,
+        "start_column": record.start_column,
+        "end_column": record.end_column,
+    }
 
 
 class SqlAlchemyArchitectureStore:
@@ -214,6 +238,30 @@ class SqlAlchemyArchitectureStore:
                     .order_by(SemanticRelationRecord.ordinal)
                 )
             ]
+            literals: dict[str, list[Row]] = defaultdict(list)
+            for record, extraction in session.execute(
+                select(ArchitectureLiteralRecord, ArtifactExtractionRecord)
+                .join(
+                    ArtifactExtractionRecord,
+                    ArtifactExtractionRecord.id == ArchitectureLiteralRecord.extraction_id,
+                )
+                .where(
+                    ArtifactExtractionRecord.structural_analysis_id == structural_id,
+                    ArtifactExtractionRecord.extractor.in_(sorted(LITERAL_EXTRACTORS)),
+                )
+                .order_by(
+                    ArchitectureLiteralRecord.extraction_id, ArchitectureLiteralRecord.ordinal
+                )
+            ):
+                literals[str(record.extraction_id)].append(_literal_row(record, extraction))
+            top_level: dict[str, list[str]] = defaultdict(list)
+            for analysis_id, name in session.execute(
+                select(SymbolRecord.artifact_analysis_id, SymbolRecord.name).where(
+                    SymbolRecord.artifact_analysis_id.in_(owned), SymbolRecord.parent_id.is_(None)
+                )
+            ):
+                top_level[str(analysis_id)].append(name)
+            endpoints = self._endpoints(session, catalog.id)
             counts = {
                 fact_digest: int((derived or {}).get("count", 1))
                 for fact_digest, derived in session.execute(
@@ -235,7 +283,74 @@ class SqlAlchemyArchitectureStore:
                 relations=relations,
                 relation_counts=counts,
                 catalog_outcome=catalog.outcome,
+                literals=literals,
+                top_level_names=top_level,
+                endpoints=endpoints,
             )
+
+    @staticmethod
+    def _endpoints(session: Session, catalog_run_id: UUID) -> list[EndpointInput]:
+        """Catalog ``api_endpoint`` entities with their recognizer attributes (Milestone B)."""
+        records = session.scalars(
+            select(SemanticEntityRecord)
+            .where(
+                SemanticEntityRecord.catalog_run_id == catalog_run_id,
+                SemanticEntityRecord.kind == "api_endpoint",
+            )
+            .order_by(SemanticEntityRecord.portable_key)
+        ).all()
+        if not records:
+            return []
+        keys = [record.entity_key for record in records]
+        facts = {
+            record.subject_entity_key: record
+            for record in session.scalars(
+                select(SemanticFactRecord)
+                .where(
+                    SemanticFactRecord.catalog_run_id == catalog_run_id,
+                    SemanticFactRecord.fact_kind == "recognizer_match",
+                    SemanticFactRecord.subject_entity_key.in_(keys),
+                )
+                .order_by(SemanticFactRecord.ordinal)
+            )
+        }
+        subjects = {
+            record.entity_key: record
+            for record in session.scalars(
+                select(SemanticEntityRecord).where(
+                    SemanticEntityRecord.catalog_run_id == catalog_run_id,
+                    SemanticEntityRecord.entity_key.in_(
+                        [r.subject_entity_key for r in records if r.subject_entity_key]
+                    ),
+                )
+            )
+        }
+        values = []
+        for record in records:
+            fact = facts.get(record.entity_key)
+            if fact is None:
+                continue
+            derived = cast(dict[str, Any], fact.derived)
+            attributes = cast(dict[str, Any], derived.get("attributes") or {})
+            subject = subjects.get(record.subject_entity_key or "")
+            qualified = (subject.qualified_name if subject else None) or record.name
+            owner = qualified.rsplit(".", 1)[0] if "." in qualified else None
+            values.append(
+                EndpointInput(
+                    record.entity_key,
+                    record.portable_key,
+                    record.locator,
+                    owner,
+                    qualified,
+                    str(derived.get("recognizer")),
+                    str(derived.get("strength")),
+                    attributes.get("method"),
+                    attributes.get("path"),
+                    attributes.get("receiver"),
+                    fact.fact_digest,
+                )
+            )
+        return values
 
     # ----------------------------------------------------------------- runs
 
@@ -858,6 +973,40 @@ class SqlAlchemyArchitectureStore:
                 ):
                     values[("import_references", str(record.id))] = (
                         import_row_digest(_import_row(record), owner_kind),
+                        locator,
+                    )
+            if wanted.get("architecture_literals"):
+                for record, extraction, locator in session.execute(
+                    select(
+                        ArchitectureLiteralRecord,
+                        ArtifactExtractionRecord,
+                        ArtifactAnalysisRecord.locator,
+                    )
+                    .join(
+                        ArtifactExtractionRecord,
+                        ArtifactExtractionRecord.id == ArchitectureLiteralRecord.extraction_id,
+                    )
+                    .join(
+                        ArtifactAnalysisRecord,
+                        ArtifactAnalysisRecord.id == ArchitectureLiteralRecord.artifact_analysis_id,
+                    )
+                    .where(ArchitectureLiteralRecord.id.in_(wanted["architecture_literals"]))
+                ):
+                    values[("architecture_literals", str(record.id))] = (
+                        literal_row_digest(_literal_row(record, extraction)),
+                        locator,
+                    )
+            if wanted.get("artifact_extractions"):
+                for extraction, locator in session.execute(
+                    select(ArtifactExtractionRecord, ArtifactAnalysisRecord.locator)
+                    .join(
+                        ArtifactAnalysisRecord,
+                        ArtifactAnalysisRecord.id == ArtifactExtractionRecord.artifact_analysis_id,
+                    )
+                    .where(ArtifactExtractionRecord.id.in_(wanted["artifact_extractions"]))
+                ):
+                    values[("artifact_extractions", str(extraction.id))] = (
+                        extraction_row_digest(_extraction_row(extraction)),
                         locator,
                     )
             if wanted.get("export_references"):

@@ -531,6 +531,41 @@ class ExportReferenceRecord(Base):
     end_column: Mapped[int | None] = mapped_column(nullable=True)
 
 
+class ArchitectureLiteralRecord(Base):
+    """Stage 14 sanitised syntactic literal row owned by one ``*-architecture-literals`` pass."""
+
+    __tablename__ = "architecture_literals"
+    __table_args__ = (
+        UniqueConstraint("extraction_id", "ordinal", name="uq_architecture_literals_ordinal"),
+        _extraction_owner(),
+        CheckConstraint(
+            "kind IN ('app_or_router', 'router_mount', 'migration_table', 'http_call', "
+            "'url_call', 'import_guard', 'type_import', 'url_constant', 'url_helper', "
+            "'frontend_route', 'opaque_dynamic_import')",
+            name="ck_architecture_literals_kind",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_architecture_literals_ordinal"),
+        CheckConstraint(
+            "subject IS NULL OR char_length(subject) BETWEEN 1 AND 256",
+            name="ck_architecture_literals_subject",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(attributes) = 'object'", name="ck_architecture_literals_attributes"
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    extraction_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attributes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    start_line: Mapped[int] = mapped_column(nullable=False)
+    end_line: Mapped[int] = mapped_column(nullable=False)
+    start_column: Mapped[int | None] = mapped_column(nullable=True)
+    end_column: Mapped[int | None] = mapped_column(nullable=True)
+
+
 class ProcessingRunRecord(Base):
     __tablename__ = "processing_runs"
     __table_args__ = (
@@ -2143,7 +2178,7 @@ class ArchitectureEvidenceRecord(Base):
     __table_args__ = (
         _architecture_owner(),
         CheckConstraint(
-            "kind IN ('import_statements', 'inventory_artifact', 'derivation')",
+            "kind IN ('import_statements', 'inventory_artifact', 'derivation', 'literal_rows')",
             name="ck_architecture_evidence_kind",
         ),
         CheckConstraint(

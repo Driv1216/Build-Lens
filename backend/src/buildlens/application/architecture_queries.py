@@ -13,7 +13,7 @@ import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from buildlens.application.architecture import (
@@ -179,6 +179,23 @@ class Neighbourhood(Scoped):
 
 
 @dataclass(frozen=True, slots=True)
+class ApiView(Scoped):
+    """Milestone B API architecture: endpoints, request sites and conditional connections."""
+
+    endpoints: tuple[ArchitectureNode, ...]
+    endpoints_total: int
+    clients: tuple[ArchitectureNode, ...]
+    clients_total: int
+    destinations: tuple[ArchitectureNode, ...]
+    routers: tuple[ArchitectureNode, ...]
+    connections: tuple[ArchitectureEdge, ...]
+    outcome_counts: dict[str, int]
+    coverage: dict[str, object]
+    limit: int
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
 class DiagnosticPage(Scoped):
     items: tuple[ArchitectureDiagnostic, ...]
     total: int
@@ -252,8 +269,11 @@ class ArchitectureQueries:
             if node is not None and node.kind == "module" and node.coverage_state != "analysed":
                 coverage.append(key)
         run_gaps = []
-        if run.coverage.get("opaque_dynamic_imports") == "not_observable":
+        opaque = run.coverage.get("opaque_dynamic_imports")
+        if opaque == "not_observable":
             run_gaps.append("OPAQUE_DYNAMIC_IMPORTS_NOT_OBSERVABLE")
+        elif opaque == "present":
+            run_gaps.append("OPAQUE_DYNAMIC_IMPORTS_PRESENT")
         if run.coverage.get("python_guard_context") == "unknown":
             run_gaps.append("PYTHON_GUARD_CONTEXT_UNKNOWN")
         exits.sort(key=lambda edge: edge.key)
@@ -296,6 +316,76 @@ class ArchitectureQueries:
             dict(run.coverage),
         )
 
+    def api(
+        self,
+        project_id: UUID,
+        snapshot_id: UUID,
+        run_id: UUID | None,
+        *,
+        outcome: str | None = None,
+        locator: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> ApiView:
+        """Endpoints (all, up to the row limit) and a page of request sites with their
+        branches; every returned node and connection is verified (I-C3)."""
+        limit = _bounded(limit, QUERY_MAX_ROWS, "limit")
+        if offset < 0:
+            raise ArchitectureQueryError("offset must not be negative.")
+        run, reasons, loaded, deadline = self._open(project_id, snapshot_id, run_id)
+        nodes = sorted(loaded.nodes.values(), key=lambda node: node.key)
+        endpoints = [node for node in nodes if node.kind == "api_endpoint"]
+        clients = [
+            node
+            for node in nodes
+            if node.kind == "client_call"
+            and (locator is None or node.locator == locator)
+            and (
+                outcome is None
+                or any(b.get("outcome") == outcome for b in node.attributes.get("branches", []))
+            )
+        ]
+        page = clients[offset : offset + limit]
+        shown = {node.key for node in page}
+        connections = [
+            edge
+            for edge in sorted(loaded.edges.values(), key=lambda edge: edge.key)
+            if edge.kind in {"calls_endpoint", "targets_destination"} and edge.source_key in shown
+        ]
+        destinations = [node for node in nodes if node.kind == "external_destination"]
+        routers = [node for node in nodes if node.kind == "router"]
+        listed = endpoints[:QUERY_MAX_ROWS]
+        self._verify(
+            run,
+            loaded,
+            Assertion(
+                frozenset(n.key for n in [*listed, *page, *destinations, *routers]),
+                frozenset(edge.key for edge in connections),
+            ),
+            deadline,
+        )
+        outcomes = Counter(
+            str(branch.get("outcome"))
+            for node in nodes
+            if node.kind == "client_call"
+            for branch in node.attributes.get("branches", [])
+        )
+        return ApiView(
+            run,
+            reasons,
+            tuple(listed),
+            len(endpoints),
+            tuple(page),
+            len(clients),
+            tuple(destinations),
+            tuple(routers),
+            tuple(connections),
+            dict(sorted(outcomes.items())),
+            dict(cast(dict[str, object], run.coverage.get("api") or {})),
+            limit,
+            offset,
+        )
+
     def tree(
         self, project_id: UUID, snapshot_id: UUID, run_id: UUID | None, parent: str | None
     ) -> Tree:
@@ -303,7 +393,11 @@ class ArchitectureQueries:
         node = self._node(loaded, parent) if parent else None
         keys = loaded.children.get(parent, [])
         if parent is None:
-            keys = [key for key in keys if loaded.nodes[key].kind != "external_package"]
+            keys = [
+                key
+                for key in keys
+                if loaded.nodes[key].kind not in {"external_package", "external_destination"}
+            ]
         if len(keys) > QUERY_MAX_ROWS:
             keys = keys[:QUERY_MAX_ROWS]
         counts: Counter[str] = Counter()

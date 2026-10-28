@@ -26,6 +26,19 @@ function route(path: string): unknown {
   if (path.includes('/architecture/node')) return { ...scoped, node: node('module:app/a.py', { kind: 'module', name: 'a‮.py' }), chain: [], children: [], outgoing: [edge], incoming: [], outgoing_total: 1, incoming_total: 0, components: [], diagnostics: [] }
   if (path.includes('/architecture/cycles')) return { ...scoped, items: [{ key: 'component:module:x', level: 'module', class_set: 'S1', scope_key: null, members: ['module:app/a.py', 'module:app/b.py'], witness: ['k1'], attributes: {}, evidence: [] }], edges: { k1: edge }, total: 1 }
   if (path.includes('/architecture/path')) return { ...scoped, source: 'module:app/b.py', target: 'module:app/a.py', class_set: 'S2', status: 'not_found_in_observed_graph', path: [], gaps: { complete: false, unknown_exits: [], coverage_gaps: [], run_gaps: ['OPAQUE_DYNAMIC_IMPORTS_NOT_OBSERVABLE'] } }
+  if (path.includes('/architecture/api')) return {
+    ...scoped,
+    endpoints: [node('endpoint:symbol:app/api.py#get_user', { kind: 'api_endpoint', attributes: { function: 'get_user', methods: ['GET'], paths: [{ path: '/api/users/{user_id}', status: 'derived', reasons: [], conditions: [] }], reasons: [] } })],
+    endpoints_total: 1,
+    clients: [node('client:web/api.ts:3', { kind: 'client_call', locator: 'web/api.ts', attributes: { line: 4, method: 'GET', wrapper: 'web/client.ts#request', branches: [
+      { display: '{…}/users/{…}', destination: 'opaque_origin', outcome: 'opaque_origin', candidates: [], conditions: [], reasons: ['BASE_UNKNOWN'], host: null, port: null, scheme: null },
+      { display: '/api/users/{…}', destination: 'local_loopback', outcome: 'conditional_candidate', candidates: ['endpoint:symbol:app/api.py#get_user'], conditions: ['BASE_FROM_FALLBACK_LITERAL', 'LOOPBACK_ORIGIN_ASSUMED_LOCAL_BACKEND'], reasons: [], strength: 'segment_aligned', host: '127.0.0.1', port: '8000', scheme: 'http' },
+    ] } })],
+    clients_total: 1,
+    destinations: [node('destination:https://api.example.com', { kind: 'external_destination', attributes: { host: 'api.example.com', class: 'public_host_unbound', ownership: 'unknown' } })],
+    routers: [], connections: [], outcome_counts: { conditional_candidate: 1, opaque_origin: 1 },
+    coverage: { endpoints: { total: 1, with_full_path: 1, reasons: {} }, unrecognized_clients: 0, url_usage: {} }, limit: 100, offset: 0,
+  }
   throw new Error(`unexpected ${path}`)
 }
 
@@ -60,6 +73,18 @@ describe('ArchitecturePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Find path' }))
     expect(await screen.findByText('not found in observed graph')).toBeInTheDocument()
     expect(screen.getByText(/OPAQUE_DYNAMIC_IMPORTS_NOT_OBSERVABLE/)).toBeInTheDocument()
+  })
+
+  it('shows API connections only as conditional candidates with their assumptions', async () => {
+    mocked.mockImplementation(async (path: string) => route(path))
+    show('/architecture?project=p1&snapshot=s1&view=api')
+    expect(await screen.findByText(/none is a confirmed call/)).toBeInTheDocument()
+    expect(screen.getByText('conditional candidate')).toBeInTheDocument()
+    expect(screen.getByText('base unknown')).toBeInTheDocument()
+    expect(screen.getByText('LOOPBACK_ORIGIN_ASSUMED_LOCAL_BACKEND')).toBeInTheDocument()
+    expect(screen.getByText(/ownership is unknown/)).toBeInTheDocument()
+    expect(screen.getByText('/api/users/{user_id}')).toBeInTheDocument()
+    expect(screen.queryByText(/confirmed match/)).not.toBeInTheDocument()
   })
 
   it('fails closed with an explanation instead of partial content', async () => {

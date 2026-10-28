@@ -137,6 +137,17 @@ def diagnostics(
     _queries(lambda queries: queries.diagnostics(project, snapshot, run, code=code, limit=500))
 
 
+@app.command("api")
+def api(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    outcome: str | None = typer.Option(None, help="Only request sites with this branch outcome."),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Endpoints, request sites and conditional API connections (never confirmed matches)."""
+    _queries(lambda queries: queries.api(project, snapshot, run, outcome=outcome, limit=500))
+
+
 @app.command("coverage")
 def coverage(
     project: UUID = typer.Option(...),

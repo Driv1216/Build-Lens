@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 
 from buildlens.api.architecture_schemas import (
+    ApiViewResponse,
     ArchitectureHistoryResponse,
     ArchitectureRunResponse,
     ArchitectureStatusResponse,
@@ -510,6 +511,38 @@ def diagnostics(
         limit=x.limit,
         offset=x.offset,
         counts=x.counts,
+    )
+
+
+@router.get("/api", response_model=ApiViewResponse)
+def api_view(
+    project_id: UUID,
+    snapshot_id: UUID,
+    outcome: str | None = Query(None, max_length=32),
+    locator: str | None = Query(None, max_length=2048),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    run_id: UUID | None = None,
+    queries: ArchitectureQueries = Depends(get_architecture_queries),
+) -> ApiViewResponse:
+    x = queries.api(
+        project_id, snapshot_id, run_id, outcome=outcome, locator=locator, limit=limit,
+        offset=offset,
+    )  # fmt: skip
+    return ApiViewResponse(
+        run_id=x.run.id,
+        freshness_reasons=list(x.freshness_reasons),
+        endpoints=[node(item) for item in x.endpoints],
+        endpoints_total=x.endpoints_total,
+        clients=[node(item) for item in x.clients],
+        clients_total=x.clients_total,
+        destinations=[node(item) for item in x.destinations],
+        routers=[node(item) for item in x.routers],
+        connections=[edge(item) for item in x.connections],
+        outcome_counts=x.outcome_counts,
+        coverage=x.coverage,
+        limit=x.limit,
+        offset=x.offset,
     )
 
 

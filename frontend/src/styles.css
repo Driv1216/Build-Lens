@@ -167,3 +167,14 @@ table.dsm td.cyclic { background: var(--arch-cycle); }
 .witness { display: grid; gap: 2px; font-size: .82rem; margin: 4px 0; }
 .gaps summary, .evidence summary { cursor: pointer; }
 .path-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+
+/* Stage 14 Milestone B: API view */
+.api-view .api-site { margin-bottom: 0.75rem; }
+.api-view .api-branch { list-style: none; margin: 0.15rem 0 0.15rem 0.5rem; }
+.api-view .conditions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.15rem; }
+.api-view code { margin-right: 0.35rem; overflow-wrap: anywhere; }
+.badge.outcome-conditional_candidate { color: var(--arch-derived); }
+.badge.outcome-ambiguous, .badge.outcome-method_mismatch, .badge.outcome-method_unknown { color: var(--arch-inferred); }
+.badge.outcome-no_candidate, .badge.outcome-opaque_origin, .badge.outcome-opaque_path,
+.badge.outcome-external_destination { color: var(--arch-unknown); }
+pre.attributes { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8rem; max-height: 20rem; overflow: auto; }

@@ -53,6 +53,20 @@ class SupervisedArtifactAnalyzer:
             root, locator, max_bytes, expected_root_identity, timeout, symbols
         )
 
+    def extract_additional(
+        self,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int] | None,
+        timeout: float,
+        language: str,
+        extractors: tuple[str, ...],
+    ) -> tuple[tuple[ArtifactExtraction, ...], str, int]:
+        return self._worker.extract_additional(
+            root, locator, max_bytes, expected_root_identity, timeout, language, extractors
+        )
+
     def close(self) -> None:
         self._worker.close()
 

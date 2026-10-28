@@ -96,7 +96,11 @@ def test_mixed_language_extraction_reuse_and_processing(pg_engine: Engine, tmp_p
     python = items["app/service.py"]
     assert python.outcome == "parsed" and python.language == "Python"
     assert python.declaration_extraction_id is None
-    assert [x.extractor for x in python.extractions] == [extractors.PYTHON_FACTS]
+    # Stage 14 adds its literal pass beside the facts pass; neither touches declarations.
+    assert sorted(x.extractor for x in python.extractions) == [
+        extractors.PYTHON_LITERALS,
+        extractors.PYTHON_FACTS,
+    ]
     # TS/JS carry their own declaration authority (M4), never the Python run contract.
     for locator in ("web/Button.tsx", "web/api.ts", "web/legacy.js"):
         item = items[locator]
@@ -105,6 +109,8 @@ def test_mixed_language_extraction_reuse_and_processing(pg_engine: Engine, tmp_p
         assert item.declaration_extraction.contract_digest == extractors.extractor_contract_digest(
             item.declaration_extraction.extractor
         )
+        literal = next(x for x in item.extractions if x.extractor == extractors.TS_LITERALS)
+        assert literal.outcome == "extracted", locator
     assert items["web/vendor.min.js"].diagnostics[0].code == "GENERATED_ARTIFACT"
     assert analysis.producer_contract == analysis.producer_contract  # run contract unchanged
     with stack.factory() as session:
@@ -156,8 +162,9 @@ def test_legacy_python_declarations_gain_facts_without_identity_churn(
     upgraded = stack.structural.analyse(stack.project.id, second.id)
     item = upgraded.artifact_analyses[0]
     assert item.execution_mode == "reused"
-    assert [(x.extractor, x.execution_mode, x.outcome) for x in item.extractions] == [
-        (extractors.PYTHON_FACTS, "extracted", "extracted")
+    assert sorted((x.extractor, x.execution_mode, x.outcome) for x in item.extractions) == [
+        (extractors.PYTHON_LITERALS, "extracted", "extracted"),
+        (extractors.PYTHON_FACTS, "extracted", "extracted"),
     ]
     # Duplicate names are ambiguous slots; reuse still preserves their identities exactly.
     assert [s.stable_identity_id for s in item.symbols] == [
@@ -205,7 +212,10 @@ def test_stale_typescript_contract_is_not_current_while_python_is(
 
     def bumped(extractor: str) -> dict[str, str] | None:
         value = original(extractor)
-        if value is not None and extractor != extractors.PYTHON_FACTS:
+        if value is not None and extractor in {
+            extractors.TYPESCRIPT_DECLARATIONS,
+            extractors.JAVASCRIPT_DECLARATIONS,
+        }:
             value = {**value, "grammar": value["grammar"] + "+bumped"}
         return value
 

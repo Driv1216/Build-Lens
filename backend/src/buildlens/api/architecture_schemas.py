@@ -253,3 +253,19 @@ class IntegrityResponse(BaseModel):
     evidence_failures: dict[str, str]
     evidence_failure_count: int
     label: str
+
+
+class ApiViewResponse(Scoped):
+    """Milestone B API architecture. Connections are conditional candidates only."""
+
+    endpoints: list[NodeResponse]
+    endpoints_total: int
+    clients: list[NodeResponse]
+    clients_total: int
+    destinations: list[NodeResponse]
+    routers: list[NodeResponse]
+    connections: list[EdgeResponse]
+    outcome_counts: dict[str, int]
+    coverage: dict[str, Any]
+    limit: int
+    offset: int

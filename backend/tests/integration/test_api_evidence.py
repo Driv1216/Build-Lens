@@ -148,8 +148,9 @@ def test_api_serves_typescript_structure_and_chunks(pg_engine: Engine, tmp_path:
         assert client.post(scope + "/structure", json={}).status_code == 200
         artifacts = client.get(scope + "/structure/artifacts").json()["items"]
         assert artifacts[0]["language"] == "TypeScript"
-        assert artifacts[0]["extractions"][0]["extractor"] == "typescript-declarations.v1"
-        assert artifacts[0]["extractions"][0]["contract_current"] is True
+        passes = {item["extractor"]: item for item in artifacts[0]["extractions"]}
+        assert set(passes) == {"typescript-declarations.v1", "ts-architecture-literals.v1"}
+        assert passes["typescript-declarations.v1"]["contract_current"] is True
         symbols = client.get(scope + "/structure/symbols").json()["items"]
         assert {(s["kind"], s["qualified_name"], s["declaration_form"]) for s in symbols} == {
             ("function", "get", "overload_group"),

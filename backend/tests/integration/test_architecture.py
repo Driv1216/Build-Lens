@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from alembic.config import Config
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, delete, func, select
 
 from alembic import command
 from buildlens.application.architecture import (
@@ -19,6 +19,7 @@ from buildlens.application.semantic_catalog import SemanticCatalogRequiredError
 from buildlens.infrastructure.persistence.architecture import SqlAlchemyArchitectureStore
 from buildlens.infrastructure.persistence.models import (
     ArchitectureEvidenceLinkRecord,
+    ArchitectureLiteralRecord,
     ArchitectureRunRecord,
     ProjectVersionRecord,
 )
@@ -139,5 +140,8 @@ def test_downgrade_refuses_with_architecture_rows(pg_engine: Engine, tmp_path: P
     stack, snapshot = prepared(pg_engine, tmp_path)
     architecture(stack).build(stack.project.id, snapshot.id)
     config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
-    with pytest.raises(RuntimeError, match="architecture runs exist"):
+    with stack.factory.begin() as session:  # 0015 refuses first while literal rows exist
+        session.execute(delete(ArchitectureLiteralRecord))
+    # 0015 refuses first while v2 runs cite literal rows; 0014 refuses for the runs themselves.
+    with pytest.raises(RuntimeError, match="architecture (literal rows|runs) exist"):
         command.downgrade(config, "0013_semantic_config_outcome")

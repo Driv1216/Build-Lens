@@ -357,8 +357,13 @@ class ArchitectureService:
             reasons.append("ARCHITECTURE_QUARANTINED")
         if run.outcome == "failed":
             reasons.append("ARCHITECTURE_FAILED")
-        if digest(run.architecture_contract) != digest(architecture_contract()):
+        current = architecture_contract()
+        if digest(run.architecture_contract) != digest(current):
             reasons.append("ARCHITECTURE_CONTRACT_CHANGED")
+            if run.architecture_contract.get("architecture") == current["architecture"] and (
+                run.architecture_contract.get("literals") != current["literals"]
+            ):
+                reasons.append("LITERAL_CONTRACT_CHANGED")
         status = self._catalog.status(project_id, snapshot_id)
         if status.active_run is None or status.active_run.id != run.catalog_run_id:
             reasons.append("CATALOG_AUTHORITY_CHANGED")

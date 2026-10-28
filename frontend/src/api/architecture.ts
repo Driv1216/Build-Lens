@@ -126,6 +126,36 @@ export type Evidence = {
   label: string
 }
 
+export type ApiBranch = {
+  display: string
+  destination: string
+  outcome: 'conditional_candidate' | 'ambiguous' | 'method_mismatch' | 'method_unknown' | 'no_candidate' | 'external_destination' | 'opaque_origin' | 'opaque_path'
+  candidates: string[]
+  alternatives?: string[]
+  conditions: string[]
+  reasons: string[]
+  strength?: string
+  host: string | null
+  port: string | null
+  scheme: string | null
+}
+export type ApiView = {
+  run_id: string
+  freshness_reasons: string[]
+  verification: string
+  endpoints: ArchNode[]
+  endpoints_total: number
+  clients: ArchNode[]
+  clients_total: number
+  destinations: ArchNode[]
+  routers: ArchNode[]
+  connections: ArchEdge[]
+  outcome_counts: Record<string, number>
+  coverage: Record<string, unknown>
+  limit: number
+  offset: number
+}
+
 const base = (projectId: string, snapshotId: string) => `/projects/${projectId}/snapshots/${snapshotId}/architecture`
 const query = (values: Record<string, string | number | undefined | null>) => {
   const params = new URLSearchParams()
@@ -155,3 +185,5 @@ export const getDiagnostics = (p: string, s: string, offset: number, signal?: Ab
   request<DiagnosticPage>(`${base(p, s)}/diagnostics${query({ limit: 200, offset })}`, { signal })
 export const getEvidence = (p: string, s: string, digest: string, signal?: AbortSignal) =>
   request<Evidence>(`${base(p, s)}/evidence/${encodeURIComponent(digest)}`, { signal })
+export const getApiView = (p: string, s: string, outcome: string, offset: number, signal?: AbortSignal) =>
+  request<ApiView>(`${base(p, s)}/api${query({ outcome, offset, limit: 100 })}`, { signal })

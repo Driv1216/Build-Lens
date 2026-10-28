@@ -54,7 +54,7 @@ def test_architecture_http_contracts(pg_engine: Engine, tmp_path: Path) -> None:
         found = client.get(f"{arch}/path?source={api}&target={db}&class_set=S4").json()
         assert found["status"] == "found" and len(found["path"]) == 1
         reverse = client.get(f"{arch}/path?source={db}&target={api}").json()
-        assert reverse["status"] == "not_found_in_observed_graph"
+        assert reverse["status"] == "not_found"  # complete search, no gaps (literal pass)
         deps = client.get(f"{arch}/dependencies?node={api}&class_set=S4").json()
         assert "module:app/db.py" in deps["nodes"] and deps["search"] == "complete"
         matrix = client.get(arch + "/matrix?parent=" + quote("workspace:.", safe="")).json()
@@ -69,6 +69,13 @@ def test_architecture_http_contracts(pg_engine: Engine, tmp_path: Path) -> None:
         evidence = client.get(f"{arch}/evidence/{link}").json()
         assert evidence["verification"] == "verified" and evidence["rendered_text"]
         assert client.get(arch + "/integrity").json()["structure"] == "verified"
+        # Milestone B API view: the fixture router is never mounted, so its endpoint has no
+        # full path and nothing is connected.
+        view = client.get(arch + "/api").json()
+        assert view["verification"] == "verified" and view["endpoints_total"] == 1
+        assert view["endpoints"][0]["attributes"]["paths"][0]["reasons"] == ["ROUTER_NOT_MOUNTED"]
+        assert view["connections"] == [] and view["coverage"]["endpoints"]["total"] == 1
+        assert client.get(arch + "/api?limit=0").status_code == 422
         assert client.get(arch + "/runs").json()["total"] == 1
         assert client.get(f"{arch}/runs/{run_id}").status_code == 200
         assert client.get(f"{arch}/runs/{uuid4()}").status_code == 404

@@ -60,7 +60,8 @@ def _edge(stack: CatalogStack, run: Any, key: str) -> ArchitectureEdgeRecord:
         return cast(ArchitectureEdgeRecord, record)
 
 
-API_DB = "imports|module:app/api.py|module:app/db.py|resolved|presumed_unconditional"
+# Milestone B: the literal pass proves the import is not guarded, so it is unconditional.
+API_DB = "imports|module:app/api.py|module:app/db.py|resolved|unconditional"
 
 
 def test_queries_answer_with_verified_paths(pg_engine: Engine, tmp_path: Path) -> None:
@@ -70,9 +71,8 @@ def test_queries_answer_with_verified_paths(pg_engine: Engine, tmp_path: Path) -
     missing = queries.path(
         stack.project.id, snapshot.id, None, "module:app/db.py", "module:app/api.py"
     )
-    # A complete search over a graph with known gaps is never reported as plain absence.
-    assert missing.status == "not_found_in_observed_graph"
-    assert "OPAQUE_DYNAMIC_IMPORTS_NOT_OBSERVABLE" in missing.gaps.run_gaps
+    # Full literal coverage, no unknown exits and an analysed origin: plain absence is earned.
+    assert missing.status == "not_found" and missing.gaps.complete
     deps = queries.dependencies(
         stack.project.id, snapshot.id, None, "container:web", class_set="S4"
     )

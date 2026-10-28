@@ -19,15 +19,22 @@ from datetime import datetime
 from typing import Any, Literal, get_args
 from uuid import UUID
 
+from buildlens.domain.extractors import LITERAL_EXTRACTORS, extractor_contract_digest
 from buildlens.domain.source import digest
 
-ARCHITECTURE_VERSION = "architecture-model.v1"
+ARCHITECTURE_VERSION = "architecture-model.v2"
 IMPORT_CLASSES_VERSION = "import-classes.v2"
 INTEGRITY_VERSION = "architecture-integrity.v1"
 SCC_VERSION = "scc.tarjan-iterative.v1"
 CONTAINMENT_VERSION = "containment.v1"
 AGGREGATION_VERSION = "aggregation.v1"
 EVIDENCE_RENDERER = "architecture-evidence.v1"
+# Milestone B API projection contracts (application/architecture_api.py).
+ROUTER_BINDING_VERSION = "router-binding.v1"
+HTTP_SINKS_VERSION = "http-sinks.v1"
+CLIENT_WRAPPER_VERSION = "client-wrapper.v1"
+CLIENT_FOLDING_VERSION = "client-folding.v1"
+API_MATCHING_VERSION = "api-matching.v2"
 
 # Placeholder limits recorded in the contract (fail closed: a truncated graph would make
 # cycle and reachability claims false).
@@ -92,7 +99,7 @@ CoverageState = Literal[
     "derived",
 ]
 EvidenceSource = Literal["catalog", "architecture"]
-EvidenceKind = Literal["import_statements", "inventory_artifact", "derivation"]
+EvidenceKind = Literal["import_statements", "inventory_artifact", "derivation", "literal_rows"]
 ArchitectureOutcome = Literal["complete", "partial", "failed"]
 Resolution = Literal["resolved", "ambiguous", "not_found", "external", "not_attempted"]
 
@@ -139,7 +146,14 @@ def architecture_contract() -> dict[str, object]:
         "containment": CONTAINMENT_VERSION,
         "aggregation": AGGREGATION_VERSION,
         "evidence_renderer": EVIDENCE_RENDERER,
-        "literals": None,
+        "literals": {name: extractor_contract_digest(name) for name in sorted(LITERAL_EXTRACTORS)},
+        "api": {
+            "router_binding": ROUTER_BINDING_VERSION,
+            "http_sinks": HTTP_SINKS_VERSION,
+            "client_wrapper": CLIENT_WRAPPER_VERSION,
+            "client_folding": CLIENT_FOLDING_VERSION,
+            "api_matching": API_MATCHING_VERSION,
+        },
         "limits": {
             "max_nodes": MAX_NODES,
             "max_edges": MAX_EDGES,

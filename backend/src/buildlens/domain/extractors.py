@@ -18,6 +18,14 @@ TYPESCRIPT_DECLARATIONS = "typescript-declarations.v1"
 JAVASCRIPT_DECLARATIONS = "javascript-declarations.v1"
 TS_IDENTITY_SCHEME = "ts-declaration-slot.v1"
 PYTHON_IDENTITY_SCHEME = "python-declaration-slot.v1"
+# Stage 14 additive literal passes: sanitised syntactic evidence for architecture views only.
+# They are never part of the catalog contract or of processing dependency fingerprints.
+PYTHON_LITERALS = "python-architecture-literals.v1"
+TS_LITERALS = "ts-architecture-literals.v1"
+LITERAL_EXTRACTORS = frozenset({PYTHON_LITERALS, TS_LITERALS})
+
+LITERAL_ROWS_CONTRACT = "architecture-literal-rows.v1"
+LITERAL_SANITISATION_CONTRACT = "url-origin-path-only.v1"
 
 # Digest of the declarations extracted from the built-in canary fixture by the pinned
 # grammars. The worker handshake recomputes it; any difference fails the language closed.
@@ -34,9 +42,9 @@ class LanguageSupport:
 
 
 LANGUAGES: dict[str, LanguageSupport] = {
-    "Python": LanguageSupport("Python", None, (PYTHON_FACTS,)),
-    "TypeScript": LanguageSupport("TypeScript", TYPESCRIPT_DECLARATIONS, ()),
-    "JavaScript": LanguageSupport("JavaScript", JAVASCRIPT_DECLARATIONS, ()),
+    "Python": LanguageSupport("Python", None, (PYTHON_FACTS, PYTHON_LITERALS)),
+    "TypeScript": LanguageSupport("TypeScript", TYPESCRIPT_DECLARATIONS, (TS_LITERALS,)),
+    "JavaScript": LanguageSupport("JavaScript", JAVASCRIPT_DECLARATIONS, (TS_LITERALS,)),
 }
 
 
@@ -62,6 +70,31 @@ def extractor_contract(extractor: str) -> dict[str, str] | None:
             "decoding": "python-tokenize.v2",
             "parser": "python-ast+tokenize",
             "limits": "references-256-per-symbol-4096-per-artifact.v1",
+        }
+    if extractor == PYTHON_LITERALS:
+        return {
+            **shared,
+            "runtime_version": sys.version.split()[0],
+            "decoding": "python-tokenize.v2",
+            "parser": "python-ast",
+            "rows": LITERAL_ROWS_CONTRACT,
+            "sanitisation": LITERAL_SANITISATION_CONTRACT,
+        }
+    if extractor == TS_LITERALS:
+        binding = _package("tree-sitter")
+        typescript = _package("tree-sitter-typescript")
+        javascript = _package("tree-sitter-javascript")
+        if binding is None or typescript is None or javascript is None:
+            return None
+        return {
+            **shared,
+            "binding": f"tree-sitter=={binding}",
+            "grammar": f"tree-sitter-typescript=={typescript};tree-sitter-javascript=={javascript}",
+            "decoding": "utf-8-sig.v1",
+            "partial_parse": "skip-erroneous-top-level-statements.v1",
+            "rows": LITERAL_ROWS_CONTRACT,
+            "sanitisation": LITERAL_SANITISATION_CONTRACT,
+            "canary": TREE_SITTER_CANARY_DIGEST,
         }
     if extractor in {TYPESCRIPT_DECLARATIONS, JAVASCRIPT_DECLARATIONS}:
         binding = _package("tree-sitter")

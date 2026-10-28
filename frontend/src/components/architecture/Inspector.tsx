@@ -32,6 +32,11 @@ export function Inspector({ projectId, snapshotId, revision, node, classSet, onS
       <p><span className="kind">{detail.node.kind}</span> {detail.node.language && <span className="note">{detail.node.language}</span>} · coverage <strong>{detail.node.coverage_state.replace('_', ' ')}</strong></p>
       {detail.node.catalog_entity_key && <Link to={`/explore?project=${projectId}&snapshot=${snapshotId}&entity=${encodeURIComponent(detail.node.catalog_entity_key)}`}>Open in Explore →</Link>}
       <dl className="snapshot-details">{Object.entries(detail.node.metrics).map(([key, value]) => <div key={key}><dt>{key.replace('_', ' ')}</dt><dd>{value ?? '—'}</dd></div>)}</dl>
+      {detail.node.kind === 'module' && typeof detail.node.attributes.literals === 'string' && <p className="note">Literal pass: {detail.node.attributes.literals.replace('_', ' ')}</p>}
+      {detail.node.kind !== 'module' && Object.keys(detail.node.attributes).length > 0 && <details className="evidence">
+        <summary>Attributes</summary>
+        <pre className="attributes">{visible(JSON.stringify(detail.node.attributes, null, 1))}</pre>
+      </details>}
       <EvidenceList projectId={projectId} snapshotId={snapshotId} links={detail.node.evidence} />
       <h3>Outgoing ({detail.outgoing_total})</h3>
       <ul className="edge-list">{detail.outgoing.map(edge => <EdgeLine key={edge.key} edge={edge} onSelect={onSelect} />)}</ul>
@@ -39,7 +44,7 @@ export function Inspector({ projectId, snapshotId, revision, node, classSet, onS
       <ul className="edge-list">{detail.incoming.map(edge => <EdgeLine key={edge.key} edge={edge} onSelect={onSelect} direction="in" />)}</ul>
       {detail.components.length > 0 && <><h3>Cycles</h3><ul className="edge-list">{detail.components.map(item => <li key={item.key}>{item.level === 'module' ? 'import cycle' : 'aggregate cycle'} · {item.members.length} members · class set {item.class_set}</li>)}</ul></>}
       {detail.diagnostics.length > 0 && <><h3>Diagnostics</h3><ul className="edge-list">{detail.diagnostics.map(item => <li key={item.ordinal}><TierBadge tier={item.tier} /> {item.code}</li>)}</ul></>}
-      <Traversal projectId={projectId} snapshotId={snapshotId} node={detail.node.key} classSet={classSet} module={detail.node.kind === 'module'} onSelect={onSelect} />
+      {['module', 'container', 'workspace'].includes(detail.node.kind) && <Traversal projectId={projectId} snapshotId={snapshotId} node={detail.node.key} classSet={classSet} module={detail.node.kind === 'module'} onSelect={onSelect} />}
     </>}
   </section>
 }

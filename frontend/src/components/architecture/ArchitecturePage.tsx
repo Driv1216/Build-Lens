@@ -5,10 +5,11 @@ import { listProjects, type Project } from '../../api/projects'
 import { latestSnapshot } from '../../api/snapshots'
 import { HierarchyTree } from './HierarchyTree'
 import { Inspector } from './Inspector'
+import { ApiView } from './ApiView'
 import { CyclesView, DiagnosticsView, MatrixView, NeighbourhoodView, OverviewView } from './Views'
 import { describe, label } from './format'
 
-const VIEWS = ['overview', 'modules', 'cycles', 'diagnostics'] as const
+const VIEWS = ['overview', 'modules', 'api', 'cycles', 'diagnostics'] as const
 type View = (typeof VIEWS)[number]
 const CLASS_SETS: { value: ClassSet; text: string }[] = [
   { value: 'S0', text: 'S0 · unconditional only' },
@@ -83,7 +84,7 @@ export function ArchitecturePage() {
   return <main className="explore-shell">
     <p className="eyebrow">Phase 3 · Stage 14 · Architecture intelligence</p>
     <h1 className="lab-title">Architecture</h1>
-    <p className="subtitle">The module dependency graph projected from the semantic catalog. Every element is evidence-linked and re-verified on each request; derived, inferred and unknown parts are labelled.</p>
+    <p className="subtitle">The module dependency graph and API connections projected from the semantic catalog and sanitised literal evidence. Every element is evidence-linked and re-verified on each request; derived, inferred and unknown parts are labelled.</p>
     <div className="lab-scope card">
       <label>Project
         <select aria-label="Architecture project" value={projectId} onChange={event => update({ project: event.target.value, snapshot: '', node: '', container: '' })}>
@@ -112,6 +113,7 @@ export function ArchitecturePage() {
             <MatrixView {...scope} parent={container} classSet={classSet} onSelect={select} onOpen={key => update({ container: key })} />
             {node.startsWith('module:') && <NeighbourhoodView {...scope} node={node} classSet={classSet} onSelect={select} />}
           </>}
+          {view === 'api' && <ApiView {...scope} onSelect={select} />}
           {view === 'cycles' && <CyclesView {...scope} onSelect={select} />}
           {view === 'diagnostics' && <DiagnosticsView {...scope} onSelect={select} />}
         </section>

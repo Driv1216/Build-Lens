@@ -16,6 +16,15 @@ from dataclasses import dataclass, field, replace
 from typing import Any, cast
 from uuid import UUID
 
+from buildlens.application.architecture_api import (
+    ApiModule,
+    ApiProjection,
+    Binding,
+    EndpointInput,
+    binding_kind,
+    extraction_row_digest,
+    literal_ref,
+)
 from buildlens.application.semantic_catalog import ImportResolver
 from buildlens.domain.architecture import (
     AGGREGATION_VERSION,
@@ -54,6 +63,11 @@ from buildlens.domain.architecture_graph import (
     cyclic_components,
     shortest_cycle,
 )
+from buildlens.domain.extractors import (
+    PYTHON_LITERALS,
+    TS_LITERALS,
+    extractor_contract_digest,
+)
 from buildlens.domain.semantic import SemanticEntity, SemanticRelation
 from buildlens.domain.source import digest
 
@@ -86,6 +100,21 @@ class ModuleInput:
     imports: tuple[Row, ...] = ()
     exports: tuple[Row, ...] = ()
     owner_kinds: dict[str, str] = field(default_factory=dict)
+    # Stage 14 Milestone B literal pass (``extracted | partial | failed | not_current |
+    # not_extracted | not_applicable``) and its current rows only.
+    literal_state: str = "not_applicable"
+    literal_extraction: Row | None = None
+    literals: tuple[Row, ...] = ()
+    top_level_names: frozenset[str] = frozenset()
+
+    @property
+    def literals_usable(self) -> bool:
+        return self.literal_state in {"extracted", "partial"}
+
+    @property
+    def classification_known(self) -> bool:
+        facts = (self.literal_extraction or {}).get("artifact_facts") or {}
+        return self.literals_usable and bool(facts.get("classification_complete"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +135,7 @@ class ArchitectureInput:
     relations: tuple[CatalogRelationInput, ...]
     catalog_outcome: str
     artifact_identities: dict[str, str] = field(default_factory=dict)
+    endpoints: tuple[EndpointInput, ...] = ()
 
 
 # --------------------------------------------------------------------------- row digests
@@ -207,6 +237,7 @@ class _Statement:
     import_class: str
     conditions: tuple[str, ...]
     attributes: Row
+    support: tuple[Row, ...] = ()
 
 
 @dataclass(slots=True)
@@ -407,6 +438,7 @@ class _Builder:
         self.resolver = ImportResolver(self.inventory)
         self.modules = {item.locator: item for item in source.modules}
         self.evidence: dict[str, ArchitectureEvidence] = {}
+        self.api: ApiProjection | None = None
         self.relations: dict[tuple[str, str, str | None, str | None], CatalogRelationInput] = {}
         for relation in source.relations:
             key = (
@@ -432,35 +464,100 @@ class _Builder:
 
     # ----------------------------------------------------------------- statements
 
-    def _classify(self, module: ModuleInput, rows: list[Row]) -> tuple[str, tuple[str, ...], Row]:
-        """``import-classes.v2`` for one statement (Milestone A: no guard rows exist yet)."""
+    def _classify(
+        self, module: ModuleInput, rows: list[Row]
+    ) -> tuple[str, tuple[str, ...], Row, tuple[Row, ...]]:
+        """``import-classes.v2`` for one statement, refined by literal guard rows (C-2).
+
+        Returns (class, conditions, attributes, supporting evidence refs). Guard context is
+        trusted only when the artifact's current literal pass recorded every classification
+        row; otherwise Python module-scope imports stay ``presumed_unconditional``.
+        """
         first = rows[0]
         form = str(first["form"])
         owner = first.get("owner_symbol_id")
         owner_kind = module.owner_kinds.get(str(owner)) if owner else None
+        known = module.classification_known
+        line = (first.get("start_line"), first.get("end_line"))
+        pass_ref = (
+            (
+                {
+                    "table": "artifact_extractions",
+                    "id": module.literal_extraction["id"],
+                    "contract": module.literal_extraction.get("contract_digest"),
+                    "locator": module.locator,
+                    "row_digest": extraction_row_digest(module.literal_extraction),
+                },
+            )
+            if known and module.literal_extraction
+            else ()
+        )
         if _is_python(module.language):
             if owner and owner_kind not in {None, "class"}:
-                return "deferred", (), {}
-            return "presumed_unconditional", ("PYTHON_GUARD_CONTEXT_UNKNOWN",), {}
+                return "deferred", (), {}, ()
+            if not known:
+                return "presumed_unconditional", ("PYTHON_GUARD_CONTEXT_UNKNOWN",), {}, ()
+            start = int(first.get("start_line") or 0)
+            guard = next(
+                (
+                    row
+                    for row in module.literals
+                    if row["kind"] == "import_guard"
+                    and int(row["start_line"]) <= start <= int(row["end_line"])
+                ),
+                None,
+            )
+            if guard is None:
+                return "unconditional", (), {}, pass_ref
+            ref = (literal_ref(module.locator, guard),)
+            if guard["attributes"].get("guard") == "type_checking":
+                return "type_level", ("PYTHON_TYPE_CHECKING_GUARD",), {}, ref
+            return "conditional", ("PYTHON_IMPORT_GUARDED",), {}, ref
         if form == "dynamic_import":
-            return "deferred", (), {}
+            return "deferred", (), {}, ()
         if form == "require":
             if owner:
-                return "deferred", (), {}
-            return "presumed_unconditional", ("REQUIRE_GUARD_CONTEXT_UNKNOWN",), {}
-        if any(str(row["name"]) == "" for row in rows):
-            return "unconditional", (), {"side_effect": True}
-        if module.language == "JavaScript":
-            return "unconditional", (), {}
-        if all(row["form"] == "es_import_type" for row in rows):
-            # ``import type`` and ``import { type A }`` are indistinguishable in persisted rows;
-            # the conservative class keeps such cycles visible until guard rows refine them.
-            return (
-                "elision_dependent",
-                ("TS_ELISION_NOT_DECIDED", "TYPE_IMPORT_FORM_UNDISTINGUISHED"),
-                {},
+                return "deferred", (), {}, ()
+            if not known:
+                return "presumed_unconditional", ("REQUIRE_GUARD_CONTEXT_UNKNOWN",), {}, ()
+            guard = next(
+                (
+                    row
+                    for row in module.literals
+                    if row["kind"] == "import_guard"
+                    and (row["start_line"], row["end_line"]) == line
+                ),
+                None,
             )
-        return "elision_dependent", ("TS_ELISION_NOT_DECIDED",), {}
+            if guard is None:
+                return "unconditional", (), {}, pass_ref
+            return "conditional", ("REQUIRE_GUARDED",), {}, (literal_ref(module.locator, guard),)
+        if any(str(row["name"]) == "" for row in rows):
+            return "unconditional", (), {"side_effect": True}, ()
+        if module.language == "JavaScript":
+            return "unconditional", (), {}, ()
+        if all(row["form"] == "es_import_type" for row in rows):
+            if not known:
+                # ``import type`` and ``import { type A }`` are indistinguishable without the
+                # literal pass; the conservative class keeps such cycles visible.
+                return (
+                    "elision_dependent",
+                    ("TS_ELISION_NOT_DECIDED", "TYPE_IMPORT_FORM_UNDISTINGUISHED"),
+                    {},
+                    (),
+                )
+            statement = next(
+                (
+                    row
+                    for row in module.literals
+                    if row["kind"] == "type_import" and (row["start_line"], row["end_line"]) == line
+                ),
+                None,
+            )
+            if statement is not None:
+                return "type_level", (), {}, (literal_ref(module.locator, statement),)
+            return "elision_dependent", ("TS_ELISION_NOT_DECIDED",), {}, pass_ref
+        return "elision_dependent", ("TS_ELISION_NOT_DECIDED",), {}, ()
 
     def _target(self, resolved_status: str, locator: str | None) -> tuple[str | None, bool]:
         """Catalog target entity key for a resolved locator, and whether it is analysed."""
@@ -479,7 +576,7 @@ class _Builder:
             by_statement[row.get("statement_ordinal")].append(row)
         for _, rows in sorted(by_statement.items(), key=lambda item: int(item[0] or 0)):
             rows.sort(key=lambda row: int(row.get("item_ordinal") or 0))
-            import_class, conditions, attributes = self._classify(module, rows)
+            import_class, conditions, attributes, support = self._classify(module, rows)
             for row in rows:
                 resolved = (
                     self.resolver.python(module.locator, row)
@@ -511,6 +608,7 @@ class _Builder:
                         import_class,
                         conditions,
                         {**attributes, "star": star},
+                        support,
                     )
                 )
         for row in module.exports:
@@ -688,14 +786,30 @@ class _Builder:
                 module.entity_key if module else None,
                 UUID(identity) if identity else None,
                 state,
-                {"limitations": sorted(module.limitations) if module else []},
+                {
+                    "limitations": sorted(module.limitations) if module else [],
+                    "literals": module.literal_state if module else "not_applicable",
+                },
                 evidence=(link,),
             )
 
         drafts = self._edges(statements, nodes)
         edges = self._finish_edges(drafts)
         aggregates = self._aggregate(edges, nodes)
-        all_edges = sorted([*edges, *aggregates], key=lambda edge: edge.key)
+        api = ApiProjection(
+            [self._api_module(module, statements) for module in self.source.modules],
+            self.source.endpoints,
+            self._evidence,
+        )
+        api.run()
+        for key, node in api.nodes.items():
+            if key in nodes:
+                raise ArchitectureBuildError("ARCHITECTURE_KEY_COLLISION", key)
+            nodes[key] = node
+        self.api = api
+        all_edges = sorted([*edges, *aggregates, *api.edges], key=lambda edge: edge.key)
+        if len({edge.key for edge in all_edges}) != len(all_edges):
+            raise ArchitectureBuildError("ARCHITECTURE_KEY_COLLISION", "duplicate edge key")
         if len(nodes) > MAX_NODES or len(all_edges) > MAX_EDGES:
             raise ArchitectureBuildError(
                 "ARCHITECTURE_LIMIT_EXCEEDED", f"nodes={len(nodes)} edges={len(all_edges)}"
@@ -703,13 +817,60 @@ class _Builder:
         all_edges = [replace(edge, ordinal=position) for position, edge in enumerate(all_edges)]
         nodes = self._metrics(nodes, all_edges)
         components = self._components(all_edges, nodes)
-        diagnostics = self._diagnostics(all_edges, nodes, components)
+        diagnostics = self._diagnostics(all_edges, nodes, components, api.diagnostics)
         ordered_nodes = [
             replace(node, ordinal=position)
             for position, node in enumerate(sorted(nodes.values(), key=lambda node: node.key))
         ]
         coverage = self._coverage(statements, ordered_nodes)
         return self._result(ordered_nodes, all_edges, components, diagnostics, coverage)
+
+    # ----------------------------------------------------------------- API inputs
+
+    def _api_module(self, module: ModuleInput, statements: list[_Statement]) -> ApiModule:
+        """Literal rows and one-hop import bindings of one module (Milestone B)."""
+        bindings: dict[str, Binding] = {}
+        python = _is_python(module.language)
+        for item in statements:
+            if item.source is not module or item.kind != "imports":
+                continue
+            row = item.row
+            owner = row.get("owner_symbol_id")
+            ref = {
+                "table": "import_references",
+                "id": row["id"],
+                "contract": module.import_contract,
+                "locator": module.locator,
+                "row_digest": import_row_digest(
+                    row, module.owner_kinds.get(str(owner)) if owner else None
+                ),
+            }
+            name, alias = str(row.get("name") or ""), row.get("alias")
+            target = item.target_locator if item.status == "resolved" else None
+            if python:
+                if target is None:
+                    continue
+                if row["form"] == "from" and name != "*":
+                    bound = None if binding_kind(target, name) else name
+                    bindings.setdefault(
+                        str(alias or name), Binding(target, bound, item.module_text, ref)
+                    )
+                elif row["form"] == "import" and alias:
+                    bindings.setdefault(str(alias), Binding(target, None, item.module_text, ref))
+            elif row["form"] in {"es_import", "es_import_type"} and name:
+                destination = target or f"external:{item.module_text}"
+                bindings.setdefault(
+                    str(alias or name), Binding(destination, name, item.module_text, ref)
+                )
+        return ApiModule(
+            module.locator,
+            module.language,
+            module.literals_usable,
+            module.literals,
+            module.import_contract,
+            bindings,
+            module.top_level_names,
+        )
 
     # ----------------------------------------------------------------- edges
 
@@ -792,6 +953,11 @@ class _Builder:
                         "row_digest": row_digest,
                     }
                 )
+            supporting: dict[str, Row] = {}
+            for item in rows:
+                for ref in item.support:
+                    supporting.setdefault(f"{ref['table']}:{ref['id']}", ref)
+            refs.extend(list(supporting.values())[:STATEMENT_REFS_PER_EDGE])
             statements = len(
                 {
                     item.row.get("statement_ordinal", item.row.get("ordinal"))
@@ -928,8 +1094,10 @@ class _Builder:
                     "afferent_modules": ca,
                     "instability": round(ce / (ca + ce), 4) if ca + ce else None,
                 }
-            else:
+            elif node.kind == "external_package":
                 metrics = {"importing_modules": len({k for k, v in external.items() if key in v})}
+            else:
+                metrics = {}
             values[key] = replace(node, metrics=metrics)
         return values
 
@@ -976,8 +1144,11 @@ class _Builder:
         edges: list[ArchitectureEdge],
         nodes: dict[str, ArchitectureNode],
         components: list[ArchitectureComponent],
+        extra: Sequence[tuple[str, str, str, tuple[str, ...], Row, tuple[EvidenceLink, ...]]] = (),
     ) -> list[ArchitectureDiagnostic]:
-        drafts: list[tuple[str, str, str, tuple[str, ...], Row, tuple[EvidenceLink, ...]]] = []
+        drafts: list[tuple[str, str, str, tuple[str, ...], Row, tuple[EvidenceLink, ...]]] = list(
+            extra
+        )
         by_key = {edge.key: edge for edge in edges}
         for component in components:
             if component.level == "module":
@@ -1070,6 +1241,40 @@ class _Builder:
                         (key,), {"coverage_state": node.coverage_state}, node.evidence,
                     )
                 )  # fmt: skip
+        for source in self.source.modules:
+            key = module_key(source.locator)
+            found = nodes.get(key)
+            if found is None or source.outcome == "failed":
+                continue
+            if source.literal_state in {"not_extracted", "failed", "not_current"}:
+                drafts.append(
+                    (
+                        "coverage", "LITERALS_NOT_EXTRACTED", "unknown", (key,),
+                        {"state": source.literal_state}, found.evidence,
+                    )
+                )  # fmt: skip
+            elif source.literal_state == "partial":
+                drafts.append(
+                    (
+                        "coverage", "LITERALS_PARTIAL", "observed", (key,),
+                        {"state": source.literal_state}, found.evidence,
+                    )
+                )  # fmt: skip
+            opaque = [row for row in source.literals if row["kind"] == "opaque_dynamic_import"]
+            if opaque:
+                link = self._evidence(
+                    "literal_rows",
+                    [literal_ref(source.locator, row) for row in opaque[:STATEMENT_REFS_PER_EDGE]],
+                    {"count": len(opaque)},
+                    f"{source.locator} loads {len(opaque)} module(s) with a non-literal specifier",
+                )
+                drafts.append(
+                    (
+                        "resolution", "DYNAMIC_IMPORT_OPAQUE", "unknown", (key,),
+                        {"count": len(opaque), "lines": [row["start_line"] for row in opaque][:20]},
+                        (link,),
+                    )
+                )  # fmt: skip
         drafts.sort(key=lambda item: (item[0], item[1], item[3], digest(item[4])))
         return [
             ArchitectureDiagnostic(position, code, category, tier, subjects, attributes, links)  # type: ignore[arg-type]
@@ -1113,10 +1318,35 @@ class _Builder:
                 "statements": sum(alias_prefixes.values()),
                 "files": sorted(alias_files),
             },
-            "python_guard_context": "unknown",
-            "literals": "not_extracted",
-            "opaque_dynamic_imports": "not_observable",
+            **self._literal_coverage(),
             "catalog_outcome": self.source.catalog_outcome,
+        }
+
+    def _literal_coverage(self) -> Row:
+        states: Counter[str] = Counter()
+        guard: Counter[str] = Counter()
+        opaque = 0
+        observable = True
+        for module in self.source.modules:
+            if module.outcome == "failed":
+                continue
+            states[module.literal_state] += 1
+            if module.literal_state == "not_applicable":
+                continue
+            observable = observable and module.literals_usable
+            opaque += sum(row["kind"] == "opaque_dynamic_import" for row in module.literals)
+            if _is_python(module.language):
+                guard["known" if module.classification_known else "unknown"] += 1
+        api = self.api.coverage(states) if self.api is not None else {}
+        return {
+            "python_guard_context": "known" if not guard["unknown"] else "unknown",
+            "python_guard_files": dict(sorted(guard.items())),
+            "literals": dict(sorted(states.items())),
+            "opaque_dynamic_imports": (
+                "not_observable" if not observable else "present" if opaque else "none_observed"
+            ),
+            "opaque_dynamic_import_count": opaque,
+            "api": api,
         }
 
     def _result(
@@ -1225,6 +1455,9 @@ def architecture_input(
     relations: Sequence[SemanticRelation],
     relation_counts: Mapping[str, int],
     catalog_outcome: str,
+    literals: Mapping[str, Sequence[Row]] | None = None,
+    top_level_names: Mapping[str, Iterable[str]] | None = None,
+    endpoints: Sequence[EndpointInput] = (),
 ) -> ArchitectureInput:
     """Normalise one catalog run and its structural rows into the builder's input.
 
@@ -1262,6 +1495,27 @@ def architecture_input(
             for row in module_imports
             if row.get("owner_symbol_id") and str(row["owner_symbol_id"]) in owner_kinds
         }
+        literal_name = (
+            PYTHON_LITERALS
+            if _is_python(language)
+            else TS_LITERALS
+            if language in {"TypeScript", "JavaScript"}
+            else None
+        )
+        literal_row = (
+            next(
+                (item for item in extractions.get(key, ()) if item["extractor"] == literal_name),
+                None,
+            )
+            if literal_name
+            else None
+        )
+        state = literal_state(literal_name, literal_row)
+        module_literals = (
+            tuple((literals or {}).get(str(literal_row["id"]), ()))
+            if literal_row is not None and state in {"extracted", "partial"}
+            else ()
+        )
         modules.append(
             ModuleInput(
                 locator,
@@ -1273,6 +1527,10 @@ def architecture_input(
                 module_imports,
                 module_exports,
                 owners,
+                state,
+                literal_row if state in {"extracted", "partial"} else None,
+                module_literals,
+                frozenset((top_level_names or {}).get(key, ())),
             )
         )
     sources = {entity.entity_key for entity in files.values()}
@@ -1295,5 +1553,23 @@ def architecture_input(
         if row.get("stable_identity_id")
     }
     return ArchitectureInput(
-        tuple(inventory), tuple(modules), tuple(selected), catalog_outcome, identities
+        tuple(inventory),
+        tuple(modules),
+        tuple(selected),
+        catalog_outcome,
+        identities,
+        tuple(endpoints),
     )
+
+
+def literal_state(extractor: str | None, row: Row | None) -> str:
+    """Per-artifact literal coverage: only a current, extracted pass is usable (F10)."""
+    if extractor is None:
+        return "not_applicable"
+    if row is None:
+        return "not_extracted"
+    if row["outcome"] in {"failed", "skipped"}:
+        return "failed"
+    if row["contract_digest"] != extractor_contract_digest(extractor):
+        return "not_current"
+    return "partial" if row["outcome"] == "partial" else "extracted"

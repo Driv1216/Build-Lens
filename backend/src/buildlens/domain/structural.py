@@ -155,6 +155,17 @@ class ExportReference:
 
 
 @dataclass(frozen=True, slots=True)
+class ArchitectureLiteral:
+    """Stage 14 sanitised syntactic evidence row (``*-architecture-literals.v1``)."""
+
+    ordinal: int
+    kind: str
+    span: SourceSpan
+    subject: str | None
+    attributes: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactExtraction:
     """One additive, separately contracted extractor pass over a single artifact.
 
@@ -175,6 +186,7 @@ class ArtifactExtraction:
     symbol_facts: tuple[SymbolFacts, ...] = ()
     references: tuple[SymbolReference, ...] = ()
     exports: tuple[ExportReference, ...] = ()
+    literals: tuple[ArchitectureLiteral, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

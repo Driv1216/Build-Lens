@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   getCycles, getDiagnostics, getMatrix, getNeighbourhood, getOverview,
   type ClassSet, type Cycles, type DiagnosticPage, type Matrix, type Neighbourhood, type Overview,
@@ -6,27 +6,12 @@ import {
 import { visible } from '../explore/visible'
 import { layered } from './layout'
 import { ClassChip, TierBadge } from './parts'
-import { describe, label } from './format'
+import { label } from './format'
+import { useRequest } from './useRequest'
 
 type Scope = { projectId: string; snapshotId: string; revision: string }
 
-function useRequest<T>(load: (signal: AbortSignal) => Promise<T>, deps: unknown[]): { value: T | null; error: string | null } {
-  const [value, setValue] = useState<T | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  useEffect(() => {
-    const controller = new AbortController()
-    setValue(null); setError(null)
-    void load(controller.signal)
-      .then(result => { if (!controller.signal.aborted) setValue(result) })
-      .catch((reason: unknown) => { if (!controller.signal.aborted) setError(describe(reason)) })
-    return () => controller.abort()
-    // The caller lists the inputs that define the request.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
-  return { value, error }
-}
-
-function Status({ error }: { error: string | null }) {
+export function Status({ error }: { error: string | null }) {
   return error ? <p className="error" role="alert">{error}</p> : <p className="note" role="status">Verifying…</p>
 }
 
