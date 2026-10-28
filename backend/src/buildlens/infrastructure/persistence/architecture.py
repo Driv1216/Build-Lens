@@ -993,6 +993,74 @@ class SqlAlchemyArchitectureStore:
         with self._session_factory() as session:
             return self._fingerprint(session, run_id)
 
+    # ----------------------------------------------------------------- evaluation reads (D)
+
+    def statement_rows(self, structural_analysis_id: UUID) -> dict[str, Row]:
+        """Every import row and re-export row of one structural run, with its file locator."""
+        values: dict[str, Row] = {}
+        with self._session_factory() as session:
+            for record, locator in session.execute(
+                select(ImportReferenceRecord, ArtifactAnalysisRecord.locator)
+                .join(
+                    ArtifactAnalysisRecord,
+                    ArtifactAnalysisRecord.id == ImportReferenceRecord.artifact_analysis_id,
+                )
+                .where(ArtifactAnalysisRecord.structural_analysis_id == structural_analysis_id)
+            ):
+                values[str(record.id)] = {
+                    **_import_row(record),
+                    "table": "import_references",
+                    "locator": locator,
+                }
+            for export, locator in session.execute(
+                select(ExportReferenceRecord, ArtifactAnalysisRecord.locator)
+                .join(
+                    ArtifactAnalysisRecord,
+                    ArtifactAnalysisRecord.id == ExportReferenceRecord.artifact_analysis_id,
+                )
+                .where(
+                    ArtifactAnalysisRecord.structural_analysis_id == structural_analysis_id,
+                    ExportReferenceRecord.kind.in_(["reexport", "reexport_all"]),
+                )
+            ):
+                values[str(export.id)] = {
+                    **_export_row(export),
+                    "table": "export_references",
+                    "locator": locator,
+                }
+        return values
+
+    def source_chunks(self, catalog_run_id: UUID, locators: Sequence[str]) -> dict[str, list[Row]]:
+        """Stored chunks (content and hash) of the catalog's processing run for these files."""
+        values: dict[str, list[Row]] = defaultdict(list)
+        with self._session_factory() as session:
+            catalog = session.get(SemanticCatalogRunRecord, catalog_run_id)
+            if catalog is None:
+                return {}
+            for index in range(0, len(locators), _BATCH):
+                for chunk, locator in session.execute(
+                    select(ChunkRecord, ArtifactProcessingRecord.locator)
+                    .join(
+                        ArtifactProcessingRecord,
+                        ArtifactProcessingRecord.id == ChunkRecord.artifact_processing_id,
+                    )
+                    .where(
+                        ArtifactProcessingRecord.processing_run_id == catalog.processing_run_id,
+                        ArtifactProcessingRecord.locator.in_(
+                            list(locators[index : index + _BATCH])
+                        ),
+                    )
+                    .order_by(ArtifactProcessingRecord.locator, ChunkRecord.ordinal)
+                ):
+                    values[locator].append(
+                        {
+                            **_chunk_row(chunk),
+                            "start_line": chunk.start_line,
+                            "end_line": chunk.end_line,
+                        }
+                    )
+        return dict(values)
+
     def load_graph(self, run_id: UUID) -> tuple[StoredGraph, str]:
         """All elements and the fingerprint, read in one repeatable-read snapshot."""
         with self._session_factory() as session:

@@ -10,6 +10,7 @@ publishing a graph that disagrees with its cited evidence.
 from __future__ import annotations
 
 import posixpath
+import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -275,6 +276,60 @@ def ancestors(key: str, parents: Mapping[str, str | None]) -> list[str]:
     while (parent := parents[chain[-1]]) is not None:
         chain.append(parent)
     return chain
+
+
+# ``direction-diagnostics.v1``: inferred from path conventions only (never from content).
+DIRECTION_CODES: dict[str, tuple[str, ...]] = {
+    "PRODUCTION_IMPORTS_TEST": ("TEST_PATH_CONVENTION",),
+    "RUNTIME_IMPORTS_MIGRATION": ("MIGRATION_PATH_CONVENTION",),
+    "CROSS_WORKSPACE_RELATIVE_IMPORT": ("WORKSPACE_FROM_MANIFESTS",),
+}
+_TEST_SEGMENTS = {"tests", "test", "__tests__"}
+_TEST_NAME = re.compile(r"^(test_.*\.py|.*_test\.py|conftest\.py|.*\.(test|spec)\.[cm]?[jt]sx?)$")
+
+
+def is_test_path(locator: str) -> bool:
+    parts = locator.split("/")
+    return bool(_TEST_SEGMENTS & set(parts[:-1]) or _TEST_NAME.match(parts[-1]))
+
+
+def is_migration_path(locator: str) -> bool:
+    parts = locator.split("/")[:-1]
+    return "migrations" in parts or "/".join(parts).endswith("alembic/versions")
+
+
+def _workspace(key: str, nodes: Mapping[str, ArchitectureNode]) -> str | None:
+    current: str | None = key
+    while current is not None and not current.startswith("workspace:"):
+        node = nodes.get(current)
+        current = node.parent_key if node is not None else None
+    return current
+
+
+def direction_codes(edge: ArchitectureEdge, nodes: Mapping[str, ArchitectureNode]) -> list[str]:
+    """Direction diagnostics of one resolved module edge (``direction-diagnostics.v1``)."""
+    if (
+        edge.kind not in MODULE_EDGE_KINDS
+        or edge.target_key is None
+        or not edge.target_key.startswith("module:")
+        or edge.source_key == edge.target_key
+    ):
+        return []
+    source = edge.source_key.removeprefix("module:")
+    target = edge.target_key.removeprefix("module:")
+    codes = []
+    if is_test_path(target) and not is_test_path(source):
+        codes.append("PRODUCTION_IMPORTS_TEST")
+    if is_migration_path(target) and not (is_migration_path(source) or is_test_path(source)):
+        codes.append("RUNTIME_IMPORTS_MIGRATION")
+    relative = any(str(text).startswith(".") for text in edge.attributes.get("module_text", []))
+    if (
+        relative
+        and not source.endswith(".py")
+        and _workspace(edge.source_key, nodes) != _workspace(edge.target_key, nodes)
+    ):
+        codes.append("CROSS_WORKSPACE_RELATIVE_IMPORT")
+    return codes
 
 
 def _resolved_module_edges(edges: Iterable[ArchitectureEdge]) -> list[ArchitectureEdge]:
@@ -820,7 +875,10 @@ class _Builder:
             roots=self.resolver.roots,
             evidence=self._evidence,
         )
-        views.run()
+        try:
+            views.run()
+        except ValueError as error:  # a view element produced twice: fail closed, never merge
+            raise ArchitectureBuildError("ARCHITECTURE_KEY_COLLISION", str(error)) from error
         for key, node in views.new_nodes.items():
             if key in nodes:
                 raise ArchitectureBuildError("ARCHITECTURE_KEY_COLLISION", key)
@@ -1222,12 +1280,15 @@ class _Builder:
                 per_module[(code, edge.source_key)].append(edge)
             if edge.attributes.get("star"):
                 per_module[("STAR_IMPORT", edge.source_key)].append(edge)
+            for code in direction_codes(edge, nodes):
+                per_module[(code, edge.source_key)].append(edge)
         categories = {
             "SELF_IMPORT": ("graph", "derived"),
             "IMPORT_NOT_FOUND": ("resolution", "unknown"),
             "IMPORT_AMBIGUOUS": ("resolution", "unknown"),
             "ALIAS_NOT_RESOLVED": ("resolution", "unknown"),
             "STAR_IMPORT": ("resolution", "observed"),
+            **{code: ("direction", "inferred") for code in DIRECTION_CODES},
         }
         for (code, module), members in sorted(per_module.items()):
             category, tier = categories[code]
@@ -1245,6 +1306,8 @@ class _Builder:
                         "names": sum(edge.count for edge in members),
                         "targets": targets[:DIAGNOSTIC_TARGET_SAMPLE],
                         "targets_total": len(targets),
+                        **({"conditions": list(DIRECTION_CODES[code])}
+                           if code in DIRECTION_CODES else {}),
                     },
                     links,
                 )

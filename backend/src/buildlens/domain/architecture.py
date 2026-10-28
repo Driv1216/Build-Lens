@@ -28,13 +28,15 @@ INTEGRITY_VERSION = "architecture-integrity.v1"
 SCC_VERSION = "scc.tarjan-iterative.v1"
 CONTAINMENT_VERSION = "containment.v1"
 AGGREGATION_VERSION = "aggregation.v1"
+DIRECTION_VERSION = "direction-diagnostics.v1"
 EVIDENCE_RENDERER = "architecture-evidence.v1"
 # Milestone B API projection contracts (application/architecture_api.py).
 ROUTER_BINDING_VERSION = "router-binding.v1"
 HTTP_SINKS_VERSION = "http-sinks.v1"
 CLIENT_WRAPPER_VERSION = "client-wrapper.v1"
 CLIENT_FOLDING_VERSION = "client-folding.v1"
-API_MATCHING_VERSION = "api-matching.v2"
+# v3 (Milestone D): typed converters accept only their characters (v2 accepted any segment).
+API_MATCHING_VERSION = "api-matching.v3"
 # Milestone C view contracts (application/architecture_views.py).
 VIEW_CONTRACTS = {
     "manifests": "manifest-facts.v1",
@@ -156,6 +158,7 @@ def architecture_contract() -> dict[str, object]:
         "scc": SCC_VERSION,
         "containment": CONTAINMENT_VERSION,
         "aggregation": AGGREGATION_VERSION,
+        "direction_diagnostics": DIRECTION_VERSION,
         "evidence_renderer": EVIDENCE_RENDERER,
         "literals": {name: extractor_contract_digest(name) for name in sorted(LITERAL_EXTRACTORS)},
         "api": {

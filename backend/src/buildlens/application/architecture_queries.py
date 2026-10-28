@@ -41,6 +41,7 @@ from buildlens.domain.architecture_graph import breadth_first, shortest_path
 
 QUERY_DEADLINE_SECONDS = 5.0
 # Milestone C views: node kinds, edge kinds, diagnostic categories and coverage sections.
+CONTAINMENT_KINDS = frozenset({"workspace", "container", "module"})
 VIEWS: dict[str, tuple[frozenset[str], frozenset[str], frozenset[str], tuple[str, ...]]] = {
     "integrations": (
         frozenset({"external_package", "external_destination"}),
@@ -479,11 +480,9 @@ class ArchitectureQueries:
         node = self._node(loaded, parent) if parent else None
         keys = loaded.children.get(parent, [])
         if parent is None:
-            keys = [
-                key
-                for key in keys
-                if loaded.nodes[key].kind not in {"external_package", "external_destination"}
-            ]
+            # The root lists the containment hierarchy only; view nodes without a parent
+            # (tables, slices, layer candidates, packages, hosts) belong to their own views.
+            keys = [key for key in keys if loaded.nodes[key].kind in CONTAINMENT_KINDS]
         if len(keys) > QUERY_MAX_ROWS:
             keys = keys[:QUERY_MAX_ROWS]
         counts: Counter[str] = Counter()

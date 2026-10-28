@@ -399,6 +399,8 @@ class ViewsProjection:
         language: str | None = None,
         entity: str | None = None,
     ) -> None:
+        if key in self.new_nodes:
+            raise ValueError(f"view node {key} produced twice")
         self.new_nodes[key] = ArchitectureNode(
             key,
             cast(Any, kind),
@@ -913,7 +915,9 @@ class ViewsProjection:
 
     def _layer_scopes(self) -> list[tuple[str, bool]]:
         """(scope, python): from each Python source root follow the single-package chain;
-        from each npm workspace follow the single-container chain without direct files."""
+        from each npm workspace follow the single-container chain without direct files. A
+        scope reached both ways (a root holding pyproject.toml and package.json) is analysed
+        once, over all its containers (the npm rule): one candidate per scope node."""
         starts: list[tuple[str, bool]] = [
             (f"container:{root}" if root else "workspace:.", True) for root in self.roots
         ]
@@ -943,7 +947,7 @@ class ViewsProjection:
                     key = containers[0]
                     continue
                 break
-            if (key, python) not in scopes:
+            if key not in {scope for scope, _ in scopes}:
                 scopes.append((key, python))
         return scopes
 

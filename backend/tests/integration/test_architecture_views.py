@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import Engine
 
 from buildlens.application.architecture import ArchitectureService
+from buildlens.application.architecture_queries import ArchitectureQueries
 from buildlens.infrastructure.persistence.architecture import SqlAlchemyArchitectureStore
 from tests.semantic_support import CatalogStack, write
 
@@ -220,3 +221,19 @@ def test_layer_candidates_and_functional_slices(model: Any) -> None:
     assert "module:app/application/orders_utils.py" not in members
     assert "module:app/application/orders_utils.py" in orders.attributes["shared_modules"]
     assert "users" in slices
+
+
+def test_containment_tree_root_lists_only_containment(pg_engine: Engine, tmp_path: Path) -> None:
+    """D7 browser run: parentless view nodes (tables, slices, layers) were listed as files."""
+    write(tmp_path, FILES)
+    stack = CatalogStack(pg_engine, tmp_path, "F-views tree")
+    snapshot = stack.prepared()
+    stack.catalog.build(stack.project.id, snapshot.id)
+    service = ArchitectureService(SqlAlchemyArchitectureStore(stack.factory), stack.catalog)
+    service.build(stack.project.id, snapshot.id)
+    root = ArchitectureQueries(service).tree(stack.project.id, snapshot.id, None, None)
+    assert root.children and {node.kind for node in root.children} <= {
+        "workspace",
+        "container",
+        "module",
+    }

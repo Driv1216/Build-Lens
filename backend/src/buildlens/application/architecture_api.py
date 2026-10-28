@@ -18,9 +18,10 @@ Contracts (recorded in ``architecture_contract()``):
   through one resolved import.
 * ``client-folding.v1``: module constants (``X ?? 'literal'`` yields two branches) and
   single-return URL helpers, same file or one import hop, depth <= 2.
-* ``api-matching.v2``: destination classes first; base path preserved; a candidate requires a
+* ``api-matching.v3``: destination classes first; base path preserved; a candidate requires a
   non-empty intersection of the two path patterns and a known method; there is no
-  unconditional "matched" state.
+  unconditional "matched" state. Typed converters (int, float, uuid) accept only their own
+  characters (v2 treated them as any segment, so ``/items/abc`` matched ``{id:int}``).
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from buildlens.domain.architecture import (
+    API_MATCHING_VERSION,
     ArchitectureEdge,
     ArchitectureNode,
     EvidenceLink,
@@ -148,8 +150,23 @@ def flask_join(prefix: str, rule: str) -> str:
     return "/".join((prefix.rstrip("/"), rule.lstrip("/"))) if rule else prefix
 
 
-# Pattern elements: ("c", char) | ("one", allow_slash) | ("star", allow_slash).
+# Pattern elements: ("c", char) | ("one", cls) | ("star", cls). ``cls`` is True (any
+# character), False (any but "/") or a typed converter's class ("int", "float", "uuid"); the
+# classes over-approximate Starlette's converter expressions and never accept "/".
 Element = tuple[str, Any]
+_CLASS_CHARS = {
+    "int": frozenset("0123456789"),
+    "float": frozenset("0123456789."),
+    "uuid": frozenset("0123456789abcdefABCDEF-"),
+}
+
+
+def _accepts(cls: Any, char: str) -> bool:
+    if cls is True:
+        return True
+    if cls is False:
+        return char != "/"
+    return char in _CLASS_CHARS[cls]
 
 
 def _literal(text: str) -> list[Element]:
@@ -175,7 +192,7 @@ def backend_pattern(path: str, framework: str) -> tuple[list[Element], set[str]]
             elements.append(("star", True))
             kinds.add("multi_segment")
         elif converter in {"int", "float", "uuid"}:
-            elements += [("one", False), ("star", False)]
+            elements += [("one", converter), ("star", converter)]
             kinds.add("typed")
         else:
             return None
@@ -219,10 +236,10 @@ def _overlap(a: Element, b: Element) -> bool:
     if a[0] == "c" and b[0] == "c":
         return bool(a[1] == b[1])
     if a[0] == "c":
-        return bool(b[1]) or a[1] != "/"
+        return _accepts(b[1], a[1])
     if b[0] == "c":
-        return bool(a[1]) or b[1] != "/"
-    return True
+        return _accepts(a[1], b[1])
+    return True  # every pair of classes shares the digits (or any non-"/" character)
 
 
 def intersects(first: Sequence[Element], second: Sequence[Element]) -> bool:
@@ -1156,7 +1173,7 @@ class ApiProjection:
             for endpoint, conditions in sorted(merged.items()):
                 self._edge(
                     f"calls_endpoint|{site.key}|{endpoint}", "calls_endpoint", site.key, endpoint,
-                    "inferred", {"api_matching": "api-matching.v2"}, conditions,
+                    "inferred", {"api_matching": API_MATCHING_VERSION}, conditions,
                     [link, *self.nodes[endpoint].evidence],
                 )  # fmt: skip
             for destination, result in destinations:

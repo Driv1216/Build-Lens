@@ -288,3 +288,117 @@ def rules_check(
 ) -> None:
     """Conformance of one rule-set version against the verified architecture (no enforcement)."""
     _rules(lambda service: service.evaluate(project, snapshot, run, version))
+
+
+eval_app = typer.Typer(
+    help="Pre-registered evaluation (architecture-evaluation.v1): exports, packets, scores."
+)
+app.add_typer(eval_app, name="eval")
+
+
+def _write_once(path: Path, value: Any, *, text: bool = False) -> None:
+    from buildlens.infrastructure.evaluation.local import atomic_write
+
+    atomic_write(path, value, text=text)
+    typer.echo(f"wrote {path}")
+
+
+def _read_json(path: Path) -> Any:
+    from buildlens.infrastructure.evaluation.local import read_json
+
+    return read_json(path)
+
+
+@eval_app.command("preregister")
+def eval_preregister(out: Path = typer.Option(..., "--out")) -> None:
+    """Write a draft pre-registration; the owner approves it before any scored run."""
+    from buildlens.application.architecture_evaluation import preregistration_template
+
+    _write_once(out, preregistration_template())
+
+
+@eval_app.command("module-units")
+def eval_module_units(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    corpus_tree_sha256: str = typer.Option(..., "--corpus-tree-sha256"),
+    out: Path = typer.Option(..., "--out"),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Export the verified run's per-unit module-edge output (write-once)."""
+    from buildlens.infrastructure.runtime import architecture_evaluation_service
+
+    with _runtime() as runtime:
+        value = architecture_evaluation_service(runtime).module_units(
+            project, snapshot, run, corpus_tree_sha256
+        )
+    _write_once(out, value)
+    _emit({"run_id": value["run_id"], "units": len(value["units"])})
+
+
+@eval_app.command("module-score")
+def eval_module_score(
+    preregistration: Path = typer.Option(..., "--preregistration"),
+    oracle: Path = typer.Option(..., "--oracle"),
+    system: Path = typer.Option(..., "--system"),
+    out: Path = typer.Option(..., "--out"),
+    explanations: Path | None = typer.Option(None, "--explanations"),
+) -> None:
+    """Score module units against the differential oracle (mechanical; no judging)."""
+    from buildlens.application.architecture_evaluation import score_module_units
+
+    notes = _read_json(explanations) if explanations else None
+    result = score_module_units(
+        _read_json(preregistration),
+        _read_json(oracle),
+        _read_json(system),
+        notes.get("units", notes) if isinstance(notes, dict) else None,
+    )
+    _write_once(out, result)
+    _emit({key: result[key] for key in ("overall", "criteria", "unexplained", "system_defects")})
+
+
+@eval_app.command("api-packet")
+def eval_api_packet(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    preregistration: Path = typer.Option(..., "--preregistration"),
+    corpus_tree_sha256: str = typer.Option(..., "--corpus-tree-sha256"),
+    out: Path = typer.Option(..., "--out", help="Directory for the blind packet."),
+    sealed: Path = typer.Option(..., "--sealed", help="File for the sealed system answers."),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Blind API packet (verified stored source only) and the sealed system answers."""
+    from buildlens.application.architecture_evaluation import (
+        labels_template,
+        render_packet_markdown,
+    )
+    from buildlens.infrastructure.runtime import architecture_evaluation_service
+
+    with _runtime() as runtime:
+        packet, answers = architecture_evaluation_service(runtime).api_packet(
+            project, snapshot, run, _read_json(preregistration), corpus_tree_sha256
+        )
+    _write_once(out / "packet.json", packet)
+    _write_once(out / "REVIEW.md", render_packet_markdown(packet), text=True)
+    _write_once(out / "labels.template.json", labels_template(packet))
+    _write_once(sealed, answers)
+    _emit({"sites": len(packet["sites"]), "endpoints": len(packet["endpoints"])})
+
+
+@eval_app.command("api-score")
+def eval_api_score(
+    preregistration: Path = typer.Option(..., "--preregistration"),
+    packet: Path = typer.Option(..., "--packet"),
+    sealed: Path = typer.Option(..., "--sealed"),
+    labels: Path = typer.Option(..., "--labels"),
+    out: Path = typer.Option(..., "--out"),
+) -> None:
+    """Score human labels against the sealed answers (refuses changed packets or labels)."""
+    from buildlens.application.architecture_evaluation import score_api
+
+    result = score_api(
+        _read_json(preregistration), _read_json(packet), _read_json(sealed), _read_json(labels)
+    )
+    _write_once(out, result)
+    _emit({key: result[key] for key in ("overall", "criteria", "sink_recall")})

@@ -1,4 +1,4 @@
-"""Stage 14 Milestone B pure API-matching rules (``api-matching.v2``)."""
+"""Stage 14 pure API-matching rules (``api-matching.v3``)."""
 
 from __future__ import annotations
 
@@ -75,3 +75,15 @@ def test_fetch_method_normalisation_is_byte_exact_beyond_six_methods() -> None:
     assert normalise_fetch_method("delete") == ("DELETE", ())
     assert normalise_fetch_method("patch") == ("patch", ("METHOD_NOT_NORMALISED_BY_FETCH",))
     assert normalise_fetch_method("PATCH") == ("PATCH", ())
+
+
+def test_typed_converters_accept_only_their_characters() -> None:
+    integer = _backend("/items/{item_id:int}")
+    assert intersects(client_pattern([("s", "/items/42")]), integer)
+    assert not intersects(client_pattern([("s", "/items/abc")]), integer)  # v2 defect (D4)
+    assert intersects(client_pattern([("s", "/items/"), ("e", "id")], strict=True), integer)
+    uuid = _backend("/runs/{run_id:uuid}")
+    assert intersects(client_pattern([("s", "/runs/0f-1a")]), uuid)
+    assert not intersects(client_pattern([("s", "/runs/latest")]), uuid)
+    flask = _backend("/items/<int:item_id>", "flask")
+    assert not intersects(client_pattern([("s", "/items/x1")]), flask)

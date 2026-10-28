@@ -438,3 +438,38 @@ deferred, not passed.** Design, deviations and verification: [SEMANTIC_MODEL.md]
 - The validator rejects bidi controls; Explore renders them visibly; mixed-script identifiers are a catalog limitation.
 - Review integrity: packets are bound to the sample's snapshot and catalog and to the pre-registered provider and model. Scores recompute the hard gates within the sample's scope and report an overall `passed`, `failed` or `inconclusive`. Migration `0013` adds the `configuration_invalid` attempt outcome.
 
+## Stage 14 — Architecture Intelligence
+
+**Status: Milestones A–D implemented (migrations 0014–0016).** Design, contracts, evaluation and
+deviations: [ARCHITECTURE_INTELLIGENCE.md](ARCHITECTURE_INTELLIGENCE.md).
+
+**Module graph (Milestone A)**
+- **Builder:** `application/architecture_builder.py` builds a snapshot-owned, immutable architecture run as a pure function of persisted rows: the captured catalog run, the import and export rows it cites, and the inventory. No source reader is called.
+- **Graph algorithms:** `domain/architecture_graph.py` (iterative Tarjan, condensation, bounded BFS, witness paths). There is no graph database or networkx.
+- **Integrity (`architecture-integrity.v1`):**
+  - every node, edge, component and diagnostic stores a digest over all its semantic fields and its evidence-link set;
+  - links, members and subjects are rows with same-run composite FKs;
+  - authoritative reads re-verify every asserted element and its evidence, and fail closed with 409;
+  - `/integrity` is the non-authoritative full inspection.
+- **Cache:** a per-process cache holds topology only. Each request re-checks freshness and the per-table fingerprints first (I-C1…I-C5).
+- **Migration:** `0014`.
+
+**Literal evidence and API (Milestone B)**
+- **Literal passes:** additive extractor passes (`python-architecture-literals.v1`, `ts-architecture-literals.v1`) run in the supervised worker. They are never part of the catalog contract or processing fingerprints, and failures are confined to the pass.
+- **Literal rows:** sanitised to scheme, host, port and path before persistence, with caps of 256 rows per artifact and 50,000 per run. Migration `0015`.
+- **API projection:** `application/architecture_api.py` covers router binding and mount chains, request sites from recognised sinks and qualified wrappers only, folding, and `api-matching.v3` candidates.
+
+**Views and rules (Milestone C)**
+- **Views:** `application/architecture_views.py` builds manifests, packages, the database view, frontend routes, layer candidates and functional slice candidates.
+- **Rules:** `application/architecture_rules.py` handles owner-declared intent: append-only rule sets (migration `0016`), with conformance evaluated per request.
+
+**Evaluation and hardening (Milestone D)**
+- **Evaluation:** `application/architecture_evaluation.py` (`architecture-evaluation.v1`) holds the pre-registration guard, mechanical scorers, module-unit export, the blind API packet with sealed answers, and the sink-recall sample.
+- **Oracle:** `backend/scripts/architecture_differential.{py,mjs}` is the lab-only differential oracle. It is independent of BuildLens and executes nothing from the corpus.
+- **Hardening:**
+  - typed converters in matching;
+  - one layer candidate per scope;
+  - direction diagnostics;
+  - a containment-only tree root;
+  - Stage 13 `verify_facts` now also compares the stored fact text, and loads authority rows in bulk.
+

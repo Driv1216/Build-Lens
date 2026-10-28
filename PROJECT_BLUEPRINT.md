@@ -1645,6 +1645,20 @@ AI-generated interpretation
 
 ## Stage 14 — Architecture Intelligence
 
+**Status: implemented, 2026-10-29 (Milestones A–D).** It provides an immutable, evidence-linked
+architecture model built from the Stage 13 catalog and sanitised literal evidence:
+
+- module dependencies and cycles;
+- API endpoints and conditional connections;
+- integrations, database, frontend routes;
+- layer and functional slice candidates;
+- conformance with owner-declared rules.
+
+The pre-registered evaluation passed for fixtures, self-hosted module edges (precision and
+recall 0.9989) and the adversarial suite. The human-labelled self-hosted API suite awaits labels.
+Results, deviations and limits are in [docs/ARCHITECTURE_INTELLIGENCE.md](docs/ARCHITECTURE_INTELLIGENCE.md)
+and [CURRENT_STATE.md](CURRENT_STATE.md). The original planning text below is unchanged.
+
 Build higher-level maps:
 
 ```text

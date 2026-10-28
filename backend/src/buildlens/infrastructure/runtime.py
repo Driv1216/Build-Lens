@@ -7,6 +7,7 @@ from threading import Lock
 from typing import Any
 
 from buildlens.application.architecture import ArchitectureGraphCache, ArchitectureService
+from buildlens.application.architecture_evaluation import ArchitectureEvaluationService
 from buildlens.application.architecture_queries import ArchitectureQueries
 from buildlens.application.architecture_rules import ArchitectureRulesService
 from buildlens.application.ask import AskService
@@ -76,6 +77,13 @@ def architecture_service(state: Any) -> ArchitectureService:
         semantic_catalog_service(state),
         state.architecture_lock,
         state.architecture_cache,
+    )
+
+
+def architecture_evaluation_service(state: Any) -> ArchitectureEvaluationService:
+    """Read-only exports of a verified run for the pre-registered evaluation (Milestone D)."""
+    return ArchitectureEvaluationService(
+        architecture_service(state), SqlAlchemyArchitectureStore(state.session_factory)
     )
 
 
