@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from buildlens.application.architecture import ArchitectureService
 from buildlens.application.architecture_queries import ArchitectureQueries
+from buildlens.application.architecture_rules import ArchitectureRulesService
 from buildlens.application.ask import AskService
 from buildlens.application.context import ContextService
 from buildlens.application.embeddings import EmbeddingService
@@ -24,6 +25,7 @@ from buildlens.infrastructure.persistence.repositories import SqlAlchemyProjectR
 from buildlens.infrastructure.persistence.snapshots import SqlAlchemySnapshotStore
 from buildlens.infrastructure.persistence.structural import SqlAlchemyStructuralAnalysisStore
 from buildlens.infrastructure.runtime import (
+    architecture_rules_service,
     architecture_service,
     ask_service,
     context_service,
@@ -98,6 +100,10 @@ def get_architecture_service(request: Request) -> ArchitectureService:
 
 def get_architecture_queries(request: Request) -> ArchitectureQueries:
     return ArchitectureQueries(architecture_service(request.app.state))
+
+
+def get_architecture_rules(request: Request) -> ArchitectureRulesService:
+    return architecture_rules_service(request.app.state)
 
 
 def get_semantic_catalog_service(request: Request) -> SemanticCatalogService:

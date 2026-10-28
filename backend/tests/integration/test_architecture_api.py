@@ -76,6 +76,12 @@ def test_architecture_http_contracts(pg_engine: Engine, tmp_path: Path) -> None:
         assert view["endpoints"][0]["attributes"]["paths"][0]["reasons"] == ["ROUTER_NOT_MOUNTED"]
         assert view["connections"] == [] and view["coverage"]["endpoints"]["total"] == 1
         assert client.get(arch + "/api?limit=0").status_code == 422
+        database = client.get(arch + "/views/database").json()
+        assert database["verification"] == "verified"
+        assert {n["name"] for n in database["nodes"]} == {"users"}
+        assert client.get(arch + "/views/subsystems").status_code == 200
+        assert client.get(arch + "/views/frontend").json()["coverage"]["frontend_routes"]
+        assert client.get(arch + "/views/unknown").status_code == 422
         assert client.get(arch + "/runs").json()["total"] == 1
         assert client.get(f"{arch}/runs/{run_id}").status_code == 200
         assert client.get(f"{arch}/runs/{uuid4()}").status_code == 404

@@ -2368,3 +2368,26 @@ Base.metadata.tables["project_versions"].append_constraint(
         initially="DEFERRED",
     )
 )
+
+
+class ArchitectureRuleSetRecord(Base):
+    """Stage 14 owner-declared rule set version: immutable, append-only, no evidence tier."""
+
+    __tablename__ = "architecture_rule_sets"
+    __table_args__ = (
+        UniqueConstraint("project_id", "version", name="uq_architecture_rule_sets_version"),
+        CheckConstraint("version >= 1", name="ck_architecture_rule_sets_version"),
+        CheckConstraint("digest ~ '^[0-9a-f]{64}$'", name="ck_architecture_rule_sets_digest"),
+        CheckConstraint("jsonb_typeof(rules) = 'array'", name="ck_architecture_rule_sets_rules"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(nullable=False)
+    contract: Mapped[str] = mapped_column(String(64), nullable=False)
+    rules: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

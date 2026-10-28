@@ -21,7 +21,7 @@ Top-level statements containing syntax errors are skipped and the extraction is 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from uuid import uuid4
 
 import tree_sitter
@@ -83,6 +83,7 @@ class _Context:
     guarded: bool = False
     construct: str | None = None
     parameters: tuple[str, ...] = ()
+    route: int | None = None  # ordinal of the enclosing ``<Route>`` row
 
 
 def _unwrap(node: tree_sitter.Node | None) -> tree_sitter.Node | None:
@@ -281,8 +282,13 @@ class _Walker:
                 self.helper(node, node)
             elif kind == "call_expression":
                 self.call(node, context)
-            elif kind in {"jsx_opening_element", "jsx_self_closing_element"}:
-                self.route(node)
+            elif kind == "jsx_self_closing_element":
+                self.route(node, context.route)
+            elif kind == "jsx_element":
+                opening = node.child_by_field_name("open_tag")
+                ordinal = self.route(opening, context.route) if opening is not None else None
+                if ordinal is not None:
+                    context = replace(context, route=ordinal)
             for child, child_context in reversed(self.children(node, context)):
                 stack.append((child, child_context))
         return dropped
@@ -303,6 +309,7 @@ class _Walker:
                 guarded=context.guarded,
                 construct=context.construct,
                 parameters=_parameters(node) if context.depth == 0 else context.parameters,
+                route=context.route,
             )
             return [(child, inner) for child in node.named_children]
         for index, child in enumerate(node.children):
@@ -524,9 +531,10 @@ class _Walker:
             {"parameters": list(_parameters(function)), "value": template},
         )
 
-    def route(self, node: tree_sitter.Node) -> None:
+    def route(self, node: tree_sitter.Node, parent: int | None) -> int | None:
+        """A ``<Route>`` row with its enclosing route; returns the new row's ordinal."""
         if _text(node.child_by_field_name("name")) != "Route":
-            return
+            return None
         path: dict[str, object] = {"state": "absent"}
         element: str | None = None
         index = False
@@ -564,7 +572,9 @@ class _Walker:
                     "jsx_opening_element",
                 }:
                     element = identifier_chain(_text(inner.child_by_field_name("name")))
-        self.add("frontend_route", node, element, {"path": path, "index": index})
+        before = len(self.rows)
+        self.add("frontend_route", node, element, {"path": path, "index": index, "parent": parent})
+        return before if len(self.rows) > before else None
 
 
 def _parameters(function: tree_sitter.Node) -> tuple[str, ...]:
@@ -602,27 +612,16 @@ def _module_level_function(node: tree_sitter.Node) -> bool:
 
 
 def _flag(context: _Context, construct: str, conditional: bool) -> _Context:
-    return _Context(
-        context.depth,
-        context.function,
-        context.conditional or conditional,
-        context.loop,
-        context.callback,
-        True,
-        construct,
+    return replace(
+        context,
+        conditional=context.conditional or conditional,
+        guarded=True,
+        construct=construct,
     )
 
 
 def replace_loop(context: _Context) -> _Context:
-    return _Context(
-        context.depth,
-        context.function,
-        context.conditional,
-        True,
-        context.callback,
-        True,
-        "loop",
-    )
+    return replace(context, loop=True, guarded=True, construct="loop")
 
 
 def extract_ts_literals(locator: str, data: bytes) -> ArtifactExtraction:

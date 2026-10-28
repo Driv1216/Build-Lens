@@ -26,6 +26,18 @@ function route(path: string): unknown {
   if (path.includes('/architecture/node')) return { ...scoped, node: node('module:app/a.py', { kind: 'module', name: 'a‮.py' }), chain: [], children: [], outgoing: [edge], incoming: [], outgoing_total: 1, incoming_total: 0, components: [], diagnostics: [] }
   if (path.includes('/architecture/cycles')) return { ...scoped, items: [{ key: 'component:module:x', level: 'module', class_set: 'S1', scope_key: null, members: ['module:app/a.py', 'module:app/b.py'], witness: ['k1'], attributes: {}, evidence: [] }], edges: { k1: edge }, total: 1 }
   if (path.includes('/architecture/path')) return { ...scoped, source: 'module:app/b.py', target: 'module:app/a.py', class_set: 'S2', status: 'not_found_in_observed_graph', path: [], gaps: { complete: false, unknown_exits: [], coverage_gaps: [], run_gaps: ['OPAQUE_DYNAMIC_IMPORTS_NOT_OBSERVABLE'] } }
+  if (path.includes('/architecture/views/subsystems')) return { ...scoped, name: 'subsystems', nodes: [
+      node('layer_candidate:container:app', { kind: 'layer_candidate', name: 'layers of app', attributes: { order: [['container:app/api'], ['container:app/domain']], cyclic_groups: [], inversions: [{ from: 'container:app/domain', to: 'container:app/api', count: 1 }] } }),
+      node('functional_slice:orders:1', { kind: 'functional_slice', name: 'orders', attributes: { exclusive: 3, shared: 1, grouping: ['NAME_STEM'] } }),
+    ], nodes_total: 2, edges: [], edges_total: 0, diagnostics: [], coverage: { layers: {}, slices: { slices: 1, shared: 1 } }, limit: 500 }
+  if (path.includes('/architecture/views/database')) return { ...scoped, name: 'database', nodes: [
+      node('db_table:users', { kind: 'db_table', name: 'users', attributes: { models: [{ model: 'User' }], migrations: [{ line: 3 }], merged_by_name: true } }),
+    ], nodes_total: 1, edges: [], edges_total: 0, diagnostics: [{ ordinal: 1, code: 'NO_OBSERVED_MIGRATION', category: 'database', tier: 'derived', subjects: ['db_table:users'], attributes: { claim: 'NO_OBSERVED_MIGRATION', blocking_gaps: [] }, evidence: [] }],
+    coverage: { database: { tables: 1, not_covered: ['raw SQL'] } }, limit: 500 }
+  if (path.includes('/architecture/rule-results')) return { ...scoped, rule_set_version: 2, rule_set_digest: 'd'.repeat(64), result_key: 'k'.repeat(64), results: [
+      { rule: { name: 'domain is independent' }, outcome: 'not_satisfied', witnesses: [edge], witness_total: 1, witness_min_tier: 'derived', classes_evaluated: ['unconditional'], coverage_qualifier: [], matched: {} },
+      { rule: { name: 'api above db' }, outcome: 'not_determinable', witnesses: [], witness_total: 0, witness_min_tier: null, classes_evaluated: [], coverage_qualifier: ['UNRESOLVED_IMPORTS'], matched: {} },
+    ] }
   if (path.includes('/architecture/api')) return {
     ...scoped,
     endpoints: [node('endpoint:symbol:app/api.py#get_user', { kind: 'api_endpoint', attributes: { function: 'get_user', methods: ['GET'], paths: [{ path: '/api/users/{user_id}', status: 'derived', reasons: [], conditions: [] }], reasons: [] } })],
@@ -85,6 +97,26 @@ describe('ArchitecturePage', () => {
     expect(screen.getByText(/ownership is unknown/)).toBeInTheDocument()
     expect(screen.getByText('/api/users/{user_id}')).toBeInTheDocument()
     expect(screen.queryByText(/confirmed match/)).not.toBeInTheDocument()
+  })
+
+  it('labels layers and slices as inferred and rules as intent with conformance outcomes', async () => {
+    mocked.mockImplementation(async (path: string) => route(path))
+    show('/architecture?project=p1&snapshot=s1&view=subsystems')
+    expect(await screen.findByText(/This is not intended architecture/)).toBeInTheDocument()
+    expect(screen.getAllByText('Inferred').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText(/Against naming convention/)).toBeInTheDocument()
+    expect(await screen.findByText('Intent')).toBeInTheDocument()
+    expect(screen.getByText('Conformance: not satisfied')).toBeInTheDocument()
+    expect(screen.getByText(/UNRESOLVED_IMPORTS/)).toBeInTheDocument()
+  })
+
+  it('shows tables merged by name with their absence diagnostics', async () => {
+    mocked.mockImplementation(async (path: string) => route(path))
+    show('/architecture?project=p1&snapshot=s1&view=database')
+    expect(await screen.findByText(/No database is contacted/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'users' })).toBeInTheDocument()
+    expect(screen.getByText('NO_OBSERVED_MIGRATION')).toBeInTheDocument()
+    expect(screen.getByText(/Not covered: raw SQL/)).toBeInTheDocument()
   })
 
   it('fails closed with an explanation instead of partial content', async () => {

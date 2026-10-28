@@ -24,7 +24,7 @@ PYTHON_LITERALS = "python-architecture-literals.v1"
 TS_LITERALS = "ts-architecture-literals.v1"
 LITERAL_EXTRACTORS = frozenset({PYTHON_LITERALS, TS_LITERALS})
 
-LITERAL_ROWS_CONTRACT = "architecture-literal-rows.v1"
+LITERAL_ROWS_CONTRACT = "architecture-literal-rows.v2"
 LITERAL_SANITISATION_CONTRACT = "url-origin-path-only.v1"
 
 # Digest of the declarations extracted from the built-in canary fixture by the pinned

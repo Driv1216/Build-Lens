@@ -17,9 +17,14 @@ import typer
 
 from buildlens.application.architecture import ArchitectureService, Assertion
 from buildlens.application.architecture_queries import ArchitectureQueries
+from buildlens.application.architecture_rules import ArchitectureRulesService
 from buildlens.core.config import get_settings
 from buildlens.domain.architecture import CLASS_SETS, DEFAULT_CLASS_SET, MODULE_EDGE_KINDS
-from buildlens.infrastructure.runtime import LocalRuntime, architecture_service
+from buildlens.infrastructure.runtime import (
+    LocalRuntime,
+    architecture_rules_service,
+    architecture_service,
+)
 
 app = typer.Typer(help="Deterministic, evidence-backed architecture model (no AI text).")
 
@@ -148,6 +153,17 @@ def api(
     _queries(lambda queries: queries.api(project, snapshot, run, outcome=outcome, limit=500))
 
 
+@app.command("view")
+def view(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    name: str = typer.Option(..., help="integrations | database | frontend | subsystems"),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """One Milestone C view with its coverage and diagnostics."""
+    _queries(lambda queries: queries.view(project, snapshot, run, name))
+
+
 @app.command("coverage")
 def coverage(
     project: UUID = typer.Option(...),
@@ -235,3 +251,40 @@ def export(
             stream.write(content)
         os.replace(temporary, out)
         _emit({"written": str(out), "modules": len(modules), "edges": len(edges)})
+
+
+rules_app = typer.Typer(help="Owner-declared architecture rules (intent) and conformance checks.")
+app.add_typer(rules_app, name="rules")
+
+
+def _rules(call: Callable[[ArchitectureRulesService], Any]) -> None:
+    with _runtime() as runtime:
+        _emit(call(architecture_rules_service(runtime)))
+
+
+@rules_app.command("set")
+def rules_set(
+    project: UUID = typer.Option(...),
+    file: Path = typer.Option(..., exists=True, dir_okay=False, readable=True),
+) -> None:
+    """Declare a new immutable rule-set version from a local JSON file you wrote."""
+    payload = json.loads(file.read_text(encoding="utf-8"))
+    rules = payload.get("rules") if isinstance(payload, dict) else payload
+    _rules(lambda service: service.declare(project, rules))
+
+
+@rules_app.command("show")
+def rules_show(project: UUID = typer.Option(...), version: int | None = typer.Option(None)) -> None:
+    """The latest (or a given) declared rule-set version."""
+    _rules(lambda service: service.rule_set(project, version))
+
+
+@rules_app.command("check")
+def rules_check(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    version: int | None = typer.Option(None),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Conformance of one rule-set version against the verified architecture (no enforcement)."""
+    _rules(lambda service: service.evaluate(project, snapshot, run, version))

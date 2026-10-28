@@ -35,6 +35,17 @@ HTTP_SINKS_VERSION = "http-sinks.v1"
 CLIENT_WRAPPER_VERSION = "client-wrapper.v1"
 CLIENT_FOLDING_VERSION = "client-folding.v1"
 API_MATCHING_VERSION = "api-matching.v2"
+# Milestone C view contracts (application/architecture_views.py).
+VIEW_CONTRACTS = {
+    "manifests": "manifest-facts.v1",
+    "packages": "package-matching.v1",
+    "database": "database-view.v1",
+    "frontend_routes": "frontend-routes.v1",
+    "layers": "layer-candidates.v1",
+    "slices": "functional-slices.v1",
+    "absence_gating": "absence-gating.v1",
+    "stdlib_lists": "stdlib-lists.v1",
+}
 
 # Placeholder limits recorded in the contract (fail closed: a truncated graph would make
 # cycle and reachability claims false).
@@ -154,6 +165,7 @@ def architecture_contract() -> dict[str, object]:
             "client_folding": CLIENT_FOLDING_VERSION,
             "api_matching": API_MATCHING_VERSION,
         },
+        "views": dict(VIEW_CONTRACTS),
         "limits": {
             "max_nodes": MAX_NODES,
             "max_edges": MAX_EDGES,

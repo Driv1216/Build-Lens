@@ -25,6 +25,7 @@ from buildlens.application.architecture_api import (
     extraction_row_digest,
     literal_ref,
 )
+from buildlens.application.architecture_views import ManifestInput, TableInput, ViewsProjection
 from buildlens.application.semantic_catalog import ImportResolver
 from buildlens.domain.architecture import (
     AGGREGATION_VERSION,
@@ -136,6 +137,8 @@ class ArchitectureInput:
     catalog_outcome: str
     artifact_identities: dict[str, str] = field(default_factory=dict)
     endpoints: tuple[EndpointInput, ...] = ()
+    manifests: tuple[ManifestInput, ...] = ()
+    tables: tuple[TableInput, ...] = ()
 
 
 # --------------------------------------------------------------------------- row digests
@@ -439,6 +442,7 @@ class _Builder:
         self.modules = {item.locator: item for item in source.modules}
         self.evidence: dict[str, ArchitectureEvidence] = {}
         self.api: ApiProjection | None = None
+        self.views: ViewsProjection | None = None
         self.relations: dict[tuple[str, str, str | None, str | None], CatalogRelationInput] = {}
         for relation in source.relations:
             key = (
@@ -796,18 +800,35 @@ class _Builder:
         drafts = self._edges(statements, nodes)
         edges = self._finish_edges(drafts)
         aggregates = self._aggregate(edges, nodes)
-        api = ApiProjection(
-            [self._api_module(module, statements) for module in self.source.modules],
-            self.source.endpoints,
-            self._evidence,
-        )
+        api_modules = [self._api_module(module, statements) for module in self.source.modules]
+        api = ApiProjection(api_modules, self.source.endpoints, self._evidence)
         api.run()
         for key, node in api.nodes.items():
             if key in nodes:
                 raise ArchitectureBuildError("ARCHITECTURE_KEY_COLLISION", key)
             nodes[key] = node
         self.api = api
-        all_edges = sorted([*edges, *aggregates, *api.edges], key=lambda edge: edge.key)
+        views = ViewsProjection(
+            nodes=nodes,
+            module_edges=edges,
+            api_nodes=api.nodes,
+            api_edges=api.edges,
+            modules=api_modules,
+            module_inputs=self.modules,
+            manifests=self.source.manifests,
+            tables=self.source.tables,
+            roots=self.resolver.roots,
+            evidence=self._evidence,
+        )
+        views.run()
+        for key, node in views.new_nodes.items():
+            if key in nodes:
+                raise ArchitectureBuildError("ARCHITECTURE_KEY_COLLISION", key)
+            nodes[key] = node
+        self.views = views
+        all_edges = sorted(
+            [*edges, *aggregates, *api.edges, *views.edges], key=lambda edge: edge.key
+        )
         if len({edge.key for edge in all_edges}) != len(all_edges):
             raise ArchitectureBuildError("ARCHITECTURE_KEY_COLLISION", "duplicate edge key")
         if len(nodes) > MAX_NODES or len(all_edges) > MAX_EDGES:
@@ -817,7 +838,9 @@ class _Builder:
         all_edges = [replace(edge, ordinal=position) for position, edge in enumerate(all_edges)]
         nodes = self._metrics(nodes, all_edges)
         components = self._components(all_edges, nodes)
-        diagnostics = self._diagnostics(all_edges, nodes, components, api.diagnostics)
+        diagnostics = self._diagnostics(
+            all_edges, nodes, components, [*api.diagnostics, *views.diagnostics]
+        )
         ordered_nodes = [
             replace(node, ordinal=position)
             for position, node in enumerate(sorted(nodes.values(), key=lambda node: node.key))
@@ -1347,6 +1370,7 @@ class _Builder:
             ),
             "opaque_dynamic_import_count": opaque,
             "api": api,
+            **(self.views.coverage if self.views is not None else {}),
         }
 
     def _result(
@@ -1458,6 +1482,8 @@ def architecture_input(
     literals: Mapping[str, Sequence[Row]] | None = None,
     top_level_names: Mapping[str, Iterable[str]] | None = None,
     endpoints: Sequence[EndpointInput] = (),
+    manifests: Sequence[ManifestInput] = (),
+    tables: Sequence[TableInput] = (),
 ) -> ArchitectureInput:
     """Normalise one catalog run and its structural rows into the builder's input.
 
@@ -1559,6 +1585,8 @@ def architecture_input(
         catalog_outcome,
         identities,
         tuple(endpoints),
+        tuple(manifests),
+        tuple(tables),
     )
 
 

@@ -6,10 +6,11 @@ import { latestSnapshot } from '../../api/snapshots'
 import { HierarchyTree } from './HierarchyTree'
 import { Inspector } from './Inspector'
 import { ApiView } from './ApiView'
+import { DatabaseView, FrontendView, IntegrationsView, SubsystemsView } from './StructureViews'
 import { CyclesView, DiagnosticsView, MatrixView, NeighbourhoodView, OverviewView } from './Views'
 import { describe, label } from './format'
 
-const VIEWS = ['overview', 'modules', 'api', 'cycles', 'diagnostics'] as const
+const VIEWS = ['overview', 'modules', 'api', 'integrations', 'database', 'frontend', 'subsystems', 'cycles', 'diagnostics'] as const
 type View = (typeof VIEWS)[number]
 const CLASS_SETS: { value: ClassSet; text: string }[] = [
   { value: 'S0', text: 'S0 · unconditional only' },
@@ -114,6 +115,10 @@ export function ArchitecturePage() {
             {node.startsWith('module:') && <NeighbourhoodView {...scope} node={node} classSet={classSet} onSelect={select} />}
           </>}
           {view === 'api' && <ApiView {...scope} onSelect={select} />}
+          {view === 'integrations' && <IntegrationsView {...scope} onSelect={select} />}
+          {view === 'database' && <DatabaseView {...scope} onSelect={select} />}
+          {view === 'frontend' && <FrontendView {...scope} onSelect={select} />}
+          {view === 'subsystems' && <SubsystemsView {...scope} onSelect={select} />}
           {view === 'cycles' && <CyclesView {...scope} onSelect={select} />}
           {view === 'diagnostics' && <DiagnosticsView {...scope} onSelect={select} />}
         </section>

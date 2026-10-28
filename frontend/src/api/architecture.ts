@@ -156,6 +156,33 @@ export type ApiView = {
   offset: number
 }
 
+export type ViewName = 'integrations' | 'database' | 'frontend' | 'subsystems'
+export type ViewResult = {
+  run_id: string
+  freshness_reasons: string[]
+  verification: string
+  name: ViewName
+  nodes: ArchNode[]
+  nodes_total: number
+  edges: ArchEdge[]
+  edges_total: number
+  diagnostics: ArchDiagnostic[]
+  coverage: Record<string, unknown>
+  limit: number
+}
+export type IntentRuleSet = { rule_set_id: string; project_id: string; version: number; contract: string; digest: string; created_at: string; rules: Record<string, unknown>[] }
+export type ConformanceResult = {
+  rule: Record<string, unknown>
+  outcome: 'not_satisfied' | 'satisfied_in_observed_graph' | 'not_determinable' | 'selector_matches_nothing'
+  witnesses: ArchEdge[]
+  witness_total: number
+  witness_min_tier: Tier | null
+  classes_evaluated: string[]
+  coverage_qualifier: string[]
+  matched: Record<string, number>
+}
+export type RuleResults = { run_id: string; freshness_reasons: string[]; verification: string; rule_set_version: number; rule_set_digest: string; result_key: string; results: ConformanceResult[] }
+
 const base = (projectId: string, snapshotId: string) => `/projects/${projectId}/snapshots/${snapshotId}/architecture`
 const query = (values: Record<string, string | number | undefined | null>) => {
   const params = new URLSearchParams()
@@ -187,3 +214,9 @@ export const getEvidence = (p: string, s: string, digest: string, signal?: Abort
   request<Evidence>(`${base(p, s)}/evidence/${encodeURIComponent(digest)}`, { signal })
 export const getApiView = (p: string, s: string, outcome: string, offset: number, signal?: AbortSignal) =>
   request<ApiView>(`${base(p, s)}/api${query({ outcome, offset, limit: 100 })}`, { signal })
+export const getView = (p: string, s: string, name: ViewName, signal?: AbortSignal) =>
+  request<ViewResult>(`${base(p, s)}/views/${name}`, { signal })
+export const getRuleResults = (p: string, s: string, signal?: AbortSignal) =>
+  request<RuleResults>(`${base(p, s)}/rule-results`, { signal })
+export const declareRules = (p: string, rules: unknown[], signal?: AbortSignal) =>
+  request<IntentRuleSet>(`/projects/${p}/architecture-rules`, { method: 'POST', body: JSON.stringify({ rules }), signal })

@@ -17,6 +17,7 @@ from buildlens.application.architecture import (
     ArchitectureStaleError,
 )
 from buildlens.application.architecture_builder import ArchitectureBuildError
+from buildlens.application.architecture_rules import RulesNotFoundError
 from buildlens.application.ask import (
     AskBudgetExceededError,
     AskInputError,
@@ -295,6 +296,11 @@ def register_errors(app: FastAPI) -> None:
             409,
             "ARCHITECTURE_BUILD_FAILED",
             "The architecture build failed and was retained as a failed run.",
+        ),
+        RulesNotFoundError: (
+            404,
+            "ARCHITECTURE_RULES_NOT_FOUND",
+            "No architecture rule set has been declared for this project (or this version).",
         ),
         ArchitectureQueryError: (
             422,

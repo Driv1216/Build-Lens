@@ -269,3 +269,16 @@ class ApiViewResponse(Scoped):
     coverage: dict[str, Any]
     limit: int
     offset: int
+
+
+class ViewResponse(Scoped):
+    """A Milestone C view: inferred structure is labelled by tier, never intended design."""
+
+    name: str
+    nodes: list[NodeResponse]
+    nodes_total: int
+    edges: list[EdgeResponse]
+    edges_total: int
+    diagnostics: list[DiagnosticResponse]
+    coverage: dict[str, Any]
+    limit: int

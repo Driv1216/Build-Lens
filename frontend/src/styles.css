@@ -178,3 +178,15 @@ table.dsm td.cyclic { background: var(--arch-cycle); }
 .badge.outcome-no_candidate, .badge.outcome-opaque_origin, .badge.outcome-opaque_path,
 .badge.outcome-external_destination { color: var(--arch-unknown); }
 pre.attributes { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8rem; max-height: 20rem; overflow: auto; }
+
+/* Stage 14 Milestone C: structure views */
+.views details { margin: 0.5rem 0; }
+.views .tag-list { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; list-style: none; padding: 0; }
+.views-table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+.views-table th, .views-table td { border-bottom: 1px solid var(--arch-line); padding: 0.25rem 0.4rem; text-align: left; }
+.rules textarea { width: 100%; font-family: ui-monospace, monospace; }
+.badge.intent-badge { color: var(--arch-observed); }
+.badge.conformance-not_satisfied { color: var(--arch-unknown); }
+.badge.conformance-satisfied_in_observed_graph { color: var(--arch-derived); }
+.badge.conformance-not_determinable, .badge.conformance-selector_matches_nothing { color: var(--arch-inferred); }
+.views .layer-rank { display: flex; flex-wrap: wrap; gap: 0.75rem; }

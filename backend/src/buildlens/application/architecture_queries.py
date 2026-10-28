@@ -40,6 +40,33 @@ from buildlens.domain.architecture import (
 from buildlens.domain.architecture_graph import breadth_first, shortest_path
 
 QUERY_DEADLINE_SECONDS = 5.0
+# Milestone C views: node kinds, edge kinds, diagnostic categories and coverage sections.
+VIEWS: dict[str, tuple[frozenset[str], frozenset[str], frozenset[str], tuple[str, ...]]] = {
+    "integrations": (
+        frozenset({"external_package", "external_destination"}),
+        frozenset({"declares_dependency", "targets_destination"}),
+        frozenset({"integration"}),
+        ("integrations",),
+    ),
+    "database": (
+        frozenset({"db_table"}),
+        frozenset({"maps_table", "migrates_table", "references_table", "uses_model"}),
+        frozenset({"database"}),
+        ("database",),
+    ),
+    "frontend": (
+        frozenset({"frontend_route"}),
+        frozenset({"routes_to"}),
+        frozenset(),
+        ("frontend_routes",),
+    ),
+    "subsystems": (
+        frozenset({"layer_candidate", "functional_slice"}),
+        frozenset({"member_of"}),
+        frozenset({"direction"}),
+        ("layers", "slices"),
+    ),
+}
 Direction = Literal["out", "in"]
 
 
@@ -193,6 +220,18 @@ class ApiView(Scoped):
     coverage: dict[str, object]
     limit: int
     offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class ViewResult(Scoped):
+    name: str
+    nodes: tuple[ArchitectureNode, ...]
+    nodes_total: int
+    edges: tuple[ArchitectureEdge, ...]
+    edges_total: int
+    diagnostics: tuple[ArchitectureDiagnostic, ...]
+    coverage: dict[str, object]
+    limit: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -384,6 +423,53 @@ class ArchitectureQueries:
             dict(cast(dict[str, object], run.coverage.get("api") or {})),
             limit,
             offset,
+        )
+
+    def view(
+        self,
+        project_id: UUID,
+        snapshot_id: UUID,
+        run_id: UUID | None,
+        name: str,
+        *,
+        limit: int = QUERY_MAX_ROWS,
+    ) -> ViewResult:
+        """One Milestone C view; every returned node, edge and diagnostic is verified."""
+        if name not in VIEWS:
+            raise ArchitectureQueryError(f"Unknown view {name!r}; expected one of {sorted(VIEWS)}.")
+        limit = _bounded(limit, QUERY_MAX_ROWS, "limit")
+        kinds, edge_kinds, categories, sections = VIEWS[name]
+        run, reasons, loaded, deadline = self._open(project_id, snapshot_id, run_id)
+        nodes = sorted(
+            (node for node in loaded.nodes.values() if node.kind in kinds), key=lambda n: n.key
+        )
+        edges = sorted(
+            (edge for edge in loaded.edges.values() if edge.kind in edge_kinds),
+            key=lambda edge: edge.key,
+        )
+        diagnostics = [d for d in loaded.stored.diagnostics if d.category in categories][:limit]
+        shown_nodes, shown_edges = nodes[:limit], edges[:limit]
+        self._verify(
+            run,
+            loaded,
+            Assertion(
+                frozenset(n.key for n in shown_nodes),
+                frozenset(e.key for e in shown_edges),
+                diagnostics=frozenset(d.ordinal for d in diagnostics),
+            ),
+            deadline,
+        )
+        return ViewResult(
+            run,
+            reasons,
+            name,
+            tuple(shown_nodes),
+            len(nodes),
+            tuple(shown_edges),
+            len(edges),
+            tuple(diagnostics),
+            {key: run.coverage.get(key) for key in sections},
+            limit,
         )
 
     def tree(

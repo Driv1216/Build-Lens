@@ -8,6 +8,7 @@ digest, and evidence links are rows with same-run composite foreign keys.
 from __future__ import annotations
 
 import hashlib
+import posixpath
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import replace
@@ -29,6 +30,11 @@ from buildlens.application.architecture_builder import (
     artifact_row_digest,
     export_row_digest,
     import_row_digest,
+)
+from buildlens.application.architecture_views import (
+    ManifestInput,
+    TableInput,
+    chunk_row_digest,
 )
 from buildlens.domain.architecture import (
     EVIDENCE_RENDERER,
@@ -62,7 +68,9 @@ from buildlens.infrastructure.persistence.models import (
     ArchitectureRunRecord,
     ArtifactAnalysisRecord,
     ArtifactExtractionRecord,
+    ArtifactProcessingRecord,
     ArtifactRecord,
+    ChunkRecord,
     ExportReferenceRecord,
     ImportReferenceRecord,
     ProjectVersionRecord,
@@ -71,6 +79,7 @@ from buildlens.infrastructure.persistence.models import (
     SemanticFactRecord,
     SemanticRelationRecord,
     StructuralAnalysisRecord,
+    SymbolFactsRecord,
     SymbolRecord,
 )
 from buildlens.infrastructure.persistence.semantic import (
@@ -131,6 +140,19 @@ def _links(records: Iterable[ArchitectureEvidenceLinkRecord]) -> tuple[EvidenceL
         for record in records
     ]
     return tuple(sorted(values, key=lambda link: (link.source, link.digest)))
+
+
+def _chunk_row(record: ChunkRecord) -> Row:
+    return {
+        "id": str(record.id),
+        "unit_anchor": record.unit_anchor,
+        "part_index": record.part_index,
+        "kind": record.kind,
+        "content": record.content,
+        "content_hash": record.content_hash,
+        "start_offset": record.start_offset,
+        "end_offset": record.end_offset,
+    }
 
 
 def _literal_row(record: ArchitectureLiteralRecord, extraction: ArtifactExtractionRecord) -> Row:
@@ -262,6 +284,8 @@ class SqlAlchemyArchitectureStore:
             ):
                 top_level[str(analysis_id)].append(name)
             endpoints = self._endpoints(session, catalog.id)
+            manifests = self._manifests(session, catalog.processing_run_id)
+            tables = self._tables(session, catalog.id)
             counts = {
                 fact_digest: int((derived or {}).get("count", 1))
                 for fact_digest, derived in session.execute(
@@ -286,7 +310,130 @@ class SqlAlchemyArchitectureStore:
                 literals=literals,
                 top_level_names=top_level,
                 endpoints=endpoints,
+                manifests=manifests,
+                tables=tables,
             )
+
+    @staticmethod
+    def _manifests(session: Session, processing_run_id: UUID) -> list[ManifestInput]:
+        """Stored chunks of ``pyproject.toml`` / ``package.json`` (Milestone C, no file reads)."""
+        grouped: dict[str, list[Row]] = defaultdict(list)
+        for record, locator in session.execute(
+            select(ChunkRecord, ArtifactProcessingRecord.locator)
+            .join(
+                ArtifactProcessingRecord,
+                ArtifactProcessingRecord.id == ChunkRecord.artifact_processing_id,
+            )
+            .where(
+                ArtifactProcessingRecord.processing_run_id == processing_run_id,
+                or_(
+                    ArtifactProcessingRecord.locator.like("%pyproject.toml"),
+                    ArtifactProcessingRecord.locator.like("%package.json"),
+                ),
+            )
+            .order_by(ArtifactProcessingRecord.locator, ChunkRecord.ordinal)
+        ):
+            if posixpath.basename(locator) in {"pyproject.toml", "package.json"}:
+                grouped[locator].append(_chunk_row(record))
+        names = {
+            locator
+            for (locator,) in session.execute(
+                select(ArtifactProcessingRecord.locator).where(
+                    ArtifactProcessingRecord.processing_run_id == processing_run_id,
+                    or_(
+                        ArtifactProcessingRecord.locator.like("%pyproject.toml"),
+                        ArtifactProcessingRecord.locator.like("%package.json"),
+                    ),
+                )
+            )
+            if posixpath.basename(locator) in {"pyproject.toml", "package.json"}
+        }
+        return [
+            ManifestInput(
+                locator,
+                "python" if locator.endswith("pyproject.toml") else "npm",
+                tuple(grouped.get(locator, ())),
+            )
+            for locator in sorted(names)
+        ]
+
+    @staticmethod
+    def _tables(session: Session, catalog_run_id: UUID) -> list[TableInput]:
+        """Catalog ``db_table`` entities with recognizer attributes and model assignments."""
+        records = session.scalars(
+            select(SemanticEntityRecord)
+            .where(
+                SemanticEntityRecord.catalog_run_id == catalog_run_id,
+                SemanticEntityRecord.kind == "db_table",
+            )
+            .order_by(SemanticEntityRecord.portable_key)
+        ).all()
+        if not records:
+            return []
+        facts = {
+            record.subject_entity_key: record
+            for record in session.scalars(
+                select(SemanticFactRecord).where(
+                    SemanticFactRecord.catalog_run_id == catalog_run_id,
+                    SemanticFactRecord.fact_kind == "recognizer_match",
+                    SemanticFactRecord.subject_entity_key.in_([r.entity_key for r in records]),
+                )
+            )
+        }
+        subjects = {
+            record.entity_key: record
+            for record in session.scalars(
+                select(SemanticEntityRecord).where(
+                    SemanticEntityRecord.catalog_run_id == catalog_run_id,
+                    SemanticEntityRecord.entity_key.in_(
+                        [r.subject_entity_key for r in records if r.subject_entity_key]
+                    ),
+                )
+            )
+        }
+        fact_rows: dict[str, list[str]] = {}
+        wanted = {
+            str(ref.get("id"))
+            for fact in facts.values()
+            for ref in cast(list[dict[str, Any]], fact.source_refs)
+            if ref.get("table") == "symbol_facts"
+        }
+        if wanted:
+            for item in session.scalars(
+                select(SymbolFactsRecord).where(SymbolFactsRecord.id.in_([UUID(v) for v in wanted]))
+            ):
+                assignments = cast(dict[str, Any], item.facts).get("class_assignments") or []
+                fact_rows[str(item.id)] = [
+                    str(value.get("value") or "")
+                    for value in assignments
+                    if isinstance(value, dict)
+                ]
+        values = []
+        for record in records:
+            fact = facts.get(record.entity_key)
+            if fact is None:
+                continue
+            derived = cast(dict[str, Any], fact.derived)
+            attributes = cast(dict[str, Any], derived.get("attributes") or {})
+            subject = subjects.get(record.subject_entity_key or "")
+            assignments = tuple(
+                value
+                for ref in cast(list[dict[str, Any]], fact.source_refs)
+                if ref.get("table") == "symbol_facts"
+                for value in fact_rows.get(str(ref.get("id")), [])
+            )
+            values.append(
+                TableInput(
+                    record.entity_key,
+                    record.locator,
+                    str(derived.get("recognizer")),
+                    attributes.get("table"),
+                    (subject.qualified_name or subject.name) if subject else None,
+                    fact.fact_digest,
+                    assignments,
+                )
+            )
+        return values
 
     @staticmethod
     def _endpoints(session: Session, catalog_run_id: UUID) -> list[EndpointInput]:
@@ -1007,6 +1154,19 @@ class SqlAlchemyArchitectureStore:
                 ):
                     values[("artifact_extractions", str(extraction.id))] = (
                         extraction_row_digest(_extraction_row(extraction)),
+                        locator,
+                    )
+            if wanted.get("chunks"):
+                for chunk, locator in session.execute(
+                    select(ChunkRecord, ArtifactProcessingRecord.locator)
+                    .join(
+                        ArtifactProcessingRecord,
+                        ArtifactProcessingRecord.id == ChunkRecord.artifact_processing_id,
+                    )
+                    .where(ChunkRecord.id.in_(wanted["chunks"]))
+                ):
+                    values[("chunks", str(chunk.id))] = (
+                        chunk_row_digest(_chunk_row(chunk)),
                         locator,
                     )
             if wanted.get("export_references"):

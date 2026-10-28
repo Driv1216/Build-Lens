@@ -32,6 +32,7 @@ from buildlens.api.architecture_schemas import (
     PathResponse,
     ReachedResponse,
     TreeResponse,
+    ViewResponse,
 )
 from buildlens.api.dependencies import get_architecture_queries, get_architecture_service
 from buildlens.application.architecture import ArchitectureService
@@ -543,6 +544,30 @@ def api_view(
         coverage=x.coverage,
         limit=x.limit,
         offset=x.offset,
+    )
+
+
+@router.get("/views/{name}", response_model=ViewResponse)
+def view(
+    project_id: UUID,
+    snapshot_id: UUID,
+    name: Literal["integrations", "database", "frontend", "subsystems"],
+    limit: int = Query(500, ge=1, le=500),
+    run_id: UUID | None = None,
+    queries: ArchitectureQueries = Depends(get_architecture_queries),
+) -> ViewResponse:
+    x = queries.view(project_id, snapshot_id, run_id, name, limit=limit)
+    return ViewResponse(
+        run_id=x.run.id,
+        freshness_reasons=list(x.freshness_reasons),
+        name=x.name,
+        nodes=[node(item) for item in x.nodes],
+        nodes_total=x.nodes_total,
+        edges=[edge(item) for item in x.edges],
+        edges_total=x.edges_total,
+        diagnostics=[diagnostic(item) for item in x.diagnostics],
+        coverage=x.coverage,
+        limit=x.limit,
     )
 
 

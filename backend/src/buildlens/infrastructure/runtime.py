@@ -7,6 +7,8 @@ from threading import Lock
 from typing import Any
 
 from buildlens.application.architecture import ArchitectureGraphCache, ArchitectureService
+from buildlens.application.architecture_queries import ArchitectureQueries
+from buildlens.application.architecture_rules import ArchitectureRulesService
 from buildlens.application.ask import AskService
 from buildlens.application.context import ContextService, RerankerRuntime
 from buildlens.application.embeddings import EmbeddingRuntime
@@ -24,6 +26,7 @@ from buildlens.infrastructure.embeddings.supervisor import SupervisedSentenceTra
 from buildlens.infrastructure.generation.gemini import GeminiProvider
 from buildlens.infrastructure.generation.openai import OpenAIProvider
 from buildlens.infrastructure.persistence.architecture import SqlAlchemyArchitectureStore
+from buildlens.infrastructure.persistence.architecture_rules import SqlAlchemyArchitectureRuleStore
 from buildlens.infrastructure.persistence.database import (
     create_database_engine,
     create_session_factory_from_engine,
@@ -73,6 +76,14 @@ def architecture_service(state: Any) -> ArchitectureService:
         semantic_catalog_service(state),
         state.architecture_lock,
         state.architecture_cache,
+    )
+
+
+def architecture_rules_service(state: Any) -> ArchitectureRulesService:
+    """Owner-declared rule sets (append-only) evaluated over verified architecture runs."""
+    return ArchitectureRulesService(
+        SqlAlchemyArchitectureRuleStore(state.session_factory),
+        ArchitectureQueries(architecture_service(state)),
     )
 
 

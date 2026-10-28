@@ -285,10 +285,31 @@ def test_ts_routes_helpers_guards_type_imports_and_opaque_imports() -> None:
     assert helpers["base"]["parameters"] == ["projectId"]
     routes = _rows(extraction, "frontend_route")
     assert routes == [
-        ("ExplorePage", {"path": {"state": "literal", "value": "/explore"}, "index": False}),
-        ("Home", {"path": {"state": "absent"}, "index": True}),
-        ("Other", {"path": {"state": "opaque"}, "index": False}),
+        (
+            "ExplorePage",
+            {"path": {"state": "literal", "value": "/explore"}, "index": False, "parent": None},
+        ),
+        ("Home", {"path": {"state": "absent"}, "index": True, "parent": None}),
+        ("Other", {"path": {"state": "opaque"}, "index": False, "parent": None}),
     ]
+    nested = _ts(
+        'const r = <Route path="/lab" element={<Lab />}>\n'
+        "  <Route index element={<Overview />} />\n"
+        '  <Route path="runs" element={<Runs />}>\n'
+        '    <Route path=":id" element={<Run />} />\n'
+        "  </Route>\n"
+        "</Route>\n",
+        "web/Nested.tsx",
+    )
+    parents = {s: (a["parent"], a["path"].get("value")) for s, a in _rows(nested, "frontend_route")}
+    lab = next(r.ordinal for r in nested.literals if r.subject == "Lab")
+    runs = next(r.ordinal for r in nested.literals if r.subject == "Runs")
+    assert parents == {
+        "Lab": (None, "/lab"),
+        "Overview": (lab, None),
+        "Runs": (lab, "runs"),
+        "Run": (runs, ":id"),
+    }
 
 
 def test_ts_caps_and_syntax_recovery_make_the_pass_partial() -> None:
@@ -322,3 +343,14 @@ def test_url_shape_and_template_rules() -> None:
         "port": "8000",
     }
     assert loopback["parts"] == [{"s": "/api"}]
+
+
+def test_ts_context_survives_try_and_if_blocks() -> None:
+    extraction = _ts(
+        "export async function req(p: string) {\n"
+        "  try { return await fetch(`${B}${p}`) } catch (e) { throw e }\n"
+        "}\n"
+    )
+    row = next(r.attributes for r in extraction.literals if r.kind == "http_call")
+    assert row["function"] == "req" and row["parameters"] == ["p"]
+    assert row["conditional"] is False and row["callback"] is False
