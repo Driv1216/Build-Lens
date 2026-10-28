@@ -78,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "/structure",
                         "/processing",
                         "/semantic/catalog",
+                        "/architecture",
                         "/semantic/generation/plan",
                         "/semantic/generation",
                         "/embeddings",
@@ -125,6 +126,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(structural_router)
     app.include_router(processing_router)
     app.include_router(semantic_router)
+    from buildlens.api.architecture_routes import router as architecture_router
+
+    app.include_router(architecture_router)
     app.include_router(generation_router)
     app.include_router(generation_runtime_router)
     app.include_router(embedding_router)

@@ -4,6 +4,8 @@ from typing import cast
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session, sessionmaker
 
+from buildlens.application.architecture import ArchitectureService
+from buildlens.application.architecture_queries import ArchitectureQueries
 from buildlens.application.ask import AskService
 from buildlens.application.context import ContextService
 from buildlens.application.embeddings import EmbeddingService
@@ -22,6 +24,7 @@ from buildlens.infrastructure.persistence.repositories import SqlAlchemyProjectR
 from buildlens.infrastructure.persistence.snapshots import SqlAlchemySnapshotStore
 from buildlens.infrastructure.persistence.structural import SqlAlchemyStructuralAnalysisStore
 from buildlens.infrastructure.runtime import (
+    architecture_service,
     ask_service,
     context_service,
     processing_service,
@@ -87,6 +90,14 @@ def get_structural_analysis_service(request: Request) -> StructuralAnalysisServi
 
 def get_processing_service(request: Request) -> ProcessingService:
     return processing_service(request.app.state)
+
+
+def get_architecture_service(request: Request) -> ArchitectureService:
+    return architecture_service(request.app.state)
+
+
+def get_architecture_queries(request: Request) -> ArchitectureQueries:
+    return ArchitectureQueries(architecture_service(request.app.state))
 
 
 def get_semantic_catalog_service(request: Request) -> SemanticCatalogService:

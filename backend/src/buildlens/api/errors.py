@@ -5,6 +5,18 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from buildlens.application.architecture import (
+    ArchitectureBudgetError,
+    ArchitectureBusyError,
+    ArchitectureConflictError,
+    ArchitectureEvidenceInvalidError,
+    ArchitectureIntegrityError,
+    ArchitectureNotFoundError,
+    ArchitectureQueryError,
+    ArchitectureRequiredError,
+    ArchitectureStaleError,
+)
+from buildlens.application.architecture_builder import ArchitectureBuildError
 from buildlens.application.ask import (
     AskBudgetExceededError,
     AskInputError,
@@ -249,6 +261,46 @@ def register_errors(app: FastAPI) -> None:
             "PERSISTENCE_UNAVAILABLE",
             "Database operation could not be completed.",
         ),
+        ArchitectureRequiredError: (
+            409,
+            "ARCHITECTURE_REQUIRED",
+            "Build the architecture model for this snapshot first.",
+        ),
+        ArchitectureStaleError: (
+            409,
+            "ARCHITECTURE_STALE",
+            "The architecture model is stale. Rebuild it explicitly.",
+        ),
+        ArchitectureNotFoundError: (
+            404,
+            "ARCHITECTURE_NOT_FOUND",
+            "Architecture record was not found.",
+        ),
+        ArchitectureIntegrityError: (
+            409,
+            "ARCHITECTURE_INTEGRITY_FAILED",
+            "Persisted architecture rows failed integrity verification.",
+        ),
+        ArchitectureEvidenceInvalidError: (
+            409,
+            "ARCHITECTURE_EVIDENCE_INVALID",
+            "Evidence for this answer failed verification; no partial answer is returned.",
+        ),
+        ArchitectureBudgetError: (
+            409,
+            "ARCHITECTURE_VERIFICATION_BUDGET_EXCEEDED",
+            "The answer needs more verification than one request allows; narrow the query.",
+        ),
+        ArchitectureBuildError: (
+            409,
+            "ARCHITECTURE_BUILD_FAILED",
+            "The architecture build failed and was retained as a failed run.",
+        ),
+        ArchitectureQueryError: (
+            422,
+            "ARCHITECTURE_QUERY_INVALID",
+            "The architecture query is invalid.",
+        ),
         ValueError: (422, "PREREQUISITE_INVALID", "Operation prerequisites are invalid."),
     }
     error: type[Exception]
@@ -265,6 +317,8 @@ def register_errors(app: FastAPI) -> None:
         ContextConflictError,
         SemanticCatalogBusyError,
         SemanticCatalogConflictError,
+        ArchitectureBusyError,
+        ArchitectureConflictError,
         GenerationConflictError,
         RunFencedError,
         BudgetExhaustedError,

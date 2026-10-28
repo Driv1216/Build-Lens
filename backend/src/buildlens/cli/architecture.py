@@ -1,0 +1,226 @@
+"""Architecture model commands (same services and verification as the HTTP API)."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import tempfile
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import asdict, is_dataclass
+from pathlib import Path
+from typing import Any, Literal
+from uuid import UUID
+
+import typer
+
+from buildlens.application.architecture import ArchitectureService, Assertion
+from buildlens.application.architecture_queries import ArchitectureQueries
+from buildlens.core.config import get_settings
+from buildlens.domain.architecture import CLASS_SETS, DEFAULT_CLASS_SET, MODULE_EDGE_KINDS
+from buildlens.infrastructure.runtime import LocalRuntime, architecture_service
+
+app = typer.Typer(help="Deterministic, evidence-backed architecture model (no AI text).")
+
+
+def _emit(value: Any) -> None:
+    if is_dataclass(value) and not isinstance(value, type):
+        value = asdict(value)
+    typer.echo(json.dumps(value, indent=2, sort_keys=True, default=str))
+
+
+@contextmanager
+def _runtime() -> Iterator[LocalRuntime]:
+    runtime = LocalRuntime(get_settings())
+    try:
+        yield runtime
+    finally:
+        asyncio.run(runtime.close())
+
+
+def _service(call: Callable[[ArchitectureService], Any]) -> None:
+    with _runtime() as runtime:
+        _emit(call(architecture_service(runtime)))
+
+
+def _queries(call: Callable[[ArchitectureQueries], Any]) -> None:
+    with _runtime() as runtime:
+        _emit(call(ArchitectureQueries(architecture_service(runtime))))
+
+
+@app.command("build")
+def build(project: UUID = typer.Option(...), snapshot: UUID = typer.Option(...)) -> None:
+    """Build (or reuse) the architecture model from the active semantic catalog."""
+    _service(lambda service: service.build(project, snapshot))
+
+
+@app.command("status")
+def status(project: UUID = typer.Option(...), snapshot: UUID = typer.Option(...)) -> None:
+    """Show the latest attempt, the active run and its freshness."""
+    _service(lambda service: service.status(project, snapshot))
+
+
+@app.command("overview")
+def overview(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Workspaces, element counts, cycles, diagnostics and coverage (verified)."""
+    _queries(lambda queries: queries.overview(project, snapshot, run))
+
+
+@app.command("deps")
+def deps(
+    node: str = typer.Argument(..., help="A module, container or workspace key."),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    direction: str = typer.Option("out", help="out (dependencies) or in (dependants)."),
+    class_set: str = typer.Option(DEFAULT_CLASS_SET, "--class-set"),
+    depth: int = typer.Option(32),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Transitive dependencies with witness paths and the gaps that bound the answer."""
+    _queries(
+        lambda queries: queries.dependencies(
+            project,
+            snapshot,
+            run,
+            node,
+            direction="in" if direction == "in" else "out",
+            class_set=class_set,
+            depth=depth,
+        )
+    )
+
+
+@app.command("path")
+def path(
+    source: str = typer.Argument(...),
+    target: str = typer.Argument(...),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    class_set: str = typer.Option(DEFAULT_CLASS_SET, "--class-set"),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Shortest witness path between two modules, or why none is claimed."""
+    _queries(
+        lambda queries: queries.path(project, snapshot, run, source, target, class_set=class_set)
+    )
+
+
+@app.command("cycles")
+def cycles(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    level: str | None = typer.Option(None, help="module or container"),
+    class_set: str | None = typer.Option(None, "--class-set"),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Import cycles and aggregate dependency cycles with witness cycles."""
+    _queries(
+        lambda queries: queries.cycles(
+            project, snapshot, run, level=level, class_set=class_set, limit=500
+        )
+    )
+
+
+@app.command("diagnostics")
+def diagnostics(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    code: str | None = typer.Option(None),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Evidence-linked diagnostics, optionally filtered by code."""
+    _queries(lambda queries: queries.diagnostics(project, snapshot, run, code=code, limit=500))
+
+
+@app.command("coverage")
+def coverage(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """What the model covers, including alias and guard-context gaps."""
+    _queries(lambda queries: queries.coverage(project, snapshot, run)[2])
+
+
+@app.command("verify")
+def verify(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Full non-authoritative integrity inspection: structure plus every evidence item."""
+    _service(lambda service: service.integrity(project, snapshot, run))
+
+
+@app.command("export")
+def export(
+    out: Path = typer.Option(..., help="Destination file (written atomically)."),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    format: Literal["json", "dot"] = typer.Option("json"),
+    class_set: str = typer.Option(DEFAULT_CLASS_SET, "--class-set"),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Write the verified module graph (resolved internal edges) as JSON or Graphviz DOT."""
+    if class_set not in CLASS_SETS:
+        raise typer.BadParameter(f"Unknown class set {class_set!r}.")
+    with _runtime() as runtime:
+        service = architecture_service(runtime)
+        value, reasons, loaded = service.graph(project, snapshot, run)
+        edges = sorted(
+            (
+                edge
+                for edge in loaded.edges.values()
+                if edge.kind in MODULE_EDGE_KINDS
+                and edge.target_key is not None
+                and edge.target_key.startswith("module:")
+                and edge.import_class in CLASS_SETS[class_set]
+            ),
+            key=lambda edge: edge.key,
+        )
+        modules = sorted(key for key, node in loaded.nodes.items() if node.kind == "module")
+        service.verify_assertion(
+            value, loaded, Assertion(frozenset(modules), frozenset(edge.key for edge in edges))
+        )
+        if format == "dot":
+            lines = [f"// BuildLens architecture run {value.id} class set {class_set}", "digraph {"]
+            lines += [f"  {json.dumps(key)};" for key in modules]
+            lines += [
+                f"  {json.dumps(e.source_key)} -> {json.dumps(e.target_key)}"
+                f" [label={json.dumps(str(e.import_class))}];"
+                for e in edges
+            ]
+            content = "\n".join([*lines, "}"]) + "\n"
+        else:
+            content = json.dumps(
+                {
+                    "run_id": str(value.id),
+                    "portable_digest": value.portable_digest,
+                    "freshness_reasons": list(reasons),
+                    "class_set": class_set,
+                    "modules": modules,
+                    "edges": [
+                        {
+                            "key": e.key,
+                            "source": e.source_key,
+                            "target": e.target_key,
+                            "class": e.import_class,
+                            "count": e.count,
+                        }
+                        for e in edges
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        out.parent.mkdir(parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(dir=out.parent, prefix=".architecture-")
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(content)
+        os.replace(temporary, out)
+        _emit({"written": str(out), "modules": len(modules), "edges": len(edges)})

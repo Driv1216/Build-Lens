@@ -90,6 +90,9 @@ class ProjectVersionRecord(Base):
     active_semantic_index_run_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), nullable=True
     )
+    active_architecture_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
 
 
 class ArtifactIdentityRecord(Base):
@@ -1937,6 +1940,394 @@ Base.metadata.tables["project_versions"].append_constraint(
         ["active_semantic_index_run_id", "id"],
         ["semantic_generation_runs.id", "semantic_generation_runs.project_version_id"],
         name="fk_project_versions_active_semantic_index",
+        use_alter=True,
+        deferrable=True,
+        initially="DEFERRED",
+    )
+)
+
+
+# --------------------------------------------------------------------------- Stage 14
+
+_ARCH_DIGEST = "~ '^[0-9a-f]{64}$'"
+_ARCH_NODE_KINDS = (
+    "'workspace', 'container', 'module', 'external_package', 'router', 'api_endpoint', "
+    "'client_call', 'external_destination', 'db_table', 'frontend_route', 'layer_candidate', "
+    "'functional_slice'"
+)
+_ARCH_EDGE_KINDS = (
+    "'imports', 'reexports', 'depends_on', 'defines_router', 'mounts_router', "
+    "'defines_endpoint', 'issues_request', 'calls_endpoint', 'targets_destination', "
+    "'maps_table', 'migrates_table', 'references_table', 'uses_model', 'declares_dependency', "
+    "'routes_to', 'member_of'"
+)
+_ARCH_TIERS = "'observed', 'derived', 'inferred', 'unknown'"
+_ARCH_CLASSES = (
+    "'unconditional', 'presumed_unconditional', 'conditional', 'elision_dependent', "
+    "'type_level', 'deferred'"
+)
+
+
+def _architecture_owner() -> ForeignKeyConstraint:
+    return ForeignKeyConstraint(
+        ["architecture_run_id"], ["architecture_runs.id"], ondelete="CASCADE"
+    )
+
+
+class ArchitectureRunRecord(Base):
+    """Stage 14 immutable architecture run, a projection of one catalog run."""
+
+    __tablename__ = "architecture_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_version_id", "revision", name="uq_architecture_runs_snapshot_revision"
+        ),
+        UniqueConstraint("id", "project_version_id", name="uq_architecture_runs_id_snapshot"),
+        UniqueConstraint("id", "catalog_run_id", name="uq_architecture_runs_id_catalog"),
+        ForeignKeyConstraint(
+            ["project_version_id", "project_id"],
+            ["project_versions.id", "project_versions.project_id"],
+            ondelete="CASCADE",
+            name="fk_architecture_run_snapshot_owner",
+        ),
+        ForeignKeyConstraint(
+            ["catalog_run_id", "project_version_id"],
+            ["semantic_catalog_runs.id", "semantic_catalog_runs.project_version_id"],
+            name="fk_architecture_run_catalog",
+        ),
+        ForeignKeyConstraint(
+            ["structural_analysis_id", "project_version_id"],
+            ["structural_analyses.id", "structural_analyses.project_version_id"],
+            name="fk_architecture_run_structure",
+        ),
+        ForeignKeyConstraint(
+            ["captured_active_architecture_run_id", "project_version_id"],
+            ["architecture_runs.id", "architecture_runs.project_version_id"],
+            name="fk_architecture_runs_captured_active",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint("revision > 0", name="ck_architecture_runs_revision"),
+        CheckConstraint(
+            "outcome IN ('complete', 'partial', 'failed')", name="ck_architecture_runs_outcome"
+        ),
+        CheckConstraint("completed_at >= started_at", name="ck_architecture_runs_times"),
+        CheckConstraint(
+            f"input_authority_digest {_ARCH_DIGEST} AND contract_digest {_ARCH_DIGEST} "
+            f"AND catalog_digest {_ARCH_DIGEST}",
+            name="ck_architecture_runs_authority",
+        ),
+        CheckConstraint(
+            "(outcome = 'failed') = (graph_digest IS NULL) AND "
+            "(graph_digest IS NULL) = (architecture_digest IS NULL) AND "
+            "(graph_digest IS NULL) = (portable_digest IS NULL) AND "
+            f"(graph_digest IS NULL OR (graph_digest {_ARCH_DIGEST} AND "
+            f"architecture_digest {_ARCH_DIGEST} AND portable_digest {_ARCH_DIGEST}))",
+            name="ck_architecture_runs_digests",
+        ),
+        Index("ix_architecture_runs_snapshot", "project_version_id", "revision"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    revision: Mapped[int] = mapped_column(nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    catalog_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    catalog_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    structural_revision: Mapped[int] = mapped_column(nullable=False)
+    architecture_contract: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    contract_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_authority_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    graph_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    architecture_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    portable_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    coverage: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    diagnostics: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    captured_active_architecture_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    captured_latest_revision: Mapped[int] = mapped_column(nullable=False, server_default="0")
+
+
+class ArchitectureNodeRecord(Base):
+    __tablename__ = "architecture_nodes"
+    __table_args__ = (
+        _architecture_owner(),
+        UniqueConstraint("architecture_run_id", "ordinal", name="uq_architecture_nodes_ordinal"),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "parent_key"],
+            ["architecture_nodes.architecture_run_id", "architecture_nodes.node_key"],
+            name="fk_architecture_node_parent",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint(f"kind IN ({_ARCH_NODE_KINDS})", name="ck_architecture_nodes_kind"),
+        CheckConstraint(
+            "coverage_state IN ('analysed', 'partial', 'not_current', 'structure_failed', "
+            "'not_analysed', 'not_code', 'derived')",
+            name="ck_architecture_nodes_coverage",
+        ),
+        CheckConstraint(f"node_digest {_ARCH_DIGEST}", name="ck_architecture_nodes_digest"),
+    )
+    architecture_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    node_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    parent_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    locator: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    catalog_entity_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    artifact_identity_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    coverage_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    attributes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    metrics: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    node_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ArchitectureEdgeRecord(Base):
+    __tablename__ = "architecture_edges"
+    __table_args__ = (
+        _architecture_owner(),
+        UniqueConstraint("architecture_run_id", "edge_key", name="uq_architecture_edges_key"),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "source_key"],
+            ["architecture_nodes.architecture_run_id", "architecture_nodes.node_key"],
+            name="fk_architecture_edge_source",
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "target_key"],
+            ["architecture_nodes.architecture_run_id", "architecture_nodes.node_key"],
+            name="fk_architecture_edge_target",
+        ),
+        CheckConstraint(f"kind IN ({_ARCH_EDGE_KINDS})", name="ck_architecture_edges_kind"),
+        CheckConstraint(f"tier IN ({_ARCH_TIERS})", name="ck_architecture_edges_tier"),
+        CheckConstraint(
+            f"import_class IS NULL OR import_class IN ({_ARCH_CLASSES})",
+            name="ck_architecture_edges_class",
+        ),
+        CheckConstraint(
+            "resolution_status IS NULL OR resolution_status IN "
+            "('resolved', 'ambiguous', 'not_found', 'external', 'not_attempted')",
+            name="ck_architecture_edges_resolution",
+        ),
+        CheckConstraint(
+            "(target_key IS NULL) <> (target_text IS NULL)", name="ck_architecture_edges_target"
+        ),
+        CheckConstraint("count > 0", name="ck_architecture_edges_count"),
+        CheckConstraint(f"edge_digest {_ARCH_DIGEST}", name="ck_architecture_edges_digest"),
+        Index("ix_architecture_edges_source", "architecture_run_id", "source_key"),
+        Index("ix_architecture_edges_target", "architecture_run_id", "target_key"),
+    )
+    architecture_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    edge_key: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_key: Mapped[str] = mapped_column(Text, nullable=False)
+    target_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    resolution_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    import_class: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    count: Mapped[int] = mapped_column(nullable=False)
+    attributes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    conditions: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    edge_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ArchitectureEvidenceRecord(Base):
+    __tablename__ = "architecture_evidence"
+    __table_args__ = (
+        _architecture_owner(),
+        CheckConstraint(
+            "kind IN ('import_statements', 'inventory_artifact', 'derivation')",
+            name="ck_architecture_evidence_kind",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_refs) = 'array' AND "
+            "(kind = 'derivation' OR jsonb_array_length(source_refs) > 0)",
+            name="ck_architecture_evidence_refs",
+        ),
+        CheckConstraint(f"digest {_ARCH_DIGEST}", name="ck_architecture_evidence_digest"),
+    )
+    architecture_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_refs: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    derived: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    renderer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    rendered_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ArchitectureComponentRecord(Base):
+    __tablename__ = "architecture_components"
+    __table_args__ = (
+        _architecture_owner(),
+        UniqueConstraint(
+            "architecture_run_id", "ordinal", name="uq_architecture_components_ordinal"
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "scope_key"],
+            ["architecture_nodes.architecture_run_id", "architecture_nodes.node_key"],
+            name="fk_architecture_component_scope",
+        ),
+        CheckConstraint(
+            "level IN ('module', 'container')", name="ck_architecture_components_level"
+        ),
+        CheckConstraint(
+            "class_set IN ('S0', 'S1', 'S2', 'S3', 'S4')", name="ck_architecture_components_set"
+        ),
+        CheckConstraint(
+            f"component_digest {_ARCH_DIGEST}", name="ck_architecture_components_digest"
+        ),
+    )
+    architecture_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    component_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    level: Mapped[str] = mapped_column(String(16), nullable=False)
+    class_set: Mapped[str] = mapped_column(String(4), nullable=False)
+    scope_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    witness: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    attributes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    component_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ArchitectureComponentMemberRecord(Base):
+    __tablename__ = "architecture_component_members"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["architecture_run_id", "component_key"],
+            [
+                "architecture_components.architecture_run_id",
+                "architecture_components.component_key",
+            ],
+            ondelete="CASCADE",
+            name="fk_architecture_member_component",
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "node_key"],
+            ["architecture_nodes.architecture_run_id", "architecture_nodes.node_key"],
+            name="fk_architecture_member_node",
+        ),
+    )
+    architecture_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    component_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    node_key: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
+class ArchitectureDiagnosticRecord(Base):
+    __tablename__ = "architecture_diagnostics"
+    __table_args__ = (
+        _architecture_owner(),
+        CheckConstraint(f"tier IN ({_ARCH_TIERS})", name="ck_architecture_diagnostics_tier"),
+        CheckConstraint(
+            f"diagnostic_digest {_ARCH_DIGEST}", name="ck_architecture_diagnostics_digest"
+        ),
+    )
+    architecture_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    attributes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    diagnostic_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ArchitectureDiagnosticSubjectRecord(Base):
+    __tablename__ = "architecture_diagnostic_subjects"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["architecture_run_id", "diagnostic_ordinal"],
+            ["architecture_diagnostics.architecture_run_id", "architecture_diagnostics.ordinal"],
+            ondelete="CASCADE",
+            name="fk_architecture_subject_diagnostic",
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "node_key"],
+            ["architecture_nodes.architecture_run_id", "architecture_nodes.node_key"],
+            name="fk_architecture_subject_node",
+        ),
+    )
+    architecture_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    diagnostic_ordinal: Mapped[int] = mapped_column(primary_key=True)
+    node_key: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
+class ArchitectureEvidenceLinkRecord(Base):
+    """One evidence link of one element; same-run ownership is enforced by composite FKs."""
+
+    __tablename__ = "architecture_evidence_links"
+    __table_args__ = (
+        _architecture_owner(),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "node_key"],
+            ["architecture_nodes.architecture_run_id", "architecture_nodes.node_key"],
+            name="fk_architecture_link_node",
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "edge_ordinal"],
+            ["architecture_edges.architecture_run_id", "architecture_edges.ordinal"],
+            name="fk_architecture_link_edge",
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "component_key"],
+            [
+                "architecture_components.architecture_run_id",
+                "architecture_components.component_key",
+            ],
+            name="fk_architecture_link_component",
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "diagnostic_ordinal"],
+            ["architecture_diagnostics.architecture_run_id", "architecture_diagnostics.ordinal"],
+            name="fk_architecture_link_diagnostic",
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "evidence_digest"],
+            ["architecture_evidence.architecture_run_id", "architecture_evidence.digest"],
+            name="fk_architecture_link_evidence",
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "catalog_run_id"],
+            ["architecture_runs.id", "architecture_runs.catalog_run_id"],
+            name="fk_architecture_link_catalog_run",
+        ),
+        ForeignKeyConstraint(
+            ["catalog_run_id", "catalog_fact_digest"],
+            ["semantic_facts.catalog_run_id", "semantic_facts.fact_digest"],
+            name="fk_architecture_link_catalog_fact",
+        ),
+        CheckConstraint(
+            "num_nonnulls(node_key, edge_ordinal, component_key, diagnostic_ordinal) = 1",
+            name="ck_architecture_links_owner",
+        ),
+        CheckConstraint(
+            "(evidence_digest IS NULL) <> (catalog_fact_digest IS NULL) AND "
+            "(catalog_fact_digest IS NULL) = (catalog_run_id IS NULL)",
+            name="ck_architecture_links_target",
+        ),
+        Index("ix_architecture_links_edge", "architecture_run_id", "edge_ordinal"),
+        Index("ix_architecture_links_node", "architecture_run_id", "node_key"),
+    )
+    architecture_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    node_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    edge_ordinal: Mapped[int | None] = mapped_column(nullable=True)
+    component_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    diagnostic_ordinal: Mapped[int | None] = mapped_column(nullable=True)
+    evidence_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    catalog_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    catalog_fact_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+Base.metadata.tables["project_versions"].append_constraint(
+    ForeignKeyConstraint(
+        ["active_architecture_run_id", "id"],
+        ["architecture_runs.id", "architecture_runs.project_version_id"],
+        name="fk_project_versions_active_architecture",
         use_alter=True,
         deferrable=True,
         initially="DEFERRED",

@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from buildlens.application.architecture import ArchitectureGraphCache, ArchitectureService
 from buildlens.application.ask import AskService
 from buildlens.application.context import ContextService, RerankerRuntime
 from buildlens.application.embeddings import EmbeddingRuntime
@@ -22,6 +23,7 @@ from buildlens.domain.ask import GenerationPolicy
 from buildlens.infrastructure.embeddings.supervisor import SupervisedSentenceTransformer
 from buildlens.infrastructure.generation.gemini import GeminiProvider
 from buildlens.infrastructure.generation.openai import OpenAIProvider
+from buildlens.infrastructure.persistence.architecture import SqlAlchemyArchitectureStore
 from buildlens.infrastructure.persistence.database import (
     create_database_engine,
     create_session_factory_from_engine,
@@ -61,6 +63,16 @@ def semantic_catalog_service(state: Any) -> SemanticCatalogService:
         SqlAlchemyStructuralAnalysisStore(state.session_factory),
         processing_service(state),
         state.semantic_lock,
+    )
+
+
+def architecture_service(state: Any) -> ArchitectureService:
+    """DB-only architecture model over the active semantic catalog (zero source reads)."""
+    return ArchitectureService(
+        SqlAlchemyArchitectureStore(state.session_factory),
+        semantic_catalog_service(state),
+        state.architecture_lock,
+        state.architecture_cache,
     )
 
 
@@ -159,6 +171,8 @@ class LocalRuntime:
         self.analysis_lock = Lock()
         self.processing_lock = Lock()
         self.semantic_lock = Lock()
+        self.architecture_lock = Lock()
+        self.architecture_cache = ArchitectureGraphCache()
         self.embedding_runtime = EmbeddingRuntime(
             SupervisedSentenceTransformer(
                 Path(settings.embeddings_cache_dir).expanduser(),
