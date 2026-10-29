@@ -7,21 +7,17 @@ import {
 import { visible } from '../explore/visible'
 import { ClassChip, EdgeLine, Gaps, TierBadge } from './parts'
 import { describe, label } from './format'
+import { useLatestRequest, useRequest } from './useRequest'
 
 type Props = { projectId: string; snapshotId: string; revision: string; node: string; classSet: ClassSet; onSelect: (key: string) => void }
 
 export function Inspector({ projectId, snapshotId, revision, node, classSet, onSelect }: Props) {
-  const [detail, setDetail] = useState<NodeDetail | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  useEffect(() => {
-    setDetail(null); setError(null)
-    if (!node) return
-    const controller = new AbortController()
-    void getNode(projectId, snapshotId, node, controller.signal)
-      .then(value => { if (!controller.signal.aborted) setDetail(value) })
-      .catch((reason: unknown) => { if (!controller.signal.aborted) setError(describe(reason)) })
-    return () => controller.abort()
-  }, [projectId, snapshotId, revision, node])
+  // Keyed by project, snapshot, run revision and node: a late response for an earlier
+  // selection is dropped, and the panels below (evidence, traversal) remount per selection.
+  const { value: detail, error } = useRequest<NodeDetail | null>(
+    signal => node ? getNode(projectId, snapshotId, node, signal) : Promise.resolve(null),
+    [projectId, snapshotId, revision, node],
+  )
   if (!node) return <section className="explore-column" aria-label="Inspector"><p className="note">Select a folder, package or module.</p></section>
   return <section className="explore-column" aria-label="Inspector">
     {error && <p className="error" role="alert">{error}</p>}
@@ -37,14 +33,14 @@ export function Inspector({ projectId, snapshotId, revision, node, classSet, onS
         <summary>Attributes</summary>
         <pre className="attributes">{visible(JSON.stringify(detail.node.attributes, null, 1))}</pre>
       </details>}
-      <EvidenceList projectId={projectId} snapshotId={snapshotId} links={detail.node.evidence} />
+      <EvidenceList key={`evidence|${revision}|${detail.node.key}`} projectId={projectId} snapshotId={snapshotId} links={detail.node.evidence} />
       <h3>Outgoing ({detail.outgoing_total})</h3>
       <ul className="edge-list">{detail.outgoing.map(edge => <EdgeLine key={edge.key} edge={edge} onSelect={onSelect} />)}</ul>
       <h3>Incoming ({detail.incoming_total})</h3>
       <ul className="edge-list">{detail.incoming.map(edge => <EdgeLine key={edge.key} edge={edge} onSelect={onSelect} direction="in" />)}</ul>
       {detail.components.length > 0 && <><h3>Cycles</h3><ul className="edge-list">{detail.components.map(item => <li key={item.key}>{item.level === 'module' ? 'import cycle' : 'aggregate cycle'} · {item.members.length} members · class set {item.class_set}</li>)}</ul></>}
       {detail.diagnostics.length > 0 && <><h3>Diagnostics</h3><ul className="edge-list">{detail.diagnostics.map(item => <li key={item.ordinal}><TierBadge tier={item.tier} /> {item.code}</li>)}</ul></>}
-      {['module', 'container', 'workspace'].includes(detail.node.kind) && <Traversal projectId={projectId} snapshotId={snapshotId} node={detail.node.key} classSet={classSet} module={detail.node.kind === 'module'} onSelect={onSelect} />}
+      {['module', 'container', 'workspace'].includes(detail.node.kind) && <Traversal key={`traversal|${revision}|${detail.node.key}`} projectId={projectId} snapshotId={snapshotId} node={detail.node.key} classSet={classSet} module={detail.node.kind === 'module'} onSelect={onSelect} />}
     </>}
   </section>
 }
@@ -52,15 +48,17 @@ export function Inspector({ projectId, snapshotId, revision, node, classSet, onS
 function EvidenceList({ projectId, snapshotId, links }: { projectId: string; snapshotId: string; links: EvidenceLink[] }) {
   const [open, setOpen] = useState<Evidence | null>(null)
   const [error, setError] = useState<string | null>(null)
-  async function show(digest: string) {
-    setError(null)
-    try { setOpen(await getEvidence(projectId, snapshotId, digest)) } catch (reason) { setError(describe(reason)) }
+  const latest = useLatestRequest()
+  function show(digest: string) {
+    // Only the most recent click may fill the panel; an earlier, slower response is aborted.
+    setOpen(null); setError(null)
+    void latest.run(signal => getEvidence(projectId, snapshotId, digest, signal), setOpen, reason => setError(describe(reason)))
   }
   return <details className="evidence">
     <summary>Evidence ({links.length})</summary>
     <ul className="edge-list">{links.map(link => <li key={link.digest}>
       {link.source === 'architecture'
-        ? <button className="link-button" onClick={() => void show(link.digest)}>{link.digest.slice(0, 12)}</button>
+        ? <button className="link-button" onClick={() => show(link.digest)}>{link.digest.slice(0, 12)}</button>
         : <span className="note">catalog fact {link.digest.slice(0, 12)}</span>}
     </li>)}</ul>
     {error && <p className="error" role="alert">{error}</p>}
@@ -77,18 +75,27 @@ function Traversal({ projectId, snapshotId, node, classSet, module, onSelect }: 
   const [target, setTarget] = useState('')
   const [path, setPath] = useState<PathResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  useEffect(() => { setDeps(null); setPath(null); setError(null) }, [node, classSet])
-  async function load(direction: 'out' | 'in') {
-    setError(null)
-    try { setDeps(await getDependencies(projectId, snapshotId, node, direction, classSet)) } catch (reason) { setError(describe(reason)) }
+  const dependencies = useLatestRequest()
+  const paths = useLatestRequest()
+  const { cancel: cancelDependencies } = dependencies
+  const { cancel: cancelPaths } = paths
+  useEffect(() => {
+    // A new node, class set or snapshot aborts whatever was in flight for the previous one.
+    cancelDependencies(); cancelPaths()
+    setDeps(null); setPath(null); setError(null)
+  }, [projectId, snapshotId, node, classSet, cancelDependencies, cancelPaths])
+  function load(direction: 'out' | 'in') {
+    setError(null); setDeps(null)
+    void dependencies.run(signal => getDependencies(projectId, snapshotId, node, direction, classSet, signal), setDeps, reason => setError(describe(reason)))
   }
-  async function find() {
-    setError(null)
-    try { setPath(await getPath(projectId, snapshotId, node, target.startsWith('module:') ? target : `module:${target}`, classSet)) } catch (reason) { setError(describe(reason)) }
+  function find() {
+    setError(null); setPath(null)
+    const goal = target.startsWith('module:') ? target : `module:${target}`
+    void paths.run(signal => getPath(projectId, snapshotId, node, goal, classSet, signal), setPath, reason => setError(describe(reason)))
   }
   return <div className="traversal">
     <h3>Transitive relationships <span className="note">(class set {classSet})</span></h3>
-    <div className="tabs"><button onClick={() => void load('out')}>Depends on</button><button onClick={() => void load('in')}>Depended on by</button></div>
+    <div className="tabs"><button onClick={() => load('out')}>Depends on</button><button onClick={() => load('in')}>Depended on by</button></div>
     {error && <p className="error" role="alert">{error}</p>}
     {deps && <>
       <p className="note">{deps.reached.length} modules · search {deps.search}{deps.frontier ? ` · frontier ${deps.frontier}` : ''}</p>
@@ -98,7 +105,7 @@ function Traversal({ projectId, snapshotId, node, classSet, module, onSelect }: 
       </li>)}</ul>
       <Gaps gaps={deps.gaps} />
     </>}
-    {module && <form className="path-form" onSubmit={event => { event.preventDefault(); void find() }}>
+    {module && <form className="path-form" onSubmit={event => { event.preventDefault(); find() }}>
       <label>Path to module <input value={target} onChange={event => setTarget(event.target.value)} placeholder="app/db.py" /></label>
       <button type="submit" disabled={!target}>Find path</button>
     </form>}

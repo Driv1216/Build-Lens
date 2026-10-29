@@ -32,7 +32,7 @@ DIRECTION_VERSION = "direction-diagnostics.v1"
 EVIDENCE_RENDERER = "architecture-evidence.v1"
 # Milestone B API projection contracts (application/architecture_api.py).
 ROUTER_BINDING_VERSION = "router-binding.v1"
-HTTP_SINKS_VERSION = "http-sinks.v1"
+HTTP_SINKS_VERSION = "http-sinks.v2"
 CLIENT_WRAPPER_VERSION = "client-wrapper.v1"
 CLIENT_FOLDING_VERSION = "client-folding.v1"
 # v3 (Milestone D): typed converters accept only their characters (v2 accepted any segment).

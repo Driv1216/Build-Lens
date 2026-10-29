@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ from buildlens.application.architecture_evaluation import (
     MODULE_UNITS_VERSION,
     EvaluationError,
     classify,
+    labels_template,
     preregistration_template,
     require_approved,
     score_api,
@@ -139,10 +141,12 @@ def test_wrong_corpus_is_refused() -> None:
 
 
 def _packet() -> tuple[dict[str, Any], dict[str, Any]]:
+    """A synthetic packet and sealed answers (never the real, sealed evaluation answers)."""
     prereg = approved()
     packet: dict[str, Any] = {
         "version": API_PACKET_VERSION,
         "preregistration_digest": digest(prereg),
+        "corpus_tree_sha256": TREE,
         "sites": [{"unit": "S001", "locator": "web/a.ts", "line": 1},
                   {"unit": "S002", "locator": "web/a.ts", "line": 2}],
         "endpoints": [{"unit": "E001", "locator": "app.py", "function": "f", "excerpt": []}],
@@ -153,16 +157,20 @@ def _packet() -> tuple[dict[str, Any], dict[str, Any]]:
         "version": API_PACKET_VERSION,
         "packet_digest": packet["packet_digest"],
         "sites": {
-            "S001": {"branches": [{"outcome": "conditional_candidate", "candidates": ["E001"],
-                                   "destination": "local_loopback"}]},
-            "S002": {"branches": [{"outcome": "no_candidate", "candidates": [],
-                                   "destination": "same_origin_relative"}]},
+            "S001": {"method": "GET", "branches": [{"outcome": "conditional_candidate",
+                     "candidates": ["E001"], "destination": "local_loopback"}]},
+            "S002": {"method": "GET", "branches": [{"outcome": "no_candidate", "candidates": [],
+                     "destination": "same_origin_relative"}]},
         },
         "endpoints": {"E001": {"methods": ["GET"], "paths": ["/x"]}},
         "sample_sites": {"web/a.ts": [1, 2]},
     }  # fmt: skip
-    sealed["sealed_digest"] = digest({k: v for k, v in sealed.items() if k != "sealed_digest"})
+    _reseal(sealed)
     return packet, sealed
+
+
+def _reseal(sealed: dict[str, Any]) -> None:
+    sealed["sealed_digest"] = digest({k: v for k, v in sealed.items() if k != "sealed_digest"})
 
 
 def _labels(packet: dict[str, Any], second: list[str]) -> dict[str, Any]:
@@ -171,11 +179,11 @@ def _labels(packet: dict[str, Any], second: list[str]) -> dict[str, Any]:
         "packet_digest": packet["packet_digest"],
         "reviewer": "owner",
         "sites": {
-            "S001": {"statically_determinable": True, "targets": ["E001"]},
-            "S002": {"statically_determinable": True, "targets": second},
+            "S001": {"statically_determinable": True, "method": "GET", "targets": ["E001"]},
+            "S002": {"statically_determinable": second != ["opaque"], "targets": second},
         },
-        "endpoints": {"E001": {"methods": ["GET"], "paths": ["/x"]}},
-        "sink_sample": {"web/a.ts": [1, 2, 7]},
+        "endpoints": {"E001": {"determinable": True, "methods": ["GET"], "paths": ["/x"]}},
+        "sink_sample": {"web/a.ts": {"reviewed": True, "request_lines": [1, 2, 7]}},
     }
 
 
@@ -187,22 +195,235 @@ def test_api_scoring_is_mechanical_and_refuses_tampering() -> None:
     assert result["overall"] == "failed"  # recall 0.5 < 0.80 and abstention 0.5 > 0.20
     assert result["sink_recall"]["value"] == round(2 / 3, 6)
     assert result["endpoints"]["paths_equal"]["value"] == 1.0
+    assert result["site_methods_equal"]["value"] == 1.0
     tampered = copy.deepcopy(packet)
     tampered["sites"].pop()
     with pytest.raises(EvaluationError, match="PACKET_CHANGED"):
-        score_api(approved(), tampered, sealed, _labels(packet, []))
+        score_api(approved(), tampered, sealed, _labels(packet, ["none"]))
     forged = copy.deepcopy(sealed)
     forged["sites"]["S002"]["branches"][0]["outcome"] = "conditional_candidate"
     with pytest.raises(EvaluationError, match="SEALED_CHANGED"):
-        score_api(approved(), packet, forged, _labels(packet, []))
-    incomplete = _labels(packet, [])
+        score_api(approved(), packet, forged, _labels(packet, ["none"]))
+    incomplete = _labels(packet, ["none"])
     del incomplete["sites"]["S002"]
     with pytest.raises(EvaluationError, match="LABELS_INCOMPLETE"):
         score_api(approved(), packet, sealed, incomplete)
     other = approved()
     other["suites"]["self_api"]["recall_min"] = 0.1
     with pytest.raises(EvaluationError, match="PACKET_CHANGED"):
-        score_api(other, packet, sealed, _labels(packet, []))
+        score_api(other, packet, sealed, _labels(packet, ["none"]))
+
+
+def _broken(change: Any) -> dict[str, Any]:
+    packet, _ = _packet()
+    labels = _labels(packet, ["none"])
+    change(labels)
+    return labels
+
+
+@pytest.mark.parametrize(
+    ("change", "code"),
+    [
+        # R01: every section must be complete, not only the request sites.
+        (lambda v: v["endpoints"].pop("E001"), "LABELS_INCOMPLETE"),
+        (lambda v: v.pop("endpoints"), "LABELS_INCOMPLETE"),
+        (lambda v: v["endpoints"]["E001"].update(determinable=None), "LABELS_INCOMPLETE"),
+        (lambda v: v["endpoints"]["E001"].update(paths=[]), "LABELS_INCOMPLETE"),
+        (lambda v: v["sink_sample"].pop("web/a.ts"), "LABELS_INCOMPLETE"),
+        (lambda v: v.pop("sink_sample"), "LABELS_INCOMPLETE"),
+        (lambda v: v["sink_sample"]["web/a.ts"].update(reviewed=False), "LABELS_INCOMPLETE"),
+        (lambda v: v["sites"]["S001"].update(targets=[]), "LABELS_INCOMPLETE"),
+        (lambda v: v.update(reviewer=" "), "LABELS_INCOMPLETE"),
+        # unexpected units and fields
+        (
+            lambda v: v["sites"].update(
+                S999={"statically_determinable": True, "targets": ["none"]}
+            ),
+            "LABELS_UNEXPECTED_UNIT",
+        ),
+        (
+            lambda v: v["endpoints"].update(E999=dict(v["endpoints"]["E001"])),
+            "LABELS_UNEXPECTED_UNIT",
+        ),
+        (
+            lambda v: v["sink_sample"].update(
+                {"web/b.ts": {"reviewed": True, "request_lines": []}}
+            ),
+            "LABELS_UNEXPECTED_UNIT",
+        ),
+        (lambda v: v["sites"]["S001"].update(confidence=0.9), "LABELS_UNEXPECTED_FIELD"),
+        (lambda v: v.update(scores={}), "LABELS_UNEXPECTED_FIELD"),
+        # duplicates and vocabulary
+        (lambda v: v["sites"]["S001"].update(targets=["E001", "E001"]), "LABELS_DUPLICATE_VALUE"),
+        (
+            lambda v: v["sink_sample"]["web/a.ts"].update(request_lines=[1, 1]),
+            "LABELS_DUPLICATE_VALUE",
+        ),
+        (lambda v: v["endpoints"]["E001"].update(methods=["GET", "GET"]), "LABELS_DUPLICATE_VALUE"),
+        (lambda v: v["sites"]["S001"].update(targets=["E404"]), "LABELS_UNKNOWN_ENDPOINT"),
+        (lambda v: v["sites"]["S001"].update(targets=["external", "E001"]), "LABELS_INVALID"),
+        (lambda v: v["sites"]["S001"].update(targets=["opaque"]), "LABELS_INVALID"),
+        (lambda v: v["sites"]["S002"].update(statically_determinable=False), "LABELS_INVALID"),
+        (
+            lambda v: v["sites"]["S001"].update(destination_class="external_service"),
+            "LABELS_INVALID",
+        ),
+        (lambda v: v["endpoints"]["E001"].update(methods=["FETCH"]), "LABELS_INVALID"),
+        (lambda v: v["endpoints"]["E001"].update(paths=["x"]), "LABELS_INVALID"),
+        (lambda v: v["endpoints"]["E001"].update(determinable=False), "LABELS_INVALID"),
+        (lambda v: v["sink_sample"]["web/a.ts"].update(request_lines=[0]), "LABELS_INVALID"),
+        (lambda v: v["sink_sample"]["web/a.ts"].update(request_lines=[True]), "LABELS_INVALID"),
+        (lambda v: v.update(version="architecture-api-labels.v1"), "LABELS_VERSION"),
+        (lambda v: v.update(packet_digest="0" * 64), "LABELS_FOR_ANOTHER_PACKET"),
+    ],
+)
+def test_incomplete_or_malformed_api_labels_are_refused(change: Any, code: str) -> None:
+    packet, sealed = _packet()
+    with pytest.raises(EvaluationError, match=code):
+        score_api(approved(), packet, sealed, _broken(change))
+
+
+def test_untouched_labels_template_cannot_be_scored() -> None:
+    packet, sealed = _packet()
+    template = labels_template(packet)
+    template["reviewer"] = "owner"
+    with pytest.raises(EvaluationError, match="LABELS_INCOMPLETE"):
+        score_api(approved(), packet, sealed, template)
+    tampered = copy.deepcopy(packet)
+    tampered["sites"].pop()
+    with pytest.raises(EvaluationError, match="PACKET_CHANGED"):
+        labels_template(tampered)
+
+
+def test_duplicate_json_keys_in_a_label_file_are_refused(tmp_path: Path) -> None:
+    from buildlens.infrastructure.evaluation.local import read_json
+
+    path = tmp_path / "labels.json"
+    path.write_text('{"sites": {"S001": {}, "S001": {}}}')
+    with pytest.raises(ValueError, match="DUPLICATE_JSON_KEY"):
+        read_json(path)
+
+
+def test_external_opaque_none_and_endpoint_targets_are_scored_by_label() -> None:
+    packet, sealed = _packet()
+    sealed["sites"]["S002"]["branches"] = [
+        {"outcome": "external_destination", "candidates": [],
+         "destination": "public_host_unbound"},
+    ]  # fmt: skip
+    _reseal(sealed)
+    external = score_api(approved(), packet, sealed, _labels(packet, ["external"]))
+    outcomes = {unit["unit"]: unit["outcome"] for unit in external["units"]}
+    # v1 turned "external" into "none": a correct external call could never count.
+    assert outcomes == {"S001": "emitted_correct", "S002": "emitted_correct"}
+    assert external["summary"]["oracle_positive"] == 2
+    opaque = score_api(approved(), packet, sealed, _labels(packet, ["opaque"]))
+    assert {u["unit"]: u["outcome"] for u in opaque["units"]}["S002"] == "emitted_incorrect"
+    # The reviewer says the call is external; the system connected it to a local endpoint.
+    _, local = _packet()
+    local["sites"]["S002"] = copy.deepcopy(local["sites"]["S001"])
+    _reseal(local)
+    result = score_api(approved(), packet, local, _labels(packet, ["external"]))
+    gates = {row["name"]: row for row in result["criteria"]}
+    assert gates["unbound_host_local_connections_max"]["value"] == 1
+    assert not gates["unbound_host_local_connections_max"]["passed"]
+    assert result["overall"] == "failed"
+
+
+def test_api_hard_gates_use_the_sealed_values() -> None:
+    packet, sealed = _packet()
+    sealed["sites"]["S002"]["branches"] = [
+        {"outcome": "conditional_candidate", "candidates": ["E001"],
+         "destination": "public_host_unbound"},
+        {"outcome": "external_destination", "candidates": [], "destination": "external_service"},
+    ]  # fmt: skip
+    _reseal(sealed)
+    result = score_api(approved(), packet, sealed, _labels(packet, ["E001"]))
+    gates = {row["name"]: row for row in result["criteria"]}
+    # v1 hard-coded external_service_labels to 0.
+    assert gates["external_service_labels_max"]["value"] == 1
+    assert gates["unbound_host_local_connections_max"]["value"] == 1
+    assert result["gates"]["unbound_host_local_connection_sites"] == ["S002"]
+    assert result["overall"] == "failed"
+    invalid = copy.deepcopy(sealed)
+    invalid["sites"]["S002"]["branches"][0]["candidates"] = ["E404"]
+    _reseal(invalid)
+    with pytest.raises(EvaluationError, match="SEALED_INVALID"):
+        score_api(approved(), packet, invalid, _labels(packet, ["E001"]))
+    missing = copy.deepcopy(sealed)
+    del missing["endpoints"]["E001"]
+    _reseal(missing)
+    with pytest.raises(EvaluationError, match="SEALED_INVALID"):
+        score_api(approved(), packet, missing, _labels(packet, ["E001"]))
+
+
+def test_api_undefined_metrics_fail_instead_of_passing() -> None:
+    packet, sealed = _packet()
+    for unit in ("S001", "S002"):
+        sealed["sites"][unit]["branches"] = [
+            {"outcome": "no_candidate", "candidates": [], "destination": "same_origin_relative"}
+        ]
+    _reseal(sealed)
+    labels = _labels(packet, ["none"])
+    labels["sites"]["S001"]["targets"] = ["none"]
+    result = score_api(approved(), packet, sealed, labels)
+    gates = {row["name"]: row for row in result["criteria"]}
+    # No oracle positives and no emissions: precision and recall are undefined, so they fail.
+    assert gates["precision_min"]["value"] is None and not gates["precision_min"]["passed"]
+    assert gates["recall_min"]["value"] is None and not gates["recall_min"]["passed"]
+    assert result["overall"] == "failed"
+    empty_packet: dict[str, Any] = {**packet, "sites": [], "sink_sample": {}}
+    empty_packet.pop("packet_digest")
+    empty_packet["packet_digest"] = digest(empty_packet)
+    empty_sealed: dict[str, Any] = {**sealed, "packet_digest": empty_packet["packet_digest"],
+                                    "sites": {}, "sample_sites": {}}  # fmt: skip
+    _reseal(empty_sealed)
+    empty_labels = {**_labels(empty_packet, ["none"]), "sites": {}, "sink_sample": {}}
+    assert score_api(approved(), empty_packet, empty_sealed, empty_labels)["overall"] == (
+        "inconclusive"
+    )
+
+
+def test_extra_system_predictions_count_against_precision() -> None:
+    """R02: 1,001 correct units plus 100 predictions for statements the oracle never saw."""
+    labels = [{"label": "module", "targets": ["b.py"]}] * 1000
+    data = _units([{"label": "module", "targets": ["b.py"]}] * 1000, labels)
+    data["oracle"]["units"].append(
+        {"unit": "t0", "locator": "web/x.ts", "language": "typescript", "label": "external"}
+    )
+    data["system"]["units"].append(
+        {"unit": "t0", "locator": "web/x.ts", "system": {"label": "external", "targets": []}}
+    )
+    clean = score_module_units(approved(), data["oracle"], data["system"])
+    assert clean["overall"] == "passed" and clean["false_positives"] == 0
+    injected = copy.deepcopy(data)
+    injected["system"]["units"] += [
+        {"unit": f"a.py|from|0|m{i}|x|1", "locator": "a.py",
+         "system": {"label": "module", "targets": [f"m{i}.py"]}}
+        for i in range(100)
+    ]  # fmt: skip
+    # Out of scope, listed but not scored: an ineligible file, and a unit with no prediction.
+    injected["system"]["coverage"]["gen/skip.py"] = "not_analysed"
+    injected["system"]["units"] += [
+        {"unit": "gen/skip.py|import|0||y|1", "locator": "gen/skip.py",
+         "system": {"label": "module", "targets": ["y.py"]}},
+        {"unit": "a.py|import|0||z|1", "locator": "a.py", "system": {"label": "unknown"}},
+    ]  # fmt: skip
+    # Even explained as oracle limitations, the extra predictions stay in the metrics.
+    notes = {f"a.py|from|0|m{i}|x|1": {"code": "ORACLE_LIMITATION"} for i in range(100)}
+    result = score_module_units(approved(), injected["oracle"], injected["system"], notes)
+    summary = result["summary"]
+    assert summary["precision"]["numerator"] == 1001
+    assert summary["precision"]["denominator"] == 1101
+    assert summary["recall"] == clean["summary"]["recall"]
+    assert summary["coverage"] == clean["summary"]["coverage"]
+    assert result["false_positives"] == 100 and result["system_only_emitted"] == 100
+    assert result["disagreement_counts"] == {"emitted_incorrect": 100}
+    assert {u["reason"] for u in result["out_of_scope_system_units"]} == {
+        "FILE_NOT_ELIGIBLE", "NO_PREDICTION",
+    }  # fmt: skip
+    assert result["unexplained"] == 0
+    gates = {row["name"]: row for row in result["criteria"]}
+    assert not gates["precision_min"]["passed"] and result["overall"] == "failed"
 
 
 def test_sink_sample_is_seeded_and_stratified() -> None:

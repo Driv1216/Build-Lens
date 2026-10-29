@@ -1124,16 +1124,15 @@ class SqlAlchemyArchitectureStore:
                 results[link] = statuses.get(link.digest, "FACT_SOURCE_MISSING")
         own = [link for link in links if link.source == "architecture"]
         if own:
-            rows = {
-                item.digest: item for item in self.evidence(run.id, [link.digest for link in own])
-            }
-            cited = self._cited_rows([ref for item in rows.values() for ref in item.source_refs])
+            statuses = self.verify_items(self.evidence(run.id, [link.digest for link in own]))
             for link in own:
-                item = rows.get(link.digest)
-                results[link] = (
-                    "EVIDENCE_MISSING" if item is None else self._verify_item(item, cited)
-                )
+                results[link] = statuses.get(link.digest, "EVIDENCE_MISSING")
         return results
+
+    def verify_items(self, items: Sequence[ArchitectureEvidence]) -> dict[str, str]:
+        """Verification state of exactly these evidence rows (re-rendered, cited rows re-read)."""
+        cited = self._cited_rows([ref for item in items for ref in item.source_refs])
+        return {item.digest: self._verify_item(item, cited) for item in items}
 
     @staticmethod
     def _verify_item(

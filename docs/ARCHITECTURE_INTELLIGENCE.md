@@ -10,7 +10,8 @@ reads PostgreSQL only and never executes or reads repository code during a build
   - A: module dependency graph (`1bfb88c`).
   - B: literal evidence and API architecture (`076da6e`).
   - C: integrations, database, frontend routes, subsystems and declared rules (`fdc6761`).
-  - D: evaluation, hardening, performance and documentation (this document).
+  - D: evaluation, hardening, performance and documentation (`b8b816b`).
+  - Remediation R01–R05 of the independent technical review (see "Review remediation").
 
 ## What it is
 
@@ -43,16 +44,16 @@ existing runs stale (`ARCHITECTURE_CONTRACT_CHANGED`).
 | Contract | Meaning |
 | --- | --- |
 | `architecture-model.v2` | Node, edge, component and diagnostic vocabulary; v1 runs (pre-literal) are stale history |
-| `architecture-integrity.v1` | Complete element digests (every semantic field and the evidence-link set); same-run composite FKs; cache invariants I-C1…I-C5; fail-closed authoritative reads; `/integrity` inspection |
+| `architecture-integrity.v1` | Complete element digests (every semantic field and the evidence-link set); same-run composite FKs; cache invariants I-C1…I-C5 (I-C2 also binds the run row's coverage, R04); fail-closed authoritative reads; `/integrity` inspection |
 | `import-classes.v2` | Classes `unconditional`, `presumed_unconditional`, `conditional`, `elision_dependent`, `type_level`, `deferred`; class sets S0–S4 describe the static import relation only |
 | `scc.tarjan-iterative.v1`, `containment.v1`, `aggregation.v1` | Cycles per class set and level; containment hierarchy; aggregated `depends_on` edges |
 | `direction-diagnostics.v1` (D) | `PRODUCTION_IMPORTS_TEST`, `RUNTIME_IMPORTS_MIGRATION`, `CROSS_WORKSPACE_RELATIVE_IMPORT`: inferred from path conventions only |
-| `python-architecture-literals.v1`, `ts-architecture-literals.v1` | Additive extractor passes (never in the catalog contract or processing fingerprints); rows `architecture-literal-rows.v2`; sanitisation `url-origin-path-only.v1` |
-| `router-binding.v1`, `http-sinks.v1`, `client-wrapper.v1`, `client-folding.v1` | Full endpoint paths through mounts; request sites only from recognised sinks or qualified wrappers; URL folding |
+| `python-architecture-literals.v1`, `ts-architecture-literals.v1` | Additive extractor passes (never in the catalog contract or processing fingerprints); rows `architecture-literal-rows.v2`; sanitisation `url-origin-path-only.v1`; the TS pass records `callee_scope` under `ts-callee-scope.v1` (R03) |
+| `router-binding.v1`, `http-sinks.v2`, `client-wrapper.v1`, `client-folding.v1` | Full endpoint paths through mounts; request sites only from recognised sinks or qualified wrappers whose root name no enclosing scope declares (v2, R03); URL folding |
 | `api-matching.v3` (D) | Destination classes first; product-automaton intersection of the two path patterns; no unconditional "matched" state. v3: typed converters accept only their own characters |
 | `manifest-facts.v1`, `package-matching.v1`, `database-view.v1`, `frontend-routes.v1`, `layer-candidates.v1`, `functional-slices.v1`, `absence-gating.v1`, `stdlib-lists.v1` | Milestone C views |
 | `architecture-rules.v1` | Owner-declared rules (API/CLI only, never from repository files), append-only versions, evaluated per request, never enforced |
-| `architecture-evaluation.v1` (D) | The pre-registered evaluation protocol |
+| `architecture-evaluation.v1` (D) | The pre-registered evaluation protocol (unchanged by the remediation); scorer output `architecture-evaluation-score.v2` and human labels `architecture-api-labels.v2` (R01, R02) |
 
 ## Views, API and CLI
 
@@ -84,7 +85,7 @@ GET /rule-results
 
 Project-scoped routes: `POST|GET /api/v1/projects/{p}/architecture-rules` and `GET …/architecture-rules/versions`.
 
-Every read accepts `run_id`. A response that asserts or aggregates elements first re-verifies them: element digests, then evidence.
+Every read accepts `run_id`. A response first re-verifies every element it returns (and the constituents of returned paths, witnesses, matrix cells and conformance results): element digests, then evidence. Totals, histograms and negative claims are computed from the structure verified when the graph was cached, bound to the current rows by the per-table fingerprint and to the run row's coverage (I-C2, I-C4).
 
 ### CLI
 
@@ -92,7 +93,8 @@ Every read accepts `run_id`. A response that asserts or aggregates elements firs
 buildlens architecture build | status | overview | deps | path | cycles | diagnostics | api |
                        view | coverage | verify | export --format json|dot
 buildlens architecture rules set | show | check
-buildlens architecture eval preregister | module-units | module-score | api-packet | api-score
+buildlens architecture eval preregister | module-units | module-score | api-packet |
+                            labels-template | api-score
 ```
 
 ## Lifecycle (F10)
@@ -149,7 +151,7 @@ The upgraded Stage 11 corpus (below) is a real pre-literal example:
 | Suite | Result | Evidence |
 | --- | --- | --- |
 | Fixtures (designed oracles) | **Passed** | F-mod 11/11 units (10 correct, 1 correct alias abstention); F-alias 9/9 (4 alias imports abstain, no API candidate through the alias-bound wrapper, absence becomes `ABSENCE_NOT_DETERMINABLE`, no tsconfig chunk cited). The oracle script reproduces F-mod's designed labels 11/11 |
-| Self-hosted module edges | **Passed** | Non-alias stratum: precision 0.998933 (4,682/4,687, Wilson 0.9975–0.9995); recall 0.998933 (4,682/4,687); coverage 0.987152 (4,687/4,748). Python 4,500/4,505 correct, TS/JS 182/182; abstentions 0; alias edges 0 (BuildLens has no alias imports). Five disagreements, all `ORACLE_LIMITATION` (see below), counted against precision; 0 unexplained, 0 system defects |
+| Self-hosted module edges | **Passed** (re-scored with the corrected scorer v2, R02) | Non-alias stratum: precision 0.998933 (4,682/4,687, Wilson 0.9975–0.9995); recall 0.998933 (4,682/4,687); coverage 0.987152 (4,687/4,748). Python 4,500/4,505 correct, TS/JS 182/182; abstentions 0; alias edges 0 (BuildLens has no alias imports). Five disagreements, all `ORACLE_LIMITATION` (see below), counted against precision; 0 unexplained, 0 system defects; 0 system-only predictions, so v2 equals v1 here (`module.score.r2.scorer-v2.json`) |
 | Self-hosted API (human packet) | **Awaiting owner labels**: not passed, not failed | Blind packet r2: 60 request sites, 90 endpoints, 8 sampled files for sink recall, all as hash-verified stored source. The system's answers are sealed separately |
 | Adversarial | **Passed** (after two fixes) | 0 false connections (4 designed positives still connect), 0 source reads during build, 0 Python-level outbound connections, sentinels never fire, 13/13 tamper operations detected and then repaired to a clean `/integrity` |
 
@@ -172,16 +174,24 @@ The upgraded Stage 11 corpus (below) is a real pre-literal example:
 **API packet.** `.buildlens-eval/reviews/architecture-evaluation-20261029/api-packet/` contains:
 
 - `REVIEW.md`;
-- `packet.json`;
-- `labels.template.json`.
+- `packet.json` (digest `de75b91d…eb10`, unchanged);
+- `labels.template.v2.json`, the template to fill. `labels.template.json` is the superseded v1 template: scoring refuses v1 labels (`LABELS_VERSION`).
 
 The sealed answers are in `sealed/api.sealed.json` (mode 0600). Do not open them until every label is written.
 
-The labels template has these sections:
+The v2 template has these sections, and scoring refuses a file unless every one is complete:
 
-- **Sites:** per site, `statically_determinable`, method, destination class and target endpoint unit ids.
-- **Endpoints:** per endpoint, full paths and methods.
-- **Sink sample:** per sampled file, the start lines of every HTTP request site.
+- **Sites:** per site, `statically_determinable`, method, destination class and `targets`. A determinable site names one or more endpoint unit ids of this packet, or exactly `["external"]` or `["none"]`; a site that is not determinable is exactly `["opaque"]`.
+- **Endpoints:** per endpoint, `determinable`, and if so its full paths (each starting with `/`) and methods.
+- **Sink sample:** per sampled file, `reviewed: true` and the start lines of every HTTP request site in it (an empty list when there are none).
+
+Missing, unexpected or duplicated units, fields, targets or lines are refused before anything is scored.
+
+To write a template for this packet again (it reads the blind packet only):
+
+```bash
+buildlens architecture eval labels-template --packet …/api-packet/packet.json --out <new file>
+```
 
 To score the filled labels:
 
@@ -262,7 +272,25 @@ Records are in `.buildlens-eval/runs/stage14-milestone-d-20261029/`. The baselin
   - Checked: the overview tree, Modules with the neighbourhood and inspector, API (the `listEntities` example: a conditional candidate with `BASE_FROM_FALLBACK_LITERAL` and `LOOPBACK_ORIGIN_ASSUMED_LOCAL_BACKEND`; the environment branch is `BASE_UNKNOWN`), and Subsystems.
   - No console errors.
   - It found the tree-root defect: parentless view nodes were listed as files. The root now lists containment kinds only.
-- **Not done:** hosted CI; the review bundle, which is built from a committed tree after the owner commits Milestone D.
+- **Not done:** hosted CI. A review bundle was built from `b8b816b` for the independent review, which found R01–R05 (below).
+
+## Review remediation (R01–R05)
+
+An independent technical review of `b8b816b` reported five findings. All five were reproduced on the original code with new regression tests, then fixed without changing the frozen pre-registration (digest `0dd8e3b1…9450`), the retained oracle, the system observations or any historical score file.
+
+| Finding | Defect reproduced on `b8b816b` | Correction |
+| --- | --- | --- |
+| R01 API evaluation integrity | A label file with no endpoint or sink-sample labels scored `passed`; `external_service_labels` was a constant 0; an `external` label became `none`; an unknown endpoint id was accepted | `validate_api_labels` refuses incomplete, unexpected, duplicated or out-of-vocabulary labels (labels v2: endpoints carry `determinable`, sampled files `reviewed`); the sealed answers must cover exactly the packet's units; both hard gates take their values from the sealed answers and labels; `external`, `opaque`, `none` and endpoint targets are scored as distinct labels |
+| R02 module precision | Predictions for statements the oracle does not enumerate were left out of precision (1,001 correct plus 100 injected predictions explained as oracle limitations: precision 1.0, `passed`) | System-only emissions in eligible files are `emitted_incorrect` and count in precision (same case: 1,001/1,101 = 0.909, `failed`); only predictions in ineligible files, and units with no prediction, are listed as out of scope. Explanations never change metrics |
+| R03 HTTP sink shadowing | `function inspect(fetch) { return fetch("/api/users") }` and 12 other shadowed calls became request sites with `calls_endpoint` edges | The TS pass records each callee root's binding scope (`ts-callee-scope.v1`): parameters, catch and loop bindings, block and hoisted `var` declarations, module declarations, and `with` (unknown). A sink, or a caller of a wrapper, whose root is declared locally is not a request site (`http-sinks.v2`); unknown scope is never a sink |
+| R04 cache integrity | After the graph was cached, an edit of the run row's `coverage` was served and used for absence and `search: complete` claims; `/evidence/{digest}` labelled the text from one read `verified` on the strength of a second read | I-C2 now also compares the run's coverage with the coverage verified inside `graph_digest` (mismatch: 409 and eviction); evidence inspection verifies exactly the row it returns |
+| R05 frontend stale requests | Dependency, path and evidence requests in the inspector were not abortable, so a late response for an earlier class set or an earlier click replaced the current one | `useRequest` keys its result to its inputs; `useLatestRequest` aborts the previous on-demand request and drops any superseded result; inspector panels remount per run revision and node |
+
+Consequences:
+
+- **Staleness.** The TS pass contract and `http-sinks` changed, so every earlier run is stale (`LITERAL_CONTRACT_CHANGED`, `ARCHITECTURE_CONTRACT_CHANGED`) and stays readable as labelled history. Regaining a current model takes a new structural run, then a catalog build, then an architecture build.
+- **Corpus re-check.** The frozen corpus (`fdc6761`) was rebuilt with the remediated code in a separate scratch database. Module units are identical to the retained r2 observations. The request sites are exactly the packet's 60 sites. The per-site system attributes are hash-identical to the sealed run's (compared by hash only, never shown). The new run verifies 6,846 evidence items with 0 failures.
+- **API evaluation.** Still awaiting the owner's labels; the existing blind packet r2 stays valid.
 
 ## Deviations from the plan (for owner review)
 

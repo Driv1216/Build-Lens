@@ -5,10 +5,14 @@ Integrity contract ``architecture-integrity.v1``:
 * I-C1 a cached graph is created only after full structural verification: every element
   digest recomputed from its row content, the run's ``graph_digest`` reproduced, and the
   persisted aggregates and components re-derived from the persisted module edges;
-* I-C2 every request re-checks freshness and the per-table fingerprint;
-* I-C3 every element a response asserts or aggregates is re-read, re-digested and has its
-  evidence verified, within a per-request budget;
-* I-C4 negative claims are answered from the verified structure of the published run;
+* I-C2 every request re-checks freshness, the per-table fingerprint (row counts and stored
+  digests) and the run row's coverage against the coverage verified with the structure;
+* I-C3 every element a response returns (and every constituent of a returned path, witness,
+  matrix cell or conformance result) is re-read, re-digested and has its evidence verified,
+  within a per-request budget;
+* I-C4 negative claims, totals and histograms are computed from the structure verified at
+  cache creation (I-C1) and bound to the current rows by I-C2: an edit that keeps a row's
+  stored digest is seen when that row is returned or by ``/integrity``, not by a count;
 * I-C5 verification results are never cached and any failure evicts the run.
 
 Authoritative queries fail closed; they never return partial or unverified results.
@@ -149,6 +153,7 @@ class ArchitectureStore(Protocol):
     def verify_evidence(
         self, run: ArchitectureRun, links: Sequence[EvidenceLink]
     ) -> dict[EvidenceLink, str]: ...
+    def verify_items(self, items: Sequence[ArchitectureEvidence]) -> dict[str, str]: ...
     def evidence(self, run_id: UUID, digests: Sequence[str]) -> list[ArchitectureEvidence]: ...
 
 
@@ -163,6 +168,8 @@ class LoadedGraph:
     graph_digest: str
     fingerprint: str
     stored: StoredGraph
+    # digest of the run's coverage as verified inside ``graph_digest`` (I-C1, I-C2).
+    coverage_digest: str = ""
     nodes: dict[str, ArchitectureNode] = field(default_factory=dict)
     node_digest: dict[str, str] = field(default_factory=dict)
     edges: dict[str, ArchitectureEdge] = field(default_factory=dict)
@@ -176,7 +183,7 @@ class LoadedGraph:
     @classmethod
     def of(cls, run: ArchitectureRun, stored: StoredGraph, fingerprint: str) -> LoadedGraph:
         assert run.graph_digest is not None
-        value = cls(run.id, run.graph_digest, fingerprint, stored)
+        value = cls(run.id, run.graph_digest, fingerprint, stored, digest(dict(run.coverage)))
         for node, stored_digest in zip(stored.nodes, stored.node_digests, strict=True):
             value.nodes[node.key] = node
             value.node_digest[node.key] = stored_digest
@@ -496,10 +503,15 @@ class ArchitectureService:
         fingerprint = self._store.fingerprint(run.id)
         cached = self._cache.get(run.id)
         if cached is not None and cached.graph_digest == run.graph_digest:
-            if cached.fingerprint == fingerprint:
-                return run, reasons, cached
-            self._cache.evict(run.id)
-            raise ArchitectureIntegrityError(["persisted rows changed after verification"])
+            if cached.fingerprint != fingerprint:
+                self._cache.evict(run.id)
+                raise ArchitectureIntegrityError(["persisted rows changed after verification"])
+            # Responses serve ``run.coverage`` from the row just read; it must still be the
+            # coverage that ``graph_digest`` bound when the structure was verified.
+            if digest(dict(run.coverage)) != cached.coverage_digest:
+                self._cache.evict(run.id)
+                raise ArchitectureIntegrityError(["run coverage changed after verification"])
+            return run, reasons, cached
         stored, loaded_fingerprint = self._store.load_graph(run.id)
         failures = verify_structure(run, stored)
         if loaded_fingerprint != fingerprint:
@@ -590,8 +602,9 @@ class ArchitectureService:
         rows = self._store.evidence(run.id, [value])
         if not rows:
             raise ArchitectureNotFoundError("Evidence not found in this run.")
-        link = EvidenceLink("architecture", value)
-        status = self._store.verify_evidence(run, [link]).get(link, "EVIDENCE_NOT_CHECKED")
+        # Verify the very row that is returned (not a second read of it), so its text is
+        # labelled ``verified`` only if those bytes were checked.
+        status = self._store.verify_items(rows).get(rows[0].digest, "EVIDENCE_NOT_CHECKED")
         return run, replace(rows[0], verification=status)
 
     def integrity(

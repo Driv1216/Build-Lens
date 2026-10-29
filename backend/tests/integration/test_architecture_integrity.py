@@ -15,12 +15,15 @@ from buildlens.application.architecture import (
     ArchitectureGraphCache,
     ArchitectureIntegrityError,
     ArchitectureService,
+    ArchitectureStaleError,
 )
 from buildlens.application.architecture_queries import ArchitectureQueries
 from buildlens.infrastructure.persistence.architecture import SqlAlchemyArchitectureStore
 from buildlens.infrastructure.persistence.models import (
     ArchitectureEdgeRecord,
     ArchitectureEvidenceLinkRecord,
+    ArchitectureEvidenceRecord,
+    ArchitectureRunRecord,
     ImportReferenceRecord,
     SemanticFactRecord,
 )
@@ -219,3 +222,77 @@ def test_verification_budget_fails_closed(
     monkeypatch.setattr("buildlens.application.architecture.VERIFICATION_BUDGET", 1)
     with pytest.raises(ArchitectureBudgetError):
         queries.overview(stack.project.id, snapshot.id, None)
+
+
+def test_run_coverage_edited_after_caching_fails_closed(pg_engine: Engine, tmp_path: Path) -> None:
+    """R04: coverage is read from the run row on every request; it must still be the coverage
+    that ``graph_digest`` bound when the cached structure was verified."""
+    stack, snapshot, service, queries, run = _setup(pg_engine, tmp_path)
+    assert _path(queries, stack, snapshot).status == "found"  # warm the cache
+    forged = {**run.coverage, "literals": {"forged": True}}
+    with stack.factory.begin() as session:
+        session.execute(
+            update(ArchitectureRunRecord)
+            .where(ArchitectureRunRecord.id == run.id)
+            .values(coverage=forged)
+        )
+    # Before R04 the cached graph was reused and the forged coverage was served as verified.
+    with pytest.raises(ArchitectureIntegrityError, match="coverage"):
+        queries.coverage(stack.project.id, snapshot.id, None)
+    # The entry was evicted: a reload re-derives graph_digest and fails structurally too.
+    with pytest.raises(ArchitectureIntegrityError, match="graph digest mismatch"):
+        _path(queries, stack, snapshot)
+    assert service.integrity(stack.project.id, snapshot.id, None)["structure"] == "failed"
+
+
+def test_pointer_moves_are_seen_while_the_graph_is_cached(
+    pg_engine: Engine, tmp_path: Path
+) -> None:
+    stack, snapshot, service, queries, run = _setup(pg_engine, tmp_path)
+    _path(queries, stack, snapshot)
+    stack.processing.process(stack.project.id, snapshot.id)
+    stack.catalog.build(stack.project.id, snapshot.id)  # the catalog pointer moves
+    with pytest.raises(ArchitectureStaleError):
+        _path(queries, stack, snapshot)
+    # The cached run is still answerable as labelled history, never as the current model.
+    history = queries.path(
+        stack.project.id, snapshot.id, run.id, "module:app/api.py", "module:app/db.py",
+        class_set="S4",
+    )  # fmt: skip
+    assert history.status == "found" and history.freshness_reasons
+
+
+def test_evidence_inspection_verifies_the_row_it_returns(
+    pg_engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R04: the inspected text and its verification state come from the same read."""
+    stack, snapshot, service, _, run = _setup(pg_engine, tmp_path)
+    with stack.factory() as session:
+        row = session.scalar(
+            select(ArchitectureEvidenceRecord).where(
+                ArchitectureEvidenceRecord.architecture_run_id == run.id
+            )
+        )
+        assert row is not None
+        value = row.digest
+    store = cast(Any, service)._store
+    genuine = store.evidence
+    reads = {"count": 0}
+
+    def racing(run_id: Any, digests: Any) -> Any:
+        # The first read sees an edited row; any later read sees the restored one.
+        reads["count"] += 1
+        items = genuine(run_id, digests)
+        if reads["count"] == 1:
+            from dataclasses import replace
+
+            return [replace(item, rendered_text="FORGED " + item.rendered_text) for item in items]
+        return items
+
+    monkeypatch.setattr(store, "evidence", racing)
+    _, item = service.evidence(stack.project.id, snapshot.id, value, None)
+    assert item.rendered_text.startswith("FORGED ")
+    assert item.verification == "EVIDENCE_DIGEST_MISMATCH"  # was "verified" before R04
+    monkeypatch.setattr(store, "evidence", genuine)
+    _, clean = service.evidence(stack.project.id, snapshot.id, value, None)
+    assert clean.verification == "verified"

@@ -26,6 +26,9 @@ LITERAL_EXTRACTORS = frozenset({PYTHON_LITERALS, TS_LITERALS})
 
 LITERAL_ROWS_CONTRACT = "architecture-literal-rows.v2"
 LITERAL_SANITISATION_CONTRACT = "url-origin-path-only.v1"
+# Syntactic binding scope of TS/JS callee roots; part of the TS pass contract, so rows made
+# before it existed are no longer current and a run that used them becomes stale.
+TS_CALLEE_SCOPE_CONTRACT = "ts-callee-scope.v1"
 
 # Digest of the declarations extracted from the built-in canary fixture by the pinned
 # grammars. The worker handshake recomputes it; any difference fails the language closed.
@@ -92,6 +95,7 @@ def extractor_contract(extractor: str) -> dict[str, str] | None:
             "grammar": f"tree-sitter-typescript=={typescript};tree-sitter-javascript=={javascript}",
             "decoding": "utf-8-sig.v1",
             "partial_parse": "skip-erroneous-top-level-statements.v1",
+            "callee_scope": TS_CALLEE_SCOPE_CONTRACT,
             "rows": LITERAL_ROWS_CONTRACT,
             "sanitisation": LITERAL_SANITISATION_CONTRACT,
             "canary": TREE_SITTER_CANARY_DIGEST,

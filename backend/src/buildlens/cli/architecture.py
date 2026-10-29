@@ -386,6 +386,17 @@ def eval_api_packet(
     _emit({"sites": len(packet["sites"]), "endpoints": len(packet["endpoints"])})
 
 
+@eval_app.command("labels-template")
+def eval_labels_template(
+    packet: Path = typer.Option(..., "--packet"),
+    out: Path = typer.Option(..., "--out"),
+) -> None:
+    """Write an empty label file for an existing packet (reads the blind packet only)."""
+    from buildlens.application.architecture_evaluation import labels_template
+
+    _write_once(out, labels_template(_read_json(packet)))
+
+
 @eval_app.command("api-score")
 def eval_api_score(
     preregistration: Path = typer.Option(..., "--preregistration"),

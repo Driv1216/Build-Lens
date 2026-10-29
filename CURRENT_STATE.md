@@ -1,11 +1,14 @@
 # BuildLens current state
 
 **As of 2026-10-29, BuildLens is implemented through Phase 3, Stage 14 — Architecture
-Intelligence (Milestones A–D), on branch `stage14/architecture-intelligence`.** Stage 13
+Intelligence (Milestones A–D plus review remediation R01–R05), on branch
+`stage14/architecture-intelligence`.** Stage 13
 (Semantic Project Model) is on `main`. Stage 12 (framework laboratory) is complete and Stage 11 is
 closed. The real-model quality evaluation of Stage 13 is **deferred, not passed**. Stage 14's
-pre-registered evaluation passed for fixtures, self-hosted module edges and the adversarial suite.
-Its human-labelled self-hosted API suite **awaits labels**.
+pre-registered evaluation passed for fixtures, self-hosted module edges (re-scored with the
+corrected scorer) and the adversarial suite. Its human-labelled self-hosted API suite **awaits
+labels**. Stage 14 has not been independently accepted: the remediation of the independent
+technical review is implemented and verified locally, and awaits re-review.
 
 | Stage | Implementation | Quality and real-provider evidence |
 | --- | --- | --- |
@@ -14,7 +17,7 @@ Its human-labelled self-hosted API suite **awaits labels**.
 | 11: RAG evaluation | Closed 2026-10-02 | **Inconclusive/partial**: 88/90 provider requests failed; answer quality **not passed** |
 | 12: LangChain / LlamaIndex laboratory | Complete 2026-10-25 | 900/900 offline retrieval benchmark; no framework adopted; real lab generation not implemented |
 | 13: Semantic Project Model | Complete: multi-language structure, deterministic catalog, controlled generation, evaluation and hardening, independent review repairs | **Deferred**: no real-model output has been produced or judged |
-| 14: Architecture Intelligence | Complete: module graph, literal evidence and API connections, views, subsystem candidates, declared rules, evaluation and hardening | **Passed:** fixtures; self-hosted module edges (precision and recall 0.9989); adversarial suite. **Awaiting labels:** self-hosted API packet |
+| 14: Architecture Intelligence | Complete: module graph, literal evidence and API connections, views, subsystem candidates, declared rules, evaluation and hardening; review findings R01–R05 remediated | **Passed:** fixtures; self-hosted module edges (precision and recall 0.9989, unchanged under the corrected scorer); adversarial suite. **Awaiting labels:** self-hosted API packet. **Awaiting re-review:** the remediation |
 
 ## What works now
 
@@ -37,6 +40,17 @@ Its human-labelled self-hosted API suite **awaits labels**.
   - Digest-bound review packets.
   - Scoring with an overall `passed`, `failed` or `inconclusive`.
   - Recognizer ground truth.
+
+## Verified (local, 2026-10-29, Stage 14 review remediation working tree)
+
+- **Backend, Python 3.14.6 and 3.11.15**, against disposable PostgreSQL 16 / pgvector 0.8.6: 448 passed, 2 skipped, 5 deselected on each (was 407 at Milestone D). Ruff, format and mypy (both runtimes) are clean.
+- **Frontend:** 45 tests (10 files), ESLint and the production build passed.
+- **Each finding was reproduced on `b8b816b`** by its new regression tests before the fix (38 of the new or changed backend tests and 2 of 3 new frontend tests fail there) and passes after it.
+- **Module evaluation re-scored** with scorer v2 from the unchanged retained files: still `passed`, precision 4,682/4,687 (`module.score.r2.scorer-v2.json`; 0 system-only predictions). Every one of the 2,645 module edges of the evaluated run is cited by a statement row, so no prediction escapes the export.
+- **Frozen corpus rebuilt with the remediated code** in a separate scratch database: module units identical to the retained r2 observations; request sites identical to the API packet's 60; per-site system output hash-identical to the sealed run's; integrity verified (6,846 evidence items, 0 failures).
+- **Browser run** (`/architecture` on that rebuild): inspector detail, dependencies, a class-set switch during a dependency request (the late response is dropped), evidence (`verified`), path search and the API view; no console errors on the final code. It found one defect introduced by the remediation itself (two inspector panels with the same React key, so the evidence panel lost its result), fixed before commit and now caught by the tests.
+- **Not re-run for the remediation:** the Stage 11/12 baseline copy and the performance measurements (no persistence schema or query path changed beyond one extra coverage comparison per request).
+- **Details:** [docs/ARCHITECTURE_INTELLIGENCE.md](docs/ARCHITECTURE_INTELLIGENCE.md) → "Review remediation".
 
 ## Verified (local, 2026-10-29, Stage 14 branch, Milestone D working tree)
 
@@ -69,8 +83,8 @@ Its human-labelled self-hosted API suite **awaits labels**.
 
 - **Stage 14 self-hosted API evaluation.**
   - Prepared: the blind packet (60 request sites, 90 endpoints, 8 sink-sample files) and the sealed system answers.
-  - Waiting on: the owner's labels. It has not passed or failed; once labelled, it is scored with `buildlens architecture eval api-score`.
-- **Stage 14 review bundle and commit of Milestone D.** Not done; they await the owner's instruction.
+  - Waiting on: the owner's labels, written in `api-packet/labels.template.v2.json` (the v1 template is refused since R01). It has not passed or failed; once labelled, it is scored with `buildlens architecture eval api-score`.
+- **Stage 14 independent re-review** of the R01–R05 remediation. Not done.
 
 - **Stage 13 real-model evaluation.**
   - Prepared: the pre-registration is locked (claim correctness ≥ 0.90, overclaim ≤ 0.05, omission ≤ 0.25, usefulness ≥ 2.4; H1 = H2 = 0), and a 60-entity sample plus a 6-entity pilot are frozen.
@@ -111,6 +125,7 @@ Tracked in Git: the evaluation datasets (`.buildlens-eval/datasets/`) and the la
 ## Next stage
 
 - Label and score the Stage 14 API packet.
+- Independent re-review of the Stage 14 remediation.
 - Merge Stage 14 into `main`.
 - Then Stage 15 — Execution-Flow Tracing (see `PROJECT_BLUEPRINT.md`). Not started.
 
@@ -147,6 +162,12 @@ Tracked in Git: the evaluation datasets (`.buildlens-eval/datasets/`) and the la
     - a containment-only tree root;
     - in Stage 13 code, `verify_facts` now rejects an edited fact text.
   - Performance: the Stage 13 `verify_facts` N+1 was batched, so overview p95 went from 4.16 s to 0.92 s. Every query p95 is ≤ 1 s, and the architecture build takes 2.9 s.
+- **Review remediation R01–R05** (2026-10-29; see `docs/ARCHITECTURE_INTELLIGENCE.md`).
+  - R01: API labels are validated for completeness, units, fields, duplicates and vocabulary (`architecture-api-labels.v2`); both API hard gates use real values.
+  - R02: system-only predictions count against precision (`architecture-evaluation-score.v2`); the retained module result is unchanged.
+  - R03: shadowed `fetch`/`window`/`globalThis`/`axios`/wrapper names are not request sites (`ts-callee-scope.v1`, `http-sinks.v2`; earlier runs are stale).
+  - R04: the run's coverage is re-checked against the verified coverage on every cached read; evidence inspection verifies the row it returns.
+  - R05: inspector dependency, path and evidence requests are aborted and superseded results dropped.
 
 ## Stage 13 — Semantic Project Model (2026-10-25 … 2026-10-28)
 

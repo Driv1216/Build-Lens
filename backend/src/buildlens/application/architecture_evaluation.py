@@ -32,8 +32,12 @@ from buildlens.domain.source import digest
 EVALUATION_VERSION = "architecture-evaluation.v1"
 MODULE_UNITS_VERSION = "architecture-module-units.v1"
 API_PACKET_VERSION = "architecture-api-packet.v1"
-API_LABELS_VERSION = "architecture-api-labels.v1"
-SCORE_VERSION = "architecture-evaluation-score.v1"
+# v2: endpoints carry ``determinable`` and sink-sample files ``reviewed``, so an untouched
+# template can no longer pass as "no request sites" (v1 label files are refused).
+API_LABELS_VERSION = "architecture-api-labels.v2"
+# v2: system-only emissions count as false positives (v1 left them out of precision), and API
+# labels are validated for completeness, vocabulary and duplicates before scoring.
+SCORE_VERSION = "architecture-evaluation-score.v2"
 ALIAS_PREFIXES = ("@/", "~/", "#", "/")
 PYTHON_SUFFIXES = (".py",)
 TS_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
@@ -298,9 +302,14 @@ def classify(oracle: Row, system: Row, eligible: bool) -> str:
 
 
 def summarise(units: Sequence[Row]) -> Row:
-    """Counts and metrics over scored units (each with ``outcome`` and ``oracle``)."""
+    """Counts and metrics over scored units (each with ``outcome`` and ``oracle``).
+
+    System-only units (predictions for statements the oracle does not enumerate) count in
+    every outcome and in precision, but not in coverage, which is a property of the oracle's
+    enumeration."""
     counts = Counter(unit["outcome"] for unit in units)
-    eligible = [unit for unit in units if unit["outcome"] != "ineligible"]
+    enumerated = [unit for unit in units if not unit.get("system_only")]
+    eligible = [unit for unit in enumerated if unit["outcome"] != "ineligible"]
     positive = [unit for unit in eligible if unit["oracle"]["label"] in {"module", "external"}]
     correct = counts["emitted_correct"]
     emitted = correct + counts["emitted_incorrect"]
@@ -312,15 +321,16 @@ def summarise(units: Sequence[Row]) -> Row:
         if set(unit["system"]["candidates"]) & set(unit["oracle"].get("targets") or ())
     ]
     return {
-        "units": len(units),
+        "units": len(enumerated),
         "eligible": len(eligible),
         "oracle_positive": len(positive),
         "outcomes": {name: counts[name] for name in OUTCOMES},
         "precision": metric(correct, emitted),
         "recall": metric(correct, len(positive)),
         "abstention_rate": metric(len(abstained), len(positive)),
-        "coverage": metric(len(eligible), len(units)),
+        "coverage": metric(len(eligible), len(enumerated)),
         "ambiguous_set_recall": metric(len(in_set), len(with_sets)),
+        "system_only_emitted": sum(1 for unit in units if unit.get("system_only")),
     }
 
 
@@ -452,6 +462,47 @@ def system_module_units(
     return units, coverage
 
 
+def system_only_units(
+    extra: Iterable[Row], coverage: Mapping[str, str]
+) -> tuple[list[Row], list[Row]]:
+    """Score system units the oracle does not enumerate; returns (scored, out of scope).
+
+    By the pre-registered outcome definitions, a target emitted where the oracle has none is
+    ``emitted_incorrect``: an emission in an eligible file is a false positive and counts
+    against precision whatever its explanation. Only two cases are out of scope and listed
+    without being scored: the file is not eligible (its coverage state is not ``analysed``),
+    or the system emitted nothing (an ``unknown`` unit is not a prediction)."""
+    scored: list[Row] = []
+    out_of_scope: list[Row] = []
+    for unit in extra:
+        locator = str(unit["locator"])
+        output = unit["system"]
+        if coverage.get(locator) != "analysed":
+            out_of_scope.append({**unit, "reason": "FILE_NOT_ELIGIBLE"})
+            continue
+        if output.get("label") not in {"module", "external"}:
+            out_of_scope.append({**unit, "reason": "NO_PREDICTION"})
+            continue
+        python = locator.endswith(PYTHON_SUFFIXES)
+        # Unit keys are locator|kind|specifier|occurrence for TS/JS (see ``UNITS``).
+        parts = str(unit["unit"]).rsplit("|", 3)
+        specifier = parts[2] if not python and len(parts) == 4 else ""
+        oracle = {"label": "none", "targets": []}
+        scored.append(
+            {
+                "unit": unit["unit"],
+                "locator": locator,
+                "language": "python" if python else "typescript",
+                "alias": bool(specifier) and is_alias(specifier),
+                "system_only": True,
+                "oracle": oracle,
+                "system": output,
+                "outcome": classify(oracle, output, True),
+            }
+        )
+    return scored, out_of_scope
+
+
 def score_module_units(
     preregistration: Mapping[str, Any],
     oracle: Mapping[str, Any],
@@ -488,17 +539,12 @@ def score_module_units(
                 "outcome": classify(unit, output, eligible),
             }
         )
-    extra = [
-        {"unit": unit["unit"], "locator": unit["locator"], "system": unit["system"]}
-        for unit in by_unit.values()
-    ]
+    extra, out_of_scope = system_only_units(by_unit.values(), coverage)
+    scored += extra
     disagreements = [
         {**unit, "explanation": explanations.get(unit["unit"])}
         for unit in scored
         if unit["outcome"] in {"emitted_incorrect", "abstained"}
-    ] + [
-        {**unit, "outcome": "system_only", "explanation": explanations.get(unit["unit"])}
-        for unit in extra
     ]
     unexplained = [
         item
@@ -540,6 +586,12 @@ def score_module_units(
         "criteria": rows,
         "overall": verdict(rows, strata),
         "disagreements": disagreements,
+        "disagreement_counts": dict(
+            sorted(Counter(str(item["outcome"]) for item in disagreements).items())
+        ),
+        "false_positives": sum(1 for unit in scored if unit["outcome"] == "emitted_incorrect"),
+        "system_only_emitted": len(extra),
+        "out_of_scope_system_units": out_of_scope,
         "unexplained": len(unexplained),
         "system_defects": len(defects),
     }
@@ -559,12 +611,20 @@ def score_fixture_units(
         scored.append(
             {**unit, "oracle": unit, "system": output, "outcome": classify(unit, output, eligible)}
         )
+    extra, out_of_scope = system_only_units(
+        (
+            {"unit": unit["unit"], "locator": unit["locator"], "system": unit["system"]}
+            for unit in by_unit.values()
+        ),
+        system["coverage"],
+    )
+    scored += extra
     negatives = sum(
         1
         for unit in scored
         if unit["oracle"]["label"] not in {"module", "external"}
         and unit["system"]["label"] in {"module", "external"}
-    ) + sum(1 for unit in by_unit.values() if unit["system"]["label"] in {"module", "external"})
+    ) + sum(1 for unit in out_of_scope if unit["system"]["label"] in {"module", "external"})
     summary = summarise(scored)
     rows = criteria(
         preregistration["suites"]["fixtures"],
@@ -818,6 +878,11 @@ def render_packet_markdown(packet: Mapping[str, Any]) -> str:
 
 
 def labels_template(packet: Mapping[str, Any]) -> Row:
+    """An empty v2 label file; every entry must be filled before scoring accepts it."""
+    if digest({k: v for k, v in packet.items() if k != "packet_digest"}) != packet.get(
+        "packet_digest"
+    ):
+        raise EvaluationError("PACKET_CHANGED")
     return {
         "version": API_LABELS_VERSION,
         "packet_digest": packet["packet_digest"],
@@ -833,15 +898,196 @@ def labels_template(packet: Mapping[str, Any]) -> Row:
             for site in packet["sites"]
         },
         "endpoints": {
-            endpoint["unit"]: {"methods": [], "paths": [], "note": ""}
+            endpoint["unit"]: {"determinable": None, "methods": [], "paths": [], "note": ""}
             for endpoint in packet["endpoints"]
         },
-        "sink_sample": {locator: [] for locator in packet["sink_sample"]},
+        "sink_sample": {
+            locator: {"reviewed": False, "request_lines": [], "note": ""}
+            for locator in packet["sink_sample"]
+        },
         "post_reveal_disagreements": {},
     }
 
 
 UNBOUND = {"private_network_host_unbound", "public_host_unbound"}
+# The destination classes ``api-matching.v3`` produces; none of them is an "external service".
+DESTINATION_CLASSES = frozenset(
+    {"same_origin_relative", "local_loopback", "opaque_origin", *UNBOUND}
+)
+BRANCH_OUTCOMES = frozenset(
+    {
+        "conditional_candidate", "ambiguous", "method_mismatch", "method_unknown",
+        "no_candidate", "external_destination", "opaque_origin", "opaque_path",
+    }
+)  # fmt: skip
+SITE_TARGET_WORDS = frozenset({"external", "opaque", "none"})
+HTTP_METHODS = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"})
+_LABEL_FIELDS = {
+    "": {"version", "packet_digest", "reviewer", "sites", "endpoints", "sink_sample",
+         "post_reveal_disagreements"},
+    "sites": {"statically_determinable", "method", "destination_class", "targets", "note"},
+    "endpoints": {"determinable", "methods", "paths", "note"},
+    "sink_sample": {"reviewed", "request_lines", "note"},
+}  # fmt: skip
+
+
+def _unique_strings(values: Any, code: str = "LABELS_INVALID") -> list[str]:
+    if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
+        raise EvaluationError(code)
+    if len(set(values)) != len(values):
+        raise EvaluationError("LABELS_DUPLICATE_VALUE")
+    return list(values)
+
+
+def _entries(labels: Mapping[str, Any], section: str, expected: set[str]) -> dict[str, Row]:
+    """One label section: exactly the packet's units, each an object of known fields."""
+    values = labels.get(section)
+    if not isinstance(values, dict):
+        raise EvaluationError("LABELS_INCOMPLETE")
+    if set(values) - expected:
+        raise EvaluationError("LABELS_UNEXPECTED_UNIT")
+    if set(values) != expected:
+        raise EvaluationError("LABELS_INCOMPLETE")
+    for value in values.values():
+        if not isinstance(value, dict) or set(value) - _LABEL_FIELDS[section]:
+            raise EvaluationError("LABELS_UNEXPECTED_FIELD")
+    return values
+
+
+def validate_api_labels(packet: Mapping[str, Any], labels: Mapping[str, Any]) -> None:
+    """Every packet unit labelled once, in the v2 vocabulary; anything else is refused.
+
+    Sites: ``statically_determinable`` is a boolean; a determinable site names one or more
+    distinct endpoint units of this packet, or exactly one of ``external`` / ``none``; a site
+    that is not determinable is labelled exactly ``["opaque"]``. Endpoints: ``determinable``
+    is a boolean; a determinable endpoint has non-empty distinct methods and ``/`` paths, an
+    undeterminable one has neither. Sink sample: every sampled file is ``reviewed`` with the
+    distinct positive start lines of its request sites (possibly none)."""
+    if labels.get("version") != API_LABELS_VERSION:
+        raise EvaluationError("LABELS_VERSION")
+    if labels.get("packet_digest") != packet["packet_digest"]:
+        raise EvaluationError("LABELS_FOR_ANOTHER_PACKET")
+    if set(labels) - _LABEL_FIELDS[""]:
+        raise EvaluationError("LABELS_UNEXPECTED_FIELD")
+    reviewer = labels.get("reviewer")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        raise EvaluationError("LABELS_INCOMPLETE")
+    endpoint_units = {endpoint["unit"] for endpoint in packet["endpoints"]}
+    sites = _entries(labels, "sites", {site["unit"] for site in packet["sites"]})
+    for label in sites.values():
+        determinable = label.get("statically_determinable")
+        if not isinstance(determinable, bool):
+            raise EvaluationError("LABELS_INCOMPLETE")
+        targets = _unique_strings(label.get("targets"))
+        if not targets:
+            raise EvaluationError("LABELS_INCOMPLETE")
+        words = set(targets) & SITE_TARGET_WORDS
+        if words and len(targets) != 1:
+            raise EvaluationError("LABELS_INVALID")
+        if not words and set(targets) - endpoint_units:
+            raise EvaluationError("LABELS_UNKNOWN_ENDPOINT")
+        if determinable == (targets == ["opaque"]):
+            raise EvaluationError("LABELS_INVALID")
+        method = label.get("method")
+        if method is not None and (not isinstance(method, str) or not method):
+            raise EvaluationError("LABELS_INVALID")
+        destination = label.get("destination_class")
+        if destination is not None and destination not in DESTINATION_CLASSES:
+            raise EvaluationError("LABELS_INVALID")
+    for label in _entries(labels, "endpoints", endpoint_units).values():
+        determinable = label.get("determinable")
+        if not isinstance(determinable, bool):
+            raise EvaluationError("LABELS_INCOMPLETE")
+        methods = _unique_strings(label.get("methods"))
+        paths = _unique_strings(label.get("paths"))
+        if determinable != bool(methods) or determinable != bool(paths):
+            raise EvaluationError("LABELS_INCOMPLETE" if determinable else "LABELS_INVALID")
+        if set(methods) - HTTP_METHODS or any(not path.startswith("/") for path in paths):
+            raise EvaluationError("LABELS_INVALID")
+    for label in _entries(labels, "sink_sample", set(packet["sink_sample"])).values():
+        if label.get("reviewed") is not True:
+            raise EvaluationError("LABELS_INCOMPLETE")
+        lines = label.get("request_lines")
+        if not isinstance(lines, list) or not all(
+            isinstance(line, int) and not isinstance(line, bool) and line > 0 for line in lines
+        ):
+            raise EvaluationError("LABELS_INVALID")
+        if len(set(lines)) != len(lines):
+            raise EvaluationError("LABELS_DUPLICATE_VALUE")
+    if not isinstance(labels.get("post_reveal_disagreements", {}), dict):
+        raise EvaluationError("LABELS_INVALID")
+
+
+def _verify_packet_and_sealed(
+    preregistration: Mapping[str, Any], packet: Mapping[str, Any], sealed: Mapping[str, Any]
+) -> str:
+    prereg_digest = require_approved(preregistration)
+    body = {key: value for key, value in packet.items() if key != "packet_digest"}
+    if (
+        packet.get("version") != API_PACKET_VERSION
+        or digest(body) != packet.get("packet_digest")
+        or packet.get("preregistration_digest") != prereg_digest
+    ):
+        raise EvaluationError("PACKET_CHANGED")
+    if packet.get("corpus_tree_sha256") != preregistration["corpus"]["tree_sha256"]:
+        raise EvaluationError("SYSTEM_CORPUS_MISMATCH")
+    sealed_body = {key: value for key, value in sealed.items() if key != "sealed_digest"}
+    if (
+        digest(sealed_body) != sealed.get("sealed_digest")
+        or sealed.get("packet_digest") != packet["packet_digest"]
+    ):
+        raise EvaluationError("SEALED_CHANGED")
+    endpoint_units = {endpoint["unit"] for endpoint in packet["endpoints"]}
+    if (
+        set(sealed.get("sites") or {}) != {site["unit"] for site in packet["sites"]}
+        or set(sealed.get("endpoints") or {}) != endpoint_units
+        or set(sealed.get("sample_sites") or {}) != set(packet["sink_sample"])
+    ):
+        raise EvaluationError("SEALED_INVALID")
+    for answer in sealed["sites"].values():
+        for branch in answer.get("branches") or []:
+            if branch.get("outcome") not in BRANCH_OUTCOMES or (
+                set(branch.get("candidates") or []) - endpoint_units
+            ):
+                raise EvaluationError("SEALED_INVALID")
+    return prereg_digest
+
+
+def _system_site(answer: Mapping[str, Any]) -> Row:
+    """The system's site-level claim: one candidate endpoint, external, or no claim."""
+    branches = list(answer.get("branches") or [])
+    candidates = sorted(
+        {
+            candidate
+            for branch in branches
+            if branch["outcome"] == "conditional_candidate"
+            for candidate in branch["candidates"]
+        }
+    )
+    if len(candidates) == 1:
+        return {"label": "module", "targets": candidates}
+    if not candidates and any(b["outcome"] == "external_destination" for b in branches):
+        return {"label": "external", "targets": []}
+    ambiguous = sorted(
+        {
+            candidate
+            for branch in branches
+            if branch["outcome"] in {"ambiguous", "method_mismatch", "method_unknown"}
+            for candidate in branch["candidates"]
+        }
+    )
+    return {"label": "unknown", "targets": [], "candidates": candidates or ambiguous}
+
+
+def _oracle_site(label: Mapping[str, Any]) -> Row:
+    targets = list(label["targets"])
+    if targets == ["opaque"]:
+        return {"label": "unknown", "targets": []}
+    if targets == ["none"]:
+        return {"label": "none", "targets": []}
+    if targets == ["external"]:
+        return {"label": "external", "targets": []}
+    return {"label": "module", "targets": sorted(targets)}
 
 
 def score_api(
@@ -850,68 +1096,29 @@ def score_api(
     sealed: Mapping[str, Any],
     labels: Mapping[str, Any],
 ) -> Row:
-    """Mechanical scoring of the human labels against the sealed system answers."""
-    prereg_digest = require_approved(preregistration)
-    body = {key: value for key, value in packet.items() if key != "packet_digest"}
-    if (
-        digest(body) != packet.get("packet_digest")
-        or packet.get("preregistration_digest") != prereg_digest
-    ):
-        raise EvaluationError("PACKET_CHANGED")
-    sealed_body = {key: value for key, value in sealed.items() if key != "sealed_digest"}
-    if (
-        digest(sealed_body) != sealed.get("sealed_digest")
-        or sealed.get("packet_digest") != packet["packet_digest"]
-    ):
-        raise EvaluationError("SEALED_CHANGED")
-    if (
-        labels.get("version") != API_LABELS_VERSION
-        or labels.get("packet_digest") != packet["packet_digest"]
-    ):
-        raise EvaluationError("LABELS_FOR_ANOTHER_PACKET")
-    if not labels.get("reviewer"):
-        raise EvaluationError("LABELS_INCOMPLETE")
-    site_labels = labels.get("sites") or {}
-    if set(site_labels) != {site["unit"] for site in packet["sites"]} or any(
-        not isinstance(value.get("statically_determinable"), bool) for value in site_labels.values()
-    ):
-        raise EvaluationError("LABELS_INCOMPLETE")
+    """Mechanical scoring of complete, validated human labels against the sealed answers."""
+    prereg_digest = _verify_packet_and_sealed(preregistration, packet, sealed)
+    validate_api_labels(packet, labels)
     units: list[Row] = []
-    unbound_local = 0
-    for unit, label in sorted(site_labels.items()):
+    unbound_local: set[str] = set()
+    external_service = 0
+    methods_compared = methods_equal = 0
+    for unit, label in sorted(labels["sites"].items()):
         answer = sealed["sites"][unit]
-        candidates = sorted(
-            {
-                candidate
-                for branch in answer["branches"]
-                if branch["outcome"] == "conditional_candidate"
-                for candidate in branch["candidates"]
-            }
+        branches = list(answer.get("branches") or [])
+        external_service += sum(
+            1 for branch in branches if branch.get("destination") not in DESTINATION_CLASSES
         )
-        ambiguous = sorted(
-            {
-                candidate
-                for branch in answer["branches"]
-                if branch["outcome"] == "ambiguous"
-                for candidate in branch["candidates"]
-            }
-        )
-        unbound_local += sum(
-            1
-            for branch in answer["branches"]
-            if branch.get("destination") in UNBOUND and branch["outcome"] == "conditional_candidate"
-        )
-        targets = [target for target in label.get("targets") or [] if str(target).startswith("E")]
-        oracle = (
-            {"label": "module", "targets": targets}
-            if label["statically_determinable"] and targets
-            else {"label": "none", "targets": []}
-        )
-        system = (
-            {"label": "module", "targets": candidates}
-            if len(candidates) == 1
-            else {"label": "unknown", "targets": [], "candidates": candidates or ambiguous}
-        )
+        oracle = _oracle_site(label)
+        system = _system_site(answer)
+        if any(
+            branch.get("destination") in UNBOUND and branch["outcome"] == "conditional_candidate"
+            for branch in branches
+        ) or (oracle["label"] == "external" and system["label"] == "module"):
+            unbound_local.add(unit)
+        if label["statically_determinable"] and label.get("method"):
+            methods_compared += 1
+            methods_equal += int(label["method"] == answer.get("method"))
         units.append(
             {
                 "unit": unit,
@@ -922,51 +1129,55 @@ def score_api(
         )
     summary = summarise(units)
     endpoint_rows = []
-    for unit, label in sorted((labels.get("endpoints") or {}).items()):
-        answer = sealed["endpoints"].get(unit, {})
-        endpoint_rows.append(
-            {
-                "unit": unit,
-                "paths_equal": sorted(label.get("paths") or [])
-                == sorted(p for p in answer.get("paths", []) if p),
-                "methods_equal": sorted(label.get("methods") or [])
-                == sorted(answer.get("methods") or []),
-            }
-        )
-    marked = labels.get("sink_sample") or {}
-    found = sum(
-        len(set(marked.get(locator) or []) & set(lines))
-        for locator, lines in sealed["sample_sites"].items()
-    )
-    human = sum(len(set(lines)) for lines in marked.values())
-    extra = {
-        locator: sorted(set(lines) - set(marked.get(locator) or []))
-        for locator, lines in sealed["sample_sites"].items()
-        if set(lines) - set(marked.get(locator) or [])
+    for unit, label in sorted(labels["endpoints"].items()):
+        answer = sealed["endpoints"][unit]
+        row: Row = {"unit": unit, "determinable": label["determinable"]}
+        if label["determinable"]:
+            row["paths_equal"] = sorted(label["paths"]) == sorted(
+                path for path in answer.get("paths") or [] if path
+            )
+            row["methods_equal"] = sorted(label["methods"]) == sorted(answer.get("methods") or [])
+        endpoint_rows.append(row)
+    determinable = [row for row in endpoint_rows if row["determinable"]]
+    marked = {
+        locator: set(value["request_lines"]) for locator, value in labels["sink_sample"].items()
     }
-    rows = criteria(
-        preregistration["suites"]["self_api"],
-        summary,
-        {"unbound_host_local_connections": unbound_local, "external_service_labels": 0},
+    found = sum(
+        len(marked[locator] & set(lines)) for locator, lines in sealed["sample_sites"].items()
     )
+    human = sum(len(lines) for lines in marked.values())
+    extra = {
+        locator: sorted(set(lines) - marked[locator])
+        for locator, lines in sealed["sample_sites"].items()
+        if set(lines) - marked[locator]
+    }
+    gates = {
+        "unbound_host_local_connections": len(unbound_local),
+        "external_service_labels": external_service,
+    }
+    rows = criteria(preregistration["suites"]["self_api"], summary, gates)
     return {
         "version": SCORE_VERSION,
         "suite": "self_api",
         "preregistration_digest": prereg_digest,
         "packet_digest": packet["packet_digest"],
+        "sealed_digest": sealed["sealed_digest"],
         "labels_digest": digest(dict(labels)),
         "reviewer": labels["reviewer"],
         "summary": summary,
         "criteria": rows,
+        "gates": {**gates, "unbound_host_local_connection_sites": sorted(unbound_local)},
         "overall": verdict(rows, {"sites": summary}),
         "units": units,
+        "site_methods_equal": metric(methods_equal, methods_compared),
         "endpoints": {
             "units": len(endpoint_rows),
+            "determinable": len(determinable),
             "paths_equal": metric(
-                sum(row["paths_equal"] for row in endpoint_rows), len(endpoint_rows)
+                sum(row["paths_equal"] for row in determinable), len(determinable)
             ),
             "methods_equal": metric(
-                sum(row["methods_equal"] for row in endpoint_rows), len(endpoint_rows)
+                sum(row["methods_equal"] for row in determinable), len(determinable)
             ),
             "rows": endpoint_rows,
         },

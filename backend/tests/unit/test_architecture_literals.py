@@ -354,3 +354,43 @@ def test_ts_context_survives_try_and_if_blocks() -> None:
     row = next(r.attributes for r in extraction.literals if r.kind == "http_call")
     assert row["function"] == "req" and row["parameters"] == ["p"]
     assert row["conditional"] is False and row["callback"] is False
+
+
+def _scopes(source: str, locator: str = "web/api.ts") -> dict[int | None, str]:
+    return {
+        row.span.start_line: row.attributes["callee_scope"]
+        for row in _ts(source, locator).literals
+        if row.kind in {"http_call", "url_call"}
+    }
+
+
+def test_ts_callee_scope_sees_parameters_and_local_declarations() -> None:
+    scopes = _scopes(
+        "export function inspect(fetch: (path: string) => string) {\n"  # 1
+        "  return fetch('/api/users')\n"  # 2 parameter
+        "}\n"
+        "export const arrow = (fetch: any) => fetch('/api/users')\n"  # 4 arrow parameter
+        "export function f({ axios }: any, [window]: any[]) {\n"  # 5
+        "  axios.get('/api/users'); window.fetch('/api/users')\n"  # 6 destructured
+        "}\n"
+        "export function g() { const globalThis = mock; return globalThis.fetch('/api/x') }\n"  # 8
+        "export function h() { if (x) { var fetch = mock }; return fetch('/api/users') }\n"  # 9
+        "export function k() { try {} catch (fetch) { fetch('/api/users') } }\n"  # 10
+        "export function m() { for (const fetch of fns) { fetch('/api/users') } }\n"  # 11
+        "export function n() { { const fetch = mock } return fetch('/api/users') }\n"  # 12 control
+        "export function p(request: any) { return request('/api/users') }\n"  # 13 url_call
+        "export const q = () => fetch('/api/users')\n"  # 14 control
+        "axios.get('/api/users'); window.fetch('/api/users')\n"  # 15 control
+        "function named() { return named('/api/users') }\n"  # 16 module-level function name
+    )
+    assert scopes == {
+        2: "local", 4: "local", 6: "local", 8: "local", 9: "local", 10: "local", 11: "local",
+        12: "none", 13: "local", 14: "none", 15: "none", 16: "module",
+    }  # fmt: skip
+
+
+def test_ts_callee_scope_module_declarations_and_with() -> None:
+    scopes = _scopes("const axios = make()\naxios.get('/api/users')\nfetch('/api/users')\n")
+    assert scopes == {2: "module", 3: "none"}
+    sloppy = _scopes("with (obj) { fetch('/api/users') }\n", "web/old.js")
+    assert sloppy == {1: "unknown"}

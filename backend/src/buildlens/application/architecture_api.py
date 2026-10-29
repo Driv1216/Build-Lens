@@ -9,10 +9,13 @@ Contracts (recorded in ``architecture_contract()``):
   same module and scope; mounts bind their parent and child objects in the same module or
   through one resolved import; full paths follow Starlette/FastAPI and Flask joining rules;
   every non-literal, unbound or invalid component makes the path ``unknown``.
-* ``http-sinks.v1``: request sites are only ``fetch``/``window.fetch``/``globalThis.fetch``
-  (bare ``fetch`` only when the file declares or imports no ``fetch``) and ``axios`` bound by
-  an import from the bare specifier ``axios``. URL-shaped arguments elsewhere are never
-  request evidence.
+* ``http-sinks.v2``: request sites are only ``fetch``/``window.fetch``/``globalThis.fetch``
+  (only when the file declares or imports no binding of the root name) and ``axios`` bound by
+  an import from the bare specifier ``axios``; in every case the extractor's ``callee_scope``
+  must show no enclosing parameter or local declaration of the root (v1 did not look inside
+  functions, so ``function f(fetch) { fetch('/api') }`` was a request site). URL-shaped
+  arguments elsewhere are never request evidence; a caller binds a wrapper only when its
+  callee name is not declared locally either.
 * ``client-wrapper.v1``: a top-level function with exactly one unconditional sink whose URL is
   ``${B}${p}`` (``p`` a parameter) qualifies as a wrapper; callers bind in the same file or
   through one resolved import.
@@ -819,10 +822,19 @@ class ApiProjection:
     def _sink(self, module: ApiModule, row: Row) -> tuple[bool, set[str], str]:
         callee = str(row["subject"])
         attributes = row["attributes"]
+        root = callee.split(".", 1)[0]
+        # http-sinks.v2: a root identifier declared by an enclosing scope (a parameter or a
+        # local named fetch/window/globalThis/axios) is not the global or imported sink, and
+        # a row without scope evidence is never trusted.
+        scope = attributes.get("callee_scope")
+        if scope in {"local", "module"}:
+            return False, set(), "SINK_SHADOWED_LOCALLY" if scope == "local" else "FETCH_SHADOWED"
+        if scope != "none":
+            return False, set(), "SINK_BINDING_UNKNOWN"
         if attributes.get("sink") == "fetch":
+            if root in module.top_level_names or root in module.bindings:
+                return False, set(), "FETCH_SHADOWED"
             if callee == "fetch":
-                if "fetch" in module.top_level_names or "fetch" in module.bindings:
-                    return False, set(), "FETCH_SHADOWED"
                 return True, {"GLOBAL_FETCH_ASSUMED"}, "fetch"
             return True, set(), "fetch"
         binding = module.bindings.get("axios")
@@ -1034,6 +1046,12 @@ class ApiProjection:
             for row in self._rows(module, "url_call"):
                 attributes = row["attributes"]
                 callee = str(row["subject"])
+                scope = attributes.get("callee_scope")
+                if scope not in {"none", "module"}:
+                    # A caller's local binding of the name is not the module-level wrapper.
+                    reason = "CALLEE_SHADOWED_LOCALLY" if scope == "local" else "SCOPE_UNKNOWN"
+                    self.counters[f"url_call:{reason}"] += 1
+                    continue
                 wrapper, refs, state = self._wrapper_for(module, callee, wrappers)
                 if wrapper is None:
                     self.counters[f"url_call:{state}"] += 1

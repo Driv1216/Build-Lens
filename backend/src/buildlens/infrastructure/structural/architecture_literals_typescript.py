@@ -1,5 +1,10 @@
 """Additive ``ts-architecture-literals.v1`` pass over TS/TSX/JS/JSX (tree-sitter, parse only).
 
+``http_call`` and ``url_call`` rows carry ``callee_scope`` (``ts-callee-scope.v1``): whether
+the callee's root identifier is declared by an enclosing function, block or the module, so a
+parameter or local named ``fetch``, ``window``, ``globalThis`` or ``axios`` is never taken for
+the global or imported sink.
+
 It re-parses the same bytes and never alters the declaration extraction. Rows (plan F7, C-2, C-3):
 
 * ``http_call``: syntactic sink candidates ``fetch``/``window.fetch``/``globalThis.fetch``,
@@ -63,6 +68,15 @@ _FUNCTIONS = {
     "method_definition",
 }
 _LOOPS = {"for_statement", "for_in_statement", "while_statement", "do_statement"}
+# Scopes whose declarations shadow a callee name (functions are handled with ``_FUNCTIONS``).
+_SCOPES = {
+    "program", "statement_block", "class_body", "switch_body", "catch_clause",
+    "for_statement", "for_in_statement",
+}  # fmt: skip
+_DECLARATIONS = {
+    "function_declaration", "generator_function_declaration", "class_declaration",
+    "abstract_class_declaration", "enum_declaration", "internal_module", "module",
+}  # fmt: skip
 _FETCH = {"fetch", "window.fetch", "globalThis.fetch"}
 _AXIOS_VERBS = {"get", "post", "put", "patch", "delete", "head", "options", "request"}
 # axios.<verb>(url, config) vs axios.<verb>(url, data, config)
@@ -120,6 +134,7 @@ class _Walker:
         self.evidence_rows = 0
         self.classification_rows = 0
         self.classification_complete = True
+        self._declared: dict[int, frozenset[str]] = {}
 
     def add(
         self,
@@ -376,6 +391,7 @@ class _Walker:
         text = identifier_chain(_text(callee))
         if text is None:
             return
+        flags["callee_scope"] = self.callee_scope(node, text.split(".", 1)[0])
         if text in _FETCH:
             self.add(
                 "http_call",
@@ -441,6 +457,76 @@ class _Walker:
                 **flags,
             },
         )
+
+    # -- binding scope (``ts-callee-scope.v1``) ----------------------------------------------
+    def callee_scope(self, call: tree_sitter.Node, name: str) -> str:
+        """Where the callee's root identifier is declared, by syntax alone.
+
+        ``local``: a parameter, catch binding, loop binding, or a ``var``/``let``/``const``/
+        function/class/enum/namespace declaration of an enclosing function or block.
+        ``module``: such a declaration at module level (the name is then neither the global
+        nor an import, but may be a same-file wrapper). ``unknown``: a ``with`` statement
+        encloses the call. ``none``: no declaration in any enclosing scope; imports are
+        checked separately by the projection."""
+        node = call.parent
+        while node is not None:
+            kind = node.type
+            if kind == "with_statement":
+                return "unknown"
+            if kind in _FUNCTIONS or kind in _SCOPES:
+                if name in self._declarations(node):
+                    return "module" if kind == "program" else "local"
+            node = node.parent
+        return "none"
+
+    def _declarations(self, scope: tree_sitter.Node) -> frozenset[str]:
+        cached = self._declared.get(scope.id)
+        if cached is not None:
+            return cached
+        names: set[str] = set()
+        kind = scope.type
+        if kind in _FUNCTIONS:
+            parameters = scope.child_by_field_name("parameters")
+            for parameter in parameters.named_children if parameters else []:
+                names |= _pattern_names(parameter)
+            single = scope.child_by_field_name("parameter")
+            if single is not None:
+                names |= _pattern_names(single)
+            if kind in {"function_expression", "function", "generator_function"}:
+                own = scope.child_by_field_name("name")
+                if own is not None:
+                    names.add(_text(own))
+            body = scope.child_by_field_name("body")
+            if body is not None:
+                names |= _hoisted(body)
+        elif kind == "program":
+            for statement in scope.named_children:
+                names |= _block_declarations(statement)
+            names |= _hoisted(scope)
+        elif kind == "catch_clause":
+            binding = scope.child_by_field_name("parameter")
+            if binding is not None:
+                names |= _pattern_names(binding)
+        elif kind in {"for_in_statement", "for_statement"}:
+            if kind == "for_in_statement" and any(
+                child.type in {"var", "let", "const"} for child in scope.children
+            ):
+                left = scope.child_by_field_name("left")
+                if left is not None:
+                    names |= _pattern_names(left)
+            initializer = scope.child_by_field_name("initializer")
+            if initializer is not None:
+                names |= _block_declarations(initializer)
+        elif kind == "switch_body":
+            for case in scope.named_children:
+                for statement in case.named_children:
+                    names |= _block_declarations(statement)
+        else:  # statement_block, class_body
+            for statement in scope.named_children:
+                names |= _block_declarations(statement)
+        value = frozenset(names)
+        self._declared[scope.id] = value
+        return value
 
     def constants(self, node: tree_sitter.Node) -> None:
         if (
@@ -575,6 +661,73 @@ class _Walker:
         before = len(self.rows)
         self.add("frontend_route", node, element, {"path": path, "index": index, "parent": parent})
         return before if len(self.rows) > before else None
+
+
+def _pattern_names(node: tree_sitter.Node) -> set[str]:
+    """Identifiers bound by a parameter or declaration pattern (defaults and types excluded)."""
+    kind = node.type
+    if kind in {"identifier", "shorthand_property_identifier_pattern"}:
+        return {_text(node)}
+    if kind in {"required_parameter", "optional_parameter"}:
+        pattern = node.child_by_field_name("pattern")
+        return _pattern_names(pattern) if pattern is not None else set()
+    if kind == "pair_pattern":
+        value = node.child_by_field_name("value")
+        return _pattern_names(value) if value is not None else set()
+    if kind in {"assignment_pattern", "object_assignment_pattern"}:
+        left = node.child_by_field_name("left")
+        return _pattern_names(left) if left is not None else set()
+    if kind in {"object_pattern", "array_pattern", "rest_pattern"}:
+        names: set[str] = set()
+        for child in node.named_children:
+            names |= _pattern_names(child)
+        return names
+    return set()
+
+
+def _block_declarations(statement: tree_sitter.Node) -> set[str]:
+    """Names one statement declares in its own block (``var`` is handled by ``_hoisted``)."""
+    kind = statement.type
+    if kind in {"export_statement", "ambient_declaration"}:
+        names: set[str] = set()
+        for child in statement.named_children:
+            names |= _block_declarations(child)
+        return names
+    if kind in {"lexical_declaration", "variable_declaration"}:
+        names = set()
+        for declarator in statement.named_children:
+            if declarator.type == "variable_declarator":
+                target = declarator.child_by_field_name("name")
+                if target is not None:
+                    names |= _pattern_names(target)
+        return names
+    if kind in _DECLARATIONS:
+        name = statement.child_by_field_name("name")
+        return {_text(name)} if name is not None else set()
+    return set()
+
+
+def _hoisted(body: tree_sitter.Node) -> set[str]:
+    """``var`` and function declarations anywhere in a function body or the module, not
+    inside nested functions (function-scoped, so conservatively bound everywhere in it)."""
+    names: set[str] = set()
+    stack = list(body.named_children)
+    while stack:
+        node = stack.pop()
+        if node.type in _FUNCTIONS and node.type not in {
+            "function_declaration",
+            "generator_function_declaration",
+        }:
+            continue
+        if node.type == "variable_declaration" or node.type in {
+            "function_declaration",
+            "generator_function_declaration",
+        }:
+            names |= _block_declarations(node)
+            if node.type != "variable_declaration":
+                continue
+        stack.extend(node.named_children)
+    return names
 
 
 def _parameters(function: tree_sitter.Node) -> tuple[str, ...]:
