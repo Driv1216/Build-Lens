@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import { Profiler } from 'react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { request } from '../../api/client'
@@ -119,5 +120,35 @@ describe('Inspector stale-response guards', () => {
     await settle(first, item('1'.repeat(64), 'first fact'))
     expect(screen.getByText('second fact')).toBeInTheDocument()
     expect(screen.queryByText('first fact')).toBeNull()
+  })
+
+  it('never paints resolved results under a newly selected class set, not even for one commit', async () => {
+    // Profiler callbacks run in the commit phase, after the DOM is updated and before passive
+    // effects, so they see the frame the user would see before any reset effect runs.
+    const frames: { heading: string; text: string }[] = []
+    const record = () => {
+      const traversal = document.querySelector('.traversal')
+      if (traversal) frames.push({ heading: traversal.querySelector('h3')?.textContent ?? '', text: traversal.textContent ?? '' })
+    }
+    const profiled = (classSet: ClassSet) => <Profiler id="inspector" onRender={record}>{inspector('module:a.py', classSet)}</Profiler>
+    const view = render(profiled('S2'))
+    await settle(take('/node'), detail('module:a.py', 'a.py'))
+    fireEvent.click(screen.getByRole('button', { name: 'Depends on' }))
+    await settle(take('/dependencies'), dependencies('kept.py'))
+    fireEvent.change(screen.getByLabelText(/Path to module/), { target: { value: 'app/db.py' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Find path' }))
+    await settle(take('/path'), { ...scoped, source: 'module:a.py', target: 'module:app/db.py', class_set: 'S2', status: 'found', path: [], gaps: { complete: true, unknown_exits: [], coverage_gaps: [], run_gaps: [] } })
+    expect(screen.getByText('kept.py')).toBeInTheDocument()
+    expect(screen.getByText('found')).toBeInTheDocument()
+    frames.length = 0
+    view.rerender(profiled('S4'))
+    const underNewSet = frames.filter(frame => frame.heading.includes('S4'))
+    expect(underNewSet.length).toBeGreaterThan(0)
+    for (const frame of underNewSet) {
+      expect(frame.text).not.toContain('kept.py')
+      expect(frame.text).not.toContain('found')
+    }
+    // The typed path target survives the switch; only results are dropped.
+    expect(screen.getByLabelText(/Path to module/)).toHaveValue('app/db.py')
   })
 })

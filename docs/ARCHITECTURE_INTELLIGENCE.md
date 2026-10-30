@@ -152,7 +152,7 @@ The upgraded Stage 11 corpus (below) is a real pre-literal example:
 | --- | --- | --- |
 | Fixtures (designed oracles) | **Passed** | F-mod 11/11 units (10 correct, 1 correct alias abstention); F-alias 9/9 (4 alias imports abstain, no API candidate through the alias-bound wrapper, absence becomes `ABSENCE_NOT_DETERMINABLE`, no tsconfig chunk cited). The oracle script reproduces F-mod's designed labels 11/11 |
 | Self-hosted module edges | **Passed** (re-scored with the corrected scorer v2, R02) | Non-alias stratum: precision 0.998933 (4,682/4,687, Wilson 0.9975–0.9995); recall 0.998933 (4,682/4,687); coverage 0.987152 (4,687/4,748). Python 4,500/4,505 correct, TS/JS 182/182; abstentions 0; alias edges 0 (BuildLens has no alias imports). Five disagreements, all `ORACLE_LIMITATION` (see below), counted against precision; 0 unexplained, 0 system defects; 0 system-only predictions, so v2 equals v1 here (`module.score.r2.scorer-v2.json`) |
-| Self-hosted API (human packet) | **Awaiting owner labels**: not passed, not failed | Blind packet r2: 60 request sites, 90 endpoints, 8 sampled files for sink recall, all as hash-verified stored source. The system's answers are sealed separately |
+| Self-hosted API (human packet) | **Awaiting owner labels**: not passed, not failed. The verdict is decided by site precision, recall, abstention and two hard gates only; endpoint accuracy and sink recall are diagnostic (see "What decides the API verdict") | Blind packet r2: 60 request sites, 90 endpoints, 8 sampled files for sink recall, all as hash-verified stored source. The system's answers are sealed separately |
 | Adversarial | **Passed** (after two fixes) | 0 false connections (4 designed positives still connect), 0 source reads during build, 0 Python-level outbound connections, sentinels never fire, 13/13 tamper operations detected and then repaired to a clean `/integrity` |
 
 **The five module disagreements.** All are imports inside `backend/lab_envs/langchain_postgres`.
@@ -186,6 +186,25 @@ The v2 template has these sections, and scoring refuses a file unless every one 
 - **Sink sample:** per sampled file, `reviewed: true` and the start lines of every HTTP request site in it (an empty list when there are none).
 
 Missing, unexpected or duplicated units, fields, targets or lines are refused before anything is scored.
+
+**What decides the API verdict.** This is fixed by the frozen pre-registration (`suites.self_api`, `sink_sample.reported`, `zero_denominator`), and every score reports it under `verdict_basis`:
+
+| Measured | Over | Role in `overall` |
+| --- | --- | --- |
+| `summary.precision` ≥ 0.95 | request-site units: correct emissions ÷ all emissions (an endpoint candidate or `external`) | **Gated** |
+| `summary.recall` ≥ 0.80 | request-site units: correct emissions ÷ sites the reviewer labelled with endpoint(s) or `external` | **Gated** |
+| `summary.abstention_rate` ≤ 0.20 | request-site units: positive sites where the system made no claim ÷ the same positives | **Gated** |
+| `unbound_host_local_connections` = 0 | sites with a local candidate on an unbound host, or labelled `external` but connected locally | **Gated** (hard gate) |
+| `external_service_labels` = 0 | sealed branches whose destination is outside the five matcher classes | **Gated** (hard gate) |
+| `endpoints.paths_equal`, `endpoints.methods_equal` | determinable endpoints: reviewer's paths (or methods) set equal to the system's | Diagnostic only |
+| `site_methods_equal` | determinable sites with a labelled method: reviewer's method equal to the system's | Diagnostic only |
+| `sink_recall` (with `system_sites_not_marked`) | lines the reviewer marked in the 8 sampled files: marked lines the system also found ÷ all marked lines | Diagnostic only ("not gated" in the pre-registration) |
+| `summary.coverage`, `summary.ambiguous_set_recall` | request-site units | Diagnostic only |
+
+- The verdict is `passed` only if all five gated rows pass. It is `inconclusive` if the packet has no request-site units.
+- An undefined gated metric (zero denominator) fails its criterion.
+- Endpoint and sink-sample labels never change the verdict. Their **completeness** is still a precondition: an incomplete or invalid label file is refused, and then no verdict exists at all.
+- Endpoint accuracy and sink recall are evidence about the reconstruction of backend paths and about sink detection. They are not acceptance criteria, and adding a threshold for them would need a new pre-registration.
 
 To write a template for this packet again (it reads the blind packet only):
 

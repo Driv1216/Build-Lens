@@ -909,6 +909,29 @@ def labels_template(packet: Mapping[str, Any]) -> Row:
     }
 
 
+# What decides ``overall`` for the self-hosted API suite, as frozen in the pre-registration
+# (``suites.self_api``, ``sink_sample.reported``, ``zero_denominator``); reported with every
+# score so the diagnostic metrics are never read as acceptance evidence.
+API_VERDICT_BASIS: dict[str, Any] = {
+    "gated": [
+        "precision_min over request-site units",
+        "recall_min over request-site units",
+        "abstention_max over request-site units",
+        "unbound_host_local_connections_max",
+        "external_service_labels_max",
+    ],
+    "inconclusive_when": "the packet has no request-site units",
+    "diagnostic_only": [
+        "endpoints.paths_equal",
+        "endpoints.methods_equal",
+        "site_methods_equal",
+        "sink_recall",
+        "summary.coverage",
+        "summary.ambiguous_set_recall",
+    ],
+    "precondition": "complete, valid labels for every site, endpoint and sampled file; "
+    "otherwise nothing is scored",
+}
 UNBOUND = {"private_network_host_unbound", "public_host_unbound"}
 # The destination classes ``api-matching.v3`` produces; none of them is an "external service".
 DESTINATION_CLASSES = frozenset(
@@ -1168,6 +1191,7 @@ def score_api(
         "criteria": rows,
         "gates": {**gates, "unbound_host_local_connection_sites": sorted(unbound_local)},
         "overall": verdict(rows, {"sites": summary}),
+        "verdict_basis": API_VERDICT_BASIS,
         "units": units,
         "site_methods_equal": metric(methods_equal, methods_compared),
         "endpoints": {

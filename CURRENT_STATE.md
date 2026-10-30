@@ -84,6 +84,7 @@ technical review is implemented and verified locally, and awaits re-review.
 - **Stage 14 self-hosted API evaluation.**
   - Prepared: the blind packet (60 request sites, 90 endpoints, 8 sink-sample files) and the sealed system answers.
   - Waiting on: the owner's labels, written in `api-packet/labels.template.v2.json` (the v1 template is refused since R01). It has not passed or failed; once labelled, it is scored with `buildlens architecture eval api-score`.
+  - Verdict basis: request-site precision ≥ 0.95, recall ≥ 0.80 and abstention ≤ 0.20, plus two hard gates. Endpoint path/method agreement and sink-sample recall are measured and reported, but they are diagnostic only and do not affect the verdict (frozen pre-registration).
 - **Stage 14 independent re-review** of the R01–R05 remediation. Not done.
 
 - **Stage 13 real-model evaluation.**
@@ -168,6 +169,7 @@ Tracked in Git: the evaluation datasets (`.buildlens-eval/datasets/`) and the la
   - R03: shadowed `fetch`/`window`/`globalThis`/`axios`/wrapper names are not request sites (`ts-callee-scope.v1`, `http-sinks.v2`; earlier runs are stale).
   - R04: the run's coverage is re-checked against the verified coverage on every cached read; evidence inspection verifies the row it returns.
   - R05: inspector dependency, path and evidence requests are aborted and superseded results dropped.
+  - Follow-up (focused review of `d6feaf4`): the inspector's dependency and path results are stored with the class set, node and snapshot they were requested for, so a class-set switch never paints the previous set's results, not even for one frame; API scores state their `verdict_basis` (gated versus diagnostic metrics).
 
 ## Stage 13 — Semantic Project Model (2026-10-25 … 2026-10-28)
 

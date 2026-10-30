@@ -383,6 +383,33 @@ def test_api_undefined_metrics_fail_instead_of_passing() -> None:
     )
 
 
+def test_endpoint_and_sink_metrics_are_diagnostic_and_never_move_the_verdict() -> None:
+    """The frozen self_api suite gates site metrics and two hard gates only (pre-registration
+    ``suites.self_api``; ``sink_sample.reported`` says "not gated")."""
+    packet, sealed = _packet()
+    agreeing = score_api(approved(), packet, sealed, _labels(packet, ["none"]))
+    assert agreeing["overall"] == "passed"
+    assert {row["name"] for row in agreeing["criteria"]} == set(approved()["suites"]["self_api"])
+    disagreeing = _labels(packet, ["none"])
+    disagreeing["endpoints"]["E001"] = {"determinable": True, "methods": ["POST"], "paths": ["/y"]}
+    disagreeing["sink_sample"]["web/a.ts"] = {"reviewed": True, "request_lines": [9]}
+    disagreeing["sites"]["S001"]["method"] = "DELETE"
+    result = score_api(approved(), packet, sealed, disagreeing)
+    assert result["endpoints"]["paths_equal"]["value"] == 0.0
+    assert result["endpoints"]["methods_equal"]["value"] == 0.0
+    assert result["site_methods_equal"]["value"] == 0.0
+    assert result["sink_recall"]["value"] == 0.0
+    assert result["overall"] == "passed" and result["criteria"] == agreeing["criteria"]
+    assert result["verdict_basis"]["diagnostic_only"] == [
+        "endpoints.paths_equal", "endpoints.methods_equal", "site_methods_equal", "sink_recall",
+        "summary.coverage", "summary.ambiguous_set_recall",
+    ]  # fmt: skip
+    # Completeness is a precondition, not a metric: an unreviewed file stops scoring entirely.
+    disagreeing["sink_sample"]["web/a.ts"]["reviewed"] = False
+    with pytest.raises(EvaluationError, match="LABELS_INCOMPLETE"):
+        score_api(approved(), packet, sealed, disagreeing)
+
+
 def test_extra_system_predictions_count_against_precision() -> None:
     """R02: 1,001 correct units plus 100 predictions for statements the oracle never saw."""
     labels = [{"label": "module", "targets": ["b.py"]}] * 1000

@@ -70,11 +70,21 @@ function EvidenceList({ projectId, snapshotId, links }: { projectId: string; sna
   </details>
 }
 
+type Scoped<T> = { scope: string; value: T }
+
 function Traversal({ projectId, snapshotId, node, classSet, module, onSelect }: { projectId: string; snapshotId: string; node: string; classSet: ClassSet; module: boolean; onSelect: (key: string) => void }) {
-  const [deps, setDeps] = useState<Dependencies | null>(null)
+  // Results and errors are stored with the inputs they were requested for and shown only
+  // while those are still the current inputs, so the render that follows a class-set (or
+  // node, snapshot) change never paints the previous selection's results, even before the
+  // reset effect below has run.
+  const scope = JSON.stringify([projectId, snapshotId, node, classSet])
+  const [depsState, setDeps] = useState<Scoped<Dependencies> | null>(null)
   const [target, setTarget] = useState('')
-  const [path, setPath] = useState<PathResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [pathState, setPath] = useState<Scoped<PathResult> | null>(null)
+  const [errorState, setError] = useState<Scoped<string> | null>(null)
+  const deps = depsState?.scope === scope ? depsState.value : null
+  const path = pathState?.scope === scope ? pathState.value : null
+  const error = errorState?.scope === scope ? errorState.value : null
   const dependencies = useLatestRequest()
   const paths = useLatestRequest()
   const { cancel: cancelDependencies } = dependencies
@@ -84,14 +94,15 @@ function Traversal({ projectId, snapshotId, node, classSet, module, onSelect }: 
     cancelDependencies(); cancelPaths()
     setDeps(null); setPath(null); setError(null)
   }, [projectId, snapshotId, node, classSet, cancelDependencies, cancelPaths])
+  const fail = (reason: unknown) => setError({ scope, value: describe(reason) })
   function load(direction: 'out' | 'in') {
     setError(null); setDeps(null)
-    void dependencies.run(signal => getDependencies(projectId, snapshotId, node, direction, classSet, signal), setDeps, reason => setError(describe(reason)))
+    void dependencies.run(signal => getDependencies(projectId, snapshotId, node, direction, classSet, signal), value => setDeps({ scope, value }), fail)
   }
   function find() {
     setError(null); setPath(null)
     const goal = target.startsWith('module:') ? target : `module:${target}`
-    void paths.run(signal => getPath(projectId, snapshotId, node, goal, classSet, signal), setPath, reason => setError(describe(reason)))
+    void paths.run(signal => getPath(projectId, snapshotId, node, goal, classSet, signal), value => setPath({ scope, value }), fail)
   }
   return <div className="traversal">
     <h3>Transitive relationships <span className="note">(class set {classSet})</span></h3>
