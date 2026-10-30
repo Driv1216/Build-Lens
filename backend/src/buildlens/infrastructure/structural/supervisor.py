@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import multiprocessing as mp
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
+from functools import partial
 from multiprocessing.connection import Connection
 from queue import Empty, Queue
 from threading import Thread
@@ -14,10 +16,16 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 from buildlens.application.processors import process_source
+from buildlens.domain.extractors import PYTHON_LITERALS, TS_LITERALS, extractor_contract
 from buildlens.domain.inspection import InspectionError, InspectionResult
 from buildlens.domain.processing import Chunk, ProcessingDiagnostic, ProcessorContract
-from buildlens.domain.source import ContentRejectedError
-from buildlens.domain.structural import ArtifactAnalysis, ArtifactExtraction, Symbol
+from buildlens.domain.source import ContentRejectedError, digest
+from buildlens.domain.structural import (
+    ArtifactAnalysis,
+    ArtifactExtraction,
+    ParseDiagnostic,
+    Symbol,
+)
 from buildlens.infrastructure.structural.parser import PythonAstParser
 from buildlens.infrastructure.structural.reader import (
     PosixSecureSourceReader,
@@ -69,7 +77,12 @@ def _extract(
             data=raw.data,
         )
         extractions = (
-            (extract_python_facts(raw.data, parsed.symbols),) if parsed.outcome == "parsed" else ()
+            (
+                extract_python_facts(raw.data, parsed.symbols),
+                _confined(PYTHON_LITERALS, lambda: _python_literals(raw.data)),
+            )
+            if parsed.outcome == "parsed"
+            else ()
         )
         return replace(
             parsed,
@@ -109,8 +122,82 @@ def _extract(
         declaration_extraction_id=extraction.extraction.id
         if extraction.outcome == "parsed"
         else None,
-        extractions=(extraction.extraction,),
+        extractions=(extraction.extraction,)
+        + (
+            (_confined(TS_LITERALS, lambda: _ts_literals(locator, raw.data)),)
+            if extraction.outcome == "parsed" and canary[0] is None
+            else ()
+        ),
     )
+
+
+def _python_literals(data: bytes) -> ArtifactExtraction:
+    from buildlens.infrastructure.structural.architecture_literals_python import (
+        extract_python_literals,
+    )
+
+    return extract_python_literals(data)
+
+
+def _ts_literals(locator: str, data: bytes) -> ArtifactExtraction:
+    from buildlens.infrastructure.structural.architecture_literals_typescript import (
+        extract_ts_literals,
+    )
+
+    return extract_ts_literals(locator, data)
+
+
+def _confined(extractor: str, run: Callable[[], ArtifactExtraction]) -> ArtifactExtraction:
+    """Stage 14 literal passes never fail the artifact or the run: any error fails the pass."""
+    try:
+        return run()
+    except Exception:
+        contract = extractor_contract(extractor) or {}
+        return ArtifactExtraction(
+            uuid4(),
+            extractor,
+            contract,
+            digest(contract) if contract else "0" * 64,
+            "failed",
+            None,
+            (
+                ParseDiagnostic(
+                    "EXTRACTOR_FAILED", "Additive extraction did not complete.", "error"
+                ),
+            ),
+        )
+
+
+def _additional(
+    reader: PosixSecureSourceReader,
+    args: tuple[Any, ...],
+    canary: list[str | None],
+) -> tuple[tuple[ArtifactExtraction, ...], str, int]:
+    """Stage 14 reuse path: one verified read for every missing literal pass of an artifact."""
+    root, locator, max_bytes, expected, language, extractors = args
+    raw = reader.read(root, locator, max_bytes, expected)
+    fingerprint = hashlib.sha256(raw.data).hexdigest()
+    values: list[ArtifactExtraction] = []
+    for name in extractors:
+        if name == PYTHON_LITERALS and language == "Python":
+            values.append(_confined(name, lambda: _python_literals(raw.data)))
+        elif name == TS_LITERALS and language in {"TypeScript", "JavaScript"}:
+            from buildlens.infrastructure.structural import typescript
+
+            if not canary:
+                canary.append(typescript.verify_canary())
+            code = canary[0]
+            if code is not None:
+                values.append(_confined(name, partial(_raise, code)))
+            else:
+                values.append(_confined(name, lambda: _ts_literals(locator, raw.data)))
+        else:
+            raise ValueError("Unknown additive extractor")
+    return tuple(values), fingerprint, raw.size_bytes
+
+
+def _raise(code: str) -> ArtifactExtraction:
+    raise RuntimeError(code)
 
 
 def _worker(connection: Connection, progress: Any, max_rss_bytes: int = 0) -> None:
@@ -164,6 +251,8 @@ def _worker(connection: Connection, progress: Any, max_rss_bytes: int = 0) -> No
                         # Peak RSS never decreases; the parent recycles this worker.
                         connection.send((False, ("RESOURCE_LIMIT", int(progress.value))))
                         continue
+                elif operation == "additional":
+                    result = _additional(reader, args, canary)
                 elif operation == "process":
                     result = process_source(*args)
                 else:
@@ -369,6 +458,25 @@ class SupervisedSourceReader(SecureSourceReader):
                     "Python",
                     symbols,
                 ),
+                timeout,
+            ),
+        )
+
+    def extract_additional(
+        self,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int] | None,
+        timeout: float,
+        language: str,
+        extractors: tuple[str, ...],
+    ) -> tuple[tuple[ArtifactExtraction, ...], str, int]:
+        return cast(
+            tuple[tuple[ArtifactExtraction, ...], str, int],
+            self._run(
+                "additional",
+                (root, locator, max_bytes, expected_root_identity, language, extractors),
                 timeout,
             ),
         )

@@ -5,6 +5,7 @@ import type { Project } from '../api/projects'
 import { StructuralAnalysisPanel } from './StructuralAnalysisPanel'
 import { ArtifactProcessingPanel } from './ArtifactProcessingPanel'
 import { SemanticCatalogPanel } from './SemanticCatalogPanel'
+import { ArchitecturePanel } from './architecture/ArchitecturePanel'
 import { SemanticSearchPanel } from './SemanticSearchPanel'
 import { AskPanel } from './AskPanel'
 
@@ -82,6 +83,7 @@ function SnapshotScope({ project }: { project: Project }) {
         <StructuralAnalysisPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onRefresh={() => setRevision(x => x + 1)} onAskInvalidate={() => setAskRevision(x => x + 1)} />
         <ArtifactProcessingPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onRefresh={() => setRevision(x => x + 1)} onAskInvalidate={() => setAskRevision(x => x + 1)} />
         <SemanticCatalogPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} />
+        <ArchitecturePanel projectId={project.id} snapshotId={snapshot.id} revision={revision} />
         <SemanticSearchPanel projectId={project.id} snapshotId={snapshot.id} revision={revision} onAskInvalidate={() => setAskRevision(x => x + 1)} />
         <AskPanel projectId={project.id} snapshotId={snapshot.id} invalidation={askRevision} />
       </>}

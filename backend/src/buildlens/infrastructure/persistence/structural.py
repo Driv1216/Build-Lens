@@ -21,6 +21,7 @@ from buildlens.domain.extractors import (
 )
 from buildlens.domain.source import structural_contract
 from buildlens.domain.structural import (
+    ArchitectureLiteral,
     ArtifactAnalysis,
     ArtifactExtraction,
     DecoratorObservation,
@@ -37,6 +38,7 @@ from buildlens.domain.structural import (
     SymbolReference,
 )
 from buildlens.infrastructure.persistence.models import (
+    ArchitectureLiteralRecord,
     ArtifactAnalysisRecord,
     ArtifactExtractionRecord,
     ArtifactRecord,
@@ -202,6 +204,7 @@ def _extraction(
     facts: Sequence[SymbolFactsRecord],
     references: Sequence[SymbolReferenceRecord],
     exports: Sequence[ExportReferenceRecord],
+    literals: Sequence[ArchitectureLiteralRecord] = (),
 ) -> ArtifactExtraction:
     return ArtifactExtraction(
         record.id,
@@ -236,6 +239,16 @@ def _extraction(
                 SourceSpan(item.start_line, item.end_line, item.start_column, item.end_column),
             )
             for item in exports
+        ),
+        tuple(
+            ArchitectureLiteral(
+                item.ordinal,
+                item.kind,
+                SourceSpan(item.start_line, item.end_line, item.start_column, item.end_column),
+                item.subject,
+                cast(dict[str, object], item.attributes),
+            )
+            for item in literals
         ),
     )
 
@@ -778,6 +791,23 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                     end_column=span.end_column,
                 )
             )
+        for literal in value.literals:
+            span = literal.span
+            session.add(
+                ArchitectureLiteralRecord(
+                    id=uuid4(),
+                    extraction_id=value.id,
+                    artifact_analysis_id=artifact_analysis_id,
+                    ordinal=literal.ordinal,
+                    kind=literal.kind,
+                    subject=literal.subject,
+                    attributes=literal.attributes,
+                    start_line=span.start_line or 0,
+                    end_line=span.end_line or 0,
+                    start_column=span.start_column,
+                    end_column=span.end_column,
+                )
+            )
         session.flush()
 
     def extractions(
@@ -803,7 +833,12 @@ class SqlAlchemyStructuralAnalysisStore(StructuralAnalysisStore):
                 .where(ExportReferenceRecord.extraction_id == record.id)
                 .order_by(ExportReferenceRecord.ordinal)
             ).all()
-            values.append(_extraction(record, facts, references, exports))
+            literals = session.scalars(
+                select(ArchitectureLiteralRecord)
+                .where(ArchitectureLiteralRecord.extraction_id == record.id)
+                .order_by(ArchitectureLiteralRecord.ordinal)
+            ).all()
+            values.append(_extraction(record, facts, references, exports, literals))
         return tuple(values)
 
     def artifact_page(

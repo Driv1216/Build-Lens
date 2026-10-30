@@ -14,9 +14,15 @@ from uuid import UUID, uuid4
 from buildlens.application.projects import ProjectNotFoundError
 from buildlens.application.snapshots import SnapshotNotFoundError
 from buildlens.application.source_ports import SourceReadError
+from buildlens.domain.architecture_literals import ROWS_PER_RUN
 from buildlens.domain.eligibility import exclusion_reason
 from buildlens.domain.entities import Artifact, Project, ProjectVersion
-from buildlens.domain.extractors import PYTHON_FACTS, extractor_contract_digest, language_for
+from buildlens.domain.extractors import (
+    LITERAL_EXTRACTORS,
+    PYTHON_FACTS,
+    extractor_contract_digest,
+    language_for,
+)
 from buildlens.domain.source import PARSER_VERSION, structural_contract
 from buildlens.domain.structural import (
     ArtifactAnalysis,
@@ -133,6 +139,16 @@ class ArtifactAnalyzer(Protocol):
         timeout: float,
         symbols: tuple[Symbol, ...],
     ) -> tuple[ArtifactExtraction, str, int]: ...
+    def extract_additional(
+        self,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int] | None,
+        timeout: float,
+        language: str,
+        extractors: tuple[str, ...],
+    ) -> tuple[tuple[ArtifactExtraction, ...], str, int]: ...
     def close(self) -> None: ...
 
 
@@ -217,6 +233,7 @@ class StructuralAnalysisService:
             outcomes: list[ArtifactAnalysis] = []
             candidates = self._store.candidate_artifacts(project_id, snapshot_id)
             eligible = 0
+            literal_rows = [0]
             for artifact in candidates:
                 metadata = artifact.metadata
                 if (
@@ -276,6 +293,7 @@ class StructuralAnalysisService:
                         copied = _reused(source_declaration)
                         extractions.append(copied)
                         declaration_id = copied.id
+                    missing: list[str] = []
                     for name in support.additional_extractors:
                         current = next(
                             (
@@ -289,7 +307,12 @@ class StructuralAnalysisService:
                             None,
                         )
                         if current is not None:
-                            extractions.append(_reused(current))
+                            reused = _reused(current)
+                            extractions.append(self._cap(reused, literal_rows))
+                            literal_rows[0] += len(extractions[-1].literals)
+                            continue
+                        if name in LITERAL_EXTRACTORS:
+                            missing.append(name)
                             continue
                         # Declarations stay reused (identities preserved); only the additive
                         # pass reads the source again.
@@ -307,6 +330,25 @@ class StructuralAnalysisService:
                         )
                         total += consumed
                         extractions.append(extracted)
+                    if missing:
+                        # Stage 14: one verified read for every missing literal pass.
+                        added, consumed = self._literals(
+                            tuple(missing),
+                            support.language,
+                            snapshot.canonical_root,
+                            artifact,
+                            reusable,
+                            min(self._max_source_bytes, self._max_total_bytes - total),
+                            expected_root,
+                            min(
+                                self._artifact_timeout_seconds,
+                                max(0.001, deadline - time.monotonic()),
+                            ),
+                        )
+                        total += consumed
+                        for value in added:
+                            extractions.append(self._cap(value, literal_rows))
+                            literal_rows[0] += len(extractions[-1].literals)
                     outcomes.append(
                         self._owned(
                             replace(
@@ -393,10 +435,15 @@ class StructuralAnalysisService:
                         ),
                     )
                 else:
+                    capped = []
+                    for value in result.extractions:
+                        capped.append(self._cap(value, literal_rows))
+                        literal_rows[0] += len(capped[-1].literals)
                     result = replace(
                         result,
                         snapshot_verified=True,
                         baseline_artifact_analysis_id=baseline.id if baseline else None,
+                        extractions=tuple(capped),
                     )
                 outcomes.append(self._owned(result, analysis_id, snapshot_id))
             parsed = sum(item.outcome == "parsed" for item in outcomes)
@@ -468,6 +515,49 @@ class StructuralAnalysisService:
         ):
             return self._failed_extraction(extractor, "SOURCE_DIFFERS_FROM_SNAPSHOT"), consumed
         return extraction, consumed
+
+    def _literals(
+        self,
+        extractors: tuple[str, ...],
+        language: str,
+        root: str,
+        artifact: Artifact,
+        reusable: ArtifactAnalysis,
+        max_bytes: int,
+        expected_root: tuple[int, int] | None,
+        timeout: float,
+    ) -> tuple[tuple[ArtifactExtraction, ...], int]:
+        """Stage 14 literal passes for reused declarations; failures stay confined to the pass."""
+        try:
+            values, fingerprint, consumed = self._analyzer.extract_additional(
+                root, artifact.locator, max_bytes, expected_root, timeout, language, extractors
+            )
+        except SourceReadError as error:
+            return (
+                tuple(self._failed_extraction(name, error.code) for name in extractors),
+                error.bytes_consumed,
+            )
+        if (
+            artifact.content_fingerprint is None
+            or fingerprint != artifact.content_fingerprint.digest
+            or fingerprint != reusable.input_fingerprint
+        ):
+            return (
+                tuple(
+                    self._failed_extraction(name, "SOURCE_DIFFERS_FROM_SNAPSHOT")
+                    for name in extractors
+                ),
+                consumed,
+            )
+        return values, consumed
+
+    def _cap(self, extraction: ArtifactExtraction, used: list[int]) -> ArtifactExtraction:
+        """Fail a literal pass that would exceed the per-run row budget (never truncate it)."""
+        if extraction.extractor not in LITERAL_EXTRACTORS:
+            return extraction
+        if used[0] + len(extraction.literals) <= ROWS_PER_RUN:
+            return extraction
+        return self._failed_extraction(extraction.extractor, "LITERAL_RUN_LIMIT")
 
     @staticmethod
     def _failed_extraction(extractor: str, code: str) -> ArtifactExtraction:

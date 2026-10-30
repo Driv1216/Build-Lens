@@ -1,0 +1,17 @@
+{
+  "fixture": "F-mod (tests/semantic_support.py REPOSITORY)",
+  "designed": "2026-10-29, before the first scored run; labels follow Python import semantics and TS Bundler resolution",
+  "units": [
+    {"unit": "app/db.py|from|0|sqlalchemy.orm|DeclarativeBase|1", "locator": "app/db.py", "label": "external", "targets": []},
+    {"unit": "app/db.py|from|0|sqlalchemy.orm|Mapped|1", "locator": "app/db.py", "label": "external", "targets": []},
+    {"unit": "app/api.py|from|0|fastapi|APIRouter|1", "locator": "app/api.py", "label": "external", "targets": []},
+    {"unit": "app/api.py|from|1|db|User|1", "locator": "app/api.py", "label": "module", "targets": ["app/db.py"]},
+    {"unit": "app/api.py|from|1|db|session|1", "locator": "app/api.py", "label": "module", "targets": ["app/db.py"]},
+    {"unit": "migrations/versions/0001_users.py|from|0|alembic|op|1", "locator": "migrations/versions/0001_users.py", "label": "external", "targets": []},
+    {"unit": "web/hooks.ts|import|react|1", "locator": "web/hooks.ts", "label": "external", "targets": []},
+    {"unit": "web/Button.tsx|import|react|1", "locator": "web/Button.tsx", "label": "external", "targets": []},
+    {"unit": "web/Button.tsx|import|./hooks|1", "locator": "web/Button.tsx", "label": "module", "targets": ["web/hooks.ts"]},
+    {"unit": "web/alias.ts|import|@/lib/x|1", "locator": "web/alias.ts", "label": "unknown", "targets": [], "alias": true},
+    {"unit": "web/alias.ts|import|lodash|1", "locator": "web/alias.ts", "label": "external", "targets": []}
+  ]
+}

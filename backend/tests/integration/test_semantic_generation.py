@@ -267,6 +267,8 @@ def test_configuration_failures_are_recorded_as_configuration_invalid(
     # Migration 0013 widened the outcome CHECK; its downgrade refuses while such rows exist.
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).parents[2] / "alembic"))
+    with pg_engine.begin() as connection:  # 0015 refuses first while literal rows exist
+        connection.execute(text("DELETE FROM architecture_literals"))
     with pytest.raises(Exception, match="configuration_invalid attempt outcomes exist"):
         command.downgrade(config, "0012_semantic_generation")
     with pg_engine.begin() as connection:

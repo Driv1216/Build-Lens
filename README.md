@@ -1,7 +1,7 @@
 # BuildLens
 
 BuildLens is a local engineering-intelligence application, implemented through **Phase 3,
-Stage 13 — Semantic Project Model**. It uses a modular Python backend, a React/Vite UI and
+Stage 14 — Architecture Intelligence**. It uses a modular Python backend, a React/Vite UI and
 PostgreSQL. Operations start only when you explicitly request them.
 
 Status at a glance:
@@ -12,7 +12,10 @@ Status at a glance:
   into production.
 - **Stage 11** is closed with an inconclusive/partial real-provider benchmark; answer quality is
   not passed.
-- **Stage 14** (Architecture Intelligence) has not started.
+- **Stage 14** (Architecture Intelligence: evidence-backed module graph, API connections,
+  integrations, database, frontend routes, subsystem candidates, declared rules) is implemented
+  (Milestones A–D). Its pre-registered evaluation passed for fixtures, self-hosted module edges
+  and the adversarial suite. The human-labelled self-hosted API suite awaits labels.
 
 See [current state](CURRENT_STATE.md) for what is verified and what is not.
 
@@ -439,3 +442,34 @@ claims only, labelled with provider, returned model and freshness; they are neve
 
 See [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) for scope, deviations and verification.
 
+
+## Stage 14: Architecture Intelligence
+
+**Status: implemented (Milestones A–D). The self-hosted API evaluation awaits human labels.**
+
+After the catalog is built, use "Build architecture" in the snapshot panel (or
+`POST …/architecture`, or `buildlens architecture build`). Then open **Architecture**
+(`/architecture`).
+
+The model is built from PostgreSQL only and never reads or executes repository code. Every
+element is evidence-linked and re-verified on each request. Derived, inferred and unknown parts
+are labelled; inferred parts carry named conditions, never a confidence score.
+
+**Views:**
+- **Modules and cycles:** containment tree, DSM, neighbourhood diagram, path and reachability, and cycles per import-class set S0–S4.
+- **API:** full endpoint paths; request sites with conditional candidates and their assumptions. There is never a confirmed match.
+- **Integrations:** declared versus imported packages; unbound hosts.
+- **Database:** SQLAlchemy and Alembic tables.
+- **Frontend:** routes.
+- **Subsystems:** layer candidates, functional slice candidates and conformance with rules you declare.
+
+Rules come only from you, through `POST /api/v1/projects/{p}/architecture-rules` or `buildlens architecture rules set`. They are never read from the repository and never enforced.
+
+Stage 14 adds migrations `0014`–`0016`; apply them with `alembic upgrade head`. All are additive,
+and their downgrades refuse while Stage 14 rows exist. To gain literal evidence (endpoint paths,
+client calls, Alembic names, frontend routes), re-run structure, then the catalog, then the
+architecture build.
+
+The evaluation (`buildlens architecture eval …`) is pre-registered and scored mechanically. See
+[docs/ARCHITECTURE_INTELLIGENCE.md](docs/ARCHITECTURE_INTELLIGENCE.md) for contracts, results,
+deviations and limits.

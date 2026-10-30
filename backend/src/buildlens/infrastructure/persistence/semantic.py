@@ -869,17 +869,55 @@ class SqlAlchemySemanticCatalogStore:
                 wanted[str(ref.get("table"))].add(str(ref.get("id")))
         loaded: dict[tuple[str, str], tuple[Row, str | None, str]] = {}
         with self._session_factory() as session:
+            cited: dict[str, list[Any]] = {}
             for table, ids in wanted.items():
-                if table not in _TABLES:
-                    continue
-                model, normaliser = _TABLES[table]
-                records = session.scalars(
-                    select(model).where(model.id.in_([UUID(item) for item in ids]))
-                ).all()
+                if table in _TABLES:
+                    model = _TABLES[table][0]
+                    cited[table] = list(
+                        session.scalars(
+                            select(model).where(model.id.in_([UUID(item) for item in ids]))
+                        )
+                    )
+            # Load every authority row ``_authority`` will ask for in bulk, so its
+            # ``session.get`` calls are answered from the identity map instead of one query
+            # each (Stage 14 D5: ~11,000 queries per full verification). Held strongly here.
+            held = self._preload_authority(session, cited)
+            for table, records in cited.items():
+                normaliser = _TABLES[table][1]
                 for record in records:
                     contract, locator = self._authority(session, table, record)
                     loaded[(table, str(record.id))] = (normaliser(record), contract, locator)
+            del held
         return loaded
+
+    @staticmethod
+    def _preload_authority(session: Session, cited: dict[str, list[Any]]) -> list[Any]:
+        def load(model: Any, ids: set[Any]) -> list[Any]:
+            values: list[Any] = []
+            ordered = sorted(ids - {None}, key=str)
+            for index in range(0, len(ordered), 1000):
+                values += session.scalars(
+                    select(model).where(model.id.in_(ordered[index : index + 1000]))
+                ).all()
+            return values
+
+        analysis_ids = {
+            record.id if table == "artifact_analyses" else record.artifact_analysis_id
+            for table, records in cited.items()
+            if table != "artifacts"
+            for record in records
+        }
+        analyses = load(ArtifactAnalysisRecord, analysis_ids)
+        extraction_ids = {
+            record.extraction_id
+            for table in ("symbol_facts", "symbol_references", "export_references")
+            for record in cited.get(table, [])
+        } | {analysis.declaration_extraction_id for analysis in analyses}
+        extractions = load(ArtifactExtractionRecord, extraction_ids)
+        structures = load(
+            StructuralAnalysisRecord, {analysis.structural_analysis_id for analysis in analyses}
+        )
+        return [*analyses, *extractions, *structures]
 
     def fact_rows(self, facts: Sequence[SemanticFact]) -> dict[str, list[Row]]:
         """Cited rows in reference order, for facts whose rows all still exist."""
@@ -980,12 +1018,14 @@ class SqlAlchemySemanticCatalogStore:
                 rows.append(row)
             if status == "verified":
                 try:
-                    _, value = rendered_fact(
+                    rendered, value = rendered_fact(
                         fact.fact_kind, list(fact.source_refs), rows, fact.derived
                     )
                 except (KeyError, TypeError, ValueError, IndexError):
-                    value = ""
-                if value != fact.fact_digest:
+                    rendered, value = "", ""
+                # The stored text is what readers are shown, so it must equal the re-render
+                # (Stage 14 D4 found an edited text verifying while its digest still matched).
+                if value != fact.fact_digest or rendered != fact.rendered_text:
                     status = "FACT_DIGEST_MISMATCH"
             results[fact.fact_digest] = status
         return results

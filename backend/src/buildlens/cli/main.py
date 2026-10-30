@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from buildlens import __version__
+from buildlens.cli.architecture import app as architecture_app
 from buildlens.cli.evaluation import app as evaluation_app
 from buildlens.cli.lab import app as lab_app
 from buildlens.cli.semantic import app as semantic_app
@@ -17,6 +18,7 @@ app = typer.Typer(add_completion=False, help="BuildLens command-line interface."
 app.add_typer(evaluation_app, name="eval")
 app.add_typer(lab_app, name="lab")
 app.add_typer(semantic_app, name="semantic")
+app.add_typer(architecture_app, name="architecture")
 embeddings_app = typer.Typer(help="Manage the pinned local embedding model.")
 app.add_typer(embeddings_app, name="embeddings")
 reranking_app = typer.Typer(help="Manage the pinned local cross-encoder reranker.")
@@ -115,6 +117,13 @@ def diagnostics() -> None:
                     "semantic_interpretations",
                     "semantic_claims",
                     "semantic_index_entries",
+                    "architecture_runs",
+                    "architecture_nodes",
+                    "architecture_edges",
+                    "architecture_evidence",
+                    "architecture_evidence_links",
+                    "architecture_components",
+                    "architecture_diagnostics",
                 )
             }
             content_bytes = connection.scalar(

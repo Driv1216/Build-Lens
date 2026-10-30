@@ -27,6 +27,7 @@ from buildlens.infrastructure.persistence.models import (
     ChunkRecord,
     SemanticCatalogRunRecord,
     SemanticEntityRecord,
+    SemanticFactRecord,
     SymbolRecord,
 )
 from tests.semantic_support import REPOSITORY, CatalogStack, write
@@ -164,6 +165,28 @@ def test_fact_and_chunk_verification_detect_tampered_rows(
     assert any(code.startswith("FACT_DIGEST_MISMATCH") for code in detail.integrity_errors)
     assert any(code.startswith("CHUNK_INTEGRITY") for code in detail.integrity_errors)
     assert all(chunk.content is None for chunk in detail.entity.evidence)
+
+
+def test_edited_fact_text_fails_verification(pg_engine: Engine, tmp_path: Path) -> None:
+    """Stage 14 D4: the shown text must equal the re-render, not only the digest inputs."""
+    write(tmp_path, REPOSITORY)
+    stack = CatalogStack(pg_engine, tmp_path)
+    snapshot = stack.prepared()
+    run = stack.catalog.build(stack.project.id, snapshot.id)
+    entity = _entities(stack, run.id)["symbol:app/api.py:load"]
+    with stack.factory.begin() as session:
+        session.execute(
+            update(SemanticFactRecord)
+            .where(
+                SemanticFactRecord.catalog_run_id == run.id,
+                SemanticFactRecord.subject_entity_key == entity.entity_key,
+                SemanticFactRecord.fact_kind == "signature",
+            )
+            .values(rendered_text="load deletes the production database")
+        )
+    detail = stack.catalog.entity(stack.project.id, snapshot.id, entity.entity_key, run.id)
+    signature = next(fact for fact in detail.facts if fact.fact_kind == "signature")
+    assert signature.verification == "FACT_DIGEST_MISMATCH"
 
 
 def test_legacy_catalog_needs_no_source_reads(

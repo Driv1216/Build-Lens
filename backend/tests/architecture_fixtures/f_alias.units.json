@@ -1,0 +1,15 @@
+{
+  "fixture": "F-alias (C-6): more than half of the frontend imports use @/ aliases",
+  "designed": "2026-10-29, before the first scored run; every alias is labelled unknown because no tsconfig is read",
+  "units": [
+    {"unit": "app/main.py|from|0|fastapi|FastAPI|1", "locator": "app/main.py", "label": "external", "targets": []},
+    {"unit": "app/main.py|from|0|app.routes|router|1", "locator": "app/main.py", "label": "module", "targets": ["app/routes.py"]},
+    {"unit": "app/routes.py|from|0|fastapi|APIRouter|1", "locator": "app/routes.py", "label": "external", "targets": []},
+    {"unit": "web/src/api/users.ts|import|@/lib/client|1", "locator": "web/src/api/users.ts", "label": "unknown", "targets": [], "alias": true},
+    {"unit": "web/src/pages/Users.tsx|import|@/api/users|1", "locator": "web/src/pages/Users.tsx", "label": "unknown", "targets": [], "alias": true},
+    {"unit": "web/src/pages/Users.tsx|import|@/lib/format|1", "locator": "web/src/pages/Users.tsx", "label": "unknown", "targets": [], "alias": true},
+    {"unit": "web/src/pages/Users.tsx|import|react|1", "locator": "web/src/pages/Users.tsx", "label": "external", "targets": []},
+    {"unit": "web/src/main.tsx|import|@/pages/Users|1", "locator": "web/src/main.tsx", "label": "unknown", "targets": [], "alias": true},
+    {"unit": "web/src/main.tsx|import|./lib/format|1", "locator": "web/src/main.tsx", "label": "module", "targets": ["web/src/lib/format.ts"]}
+  ]
+}
