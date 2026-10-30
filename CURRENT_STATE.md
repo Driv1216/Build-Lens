@@ -1,13 +1,15 @@
 # BuildLens current state
 
-**As of 2026-10-29, BuildLens is implemented through Phase 3, Stage 14 — Architecture
+**As of 2026-10-31, BuildLens is implemented through Phase 3, Stage 14 — Architecture
 Intelligence (Milestones A–D plus review remediation R01–R05), on branch
 `stage14/architecture-intelligence`.** Stage 13
 (Semantic Project Model) is on `main`. Stage 12 (framework laboratory) is complete and Stage 11 is
 closed. The real-model quality evaluation of Stage 13 is **deferred, not passed**. Stage 14's
 pre-registered evaluation passed for fixtures, self-hosted module edges (re-scored with the
-corrected scorer) and the adversarial suite. Its human-labelled self-hosted API suite **awaits
-labels**. Stage 14 has not been independently accepted: the remediation of the independent
+corrected scorer) and the adversarial suite. Its pre-registered, human-labelled self-hosted API
+suite has **no human labels yet**. An exploratory AI-assisted labelling of the same blind packet
+scored mechanically `passed` (2026-10-31); it does not satisfy the pre-registration's "human
+labelling only" clause. Stage 14 has not been independently accepted: the remediation of the independent
 technical review is implemented and verified locally, and awaits re-review.
 
 | Stage | Implementation | Quality and real-provider evidence |
@@ -17,7 +19,7 @@ technical review is implemented and verified locally, and awaits re-review.
 | 11: RAG evaluation | Closed 2026-10-02 | **Inconclusive/partial**: 88/90 provider requests failed; answer quality **not passed** |
 | 12: LangChain / LlamaIndex laboratory | Complete 2026-10-25 | 900/900 offline retrieval benchmark; no framework adopted; real lab generation not implemented |
 | 13: Semantic Project Model | Complete: multi-language structure, deterministic catalog, controlled generation, evaluation and hardening, independent review repairs | **Deferred**: no real-model output has been produced or judged |
-| 14: Architecture Intelligence | Complete: module graph, literal evidence and API connections, views, subsystem candidates, declared rules, evaluation and hardening; review findings R01–R05 remediated | **Passed:** fixtures; self-hosted module edges (precision and recall 0.9989, unchanged under the corrected scorer); adversarial suite. **Awaiting labels:** self-hosted API packet. **Awaiting re-review:** the remediation |
+| 14: Architecture Intelligence | Complete: module graph, literal evidence and API connections, views, subsystem candidates, declared rules, evaluation and hardening; review findings R01–R05 remediated | **Passed:** fixtures; self-hosted module edges (precision and recall 0.9989, unchanged under the corrected scorer); adversarial suite. **Exploratory, AI-assisted:** self-hosted API packet mechanically `passed` (precision 58/58, recall 58/59). **Not done:** the pre-registered human API labelling. **Awaiting re-review:** the remediation |
 
 ## What works now
 
@@ -83,7 +85,12 @@ technical review is implemented and verified locally, and awaits re-review.
 
 - **Stage 14 self-hosted API evaluation.**
   - Prepared: the blind packet (60 request sites, 90 endpoints, 8 sink-sample files) and the sealed system answers.
-  - Waiting on: the owner's labels, written in `api-packet/labels.template.v2.json` (the v1 template is refused since R01). It has not passed or failed; once labelled, it is scored with `buildlens architecture eval api-score`.
+  - Pre-registered human suite: not done. It still needs a human's labels in `api-packet/labels.template.v2.json`; the v1 template has been refused since R01. It has not passed or failed.
+  - Exploratory AI-assisted run (2026-10-31, `.buildlens-eval/reviews/architecture-evaluation-20261029/ai-assisted/`):
+    - Labels: from an AI source review (Claude Opus 5.5), frozen with digest `e32d09f1…87fd5` before the sealed answers were opened, then scored with the unchanged CLI.
+    - Mechanically `passed`: precision 58/58, recall 58/59, abstention 1/59, both hard gates 0. Diagnostics: endpoint paths and methods 90/90, sink-sample recall 2/2.
+    - The one abstention, `S053` (`snapshots/latest`), is a documented ambiguity with the target inside the system's set.
+    - Not human-adjudicated, and only partly blind: the labeller built the system.
   - Verdict basis: request-site precision ≥ 0.95, recall ≥ 0.80 and abstention ≤ 0.20, plus two hard gates. Endpoint path/method agreement and sink-sample recall are measured and reported, but they are diagnostic only and do not affect the verdict (frozen pre-registration).
 - **Stage 14 independent re-review** of the R01–R05 remediation. Not done.
 
@@ -125,7 +132,7 @@ Tracked in Git: the evaluation datasets (`.buildlens-eval/datasets/`) and the la
 
 ## Next stage
 
-- Label and score the Stage 14 API packet.
+- Human labelling and scoring of the Stage 14 API packet (the AI-assisted run is exploratory only).
 - Independent re-review of the Stage 14 remediation.
 - Merge Stage 14 into `main`.
 - Then Stage 15 — Execution-Flow Tracing (see `PROJECT_BLUEPRINT.md`). Not started.

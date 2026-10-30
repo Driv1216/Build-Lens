@@ -152,7 +152,7 @@ The upgraded Stage 11 corpus (below) is a real pre-literal example:
 | --- | --- | --- |
 | Fixtures (designed oracles) | **Passed** | F-mod 11/11 units (10 correct, 1 correct alias abstention); F-alias 9/9 (4 alias imports abstain, no API candidate through the alias-bound wrapper, absence becomes `ABSENCE_NOT_DETERMINABLE`, no tsconfig chunk cited). The oracle script reproduces F-mod's designed labels 11/11 |
 | Self-hosted module edges | **Passed** (re-scored with the corrected scorer v2, R02) | Non-alias stratum: precision 0.998933 (4,682/4,687, Wilson 0.9975–0.9995); recall 0.998933 (4,682/4,687); coverage 0.987152 (4,687/4,748). Python 4,500/4,505 correct, TS/JS 182/182; abstentions 0; alias edges 0 (BuildLens has no alias imports). Five disagreements, all `ORACLE_LIMITATION` (see below), counted against precision; 0 unexplained, 0 system defects; 0 system-only predictions, so v2 equals v1 here (`module.score.r2.scorer-v2.json`) |
-| Self-hosted API (human packet) | **Awaiting owner labels**: not passed, not failed. The verdict is decided by site precision, recall, abstention and two hard gates only; endpoint accuracy and sink recall are diagnostic (see "What decides the API verdict") | Blind packet r2: 60 request sites, 90 endpoints, 8 sampled files for sink recall, all as hash-verified stored source. The system's answers are sealed separately |
+| Self-hosted API (human packet) | **Pre-registered human suite: not done** (no human labels exist). **AI-assisted exploratory run (2026-10-31): mechanically `passed`**, which does not satisfy the pre-registration's "human labelling only" clause (see "AI-assisted API evaluation"). The verdict is decided by site precision, recall, abstention and two hard gates only; endpoint accuracy and sink recall are diagnostic (see "What decides the API verdict") | Blind packet r2: 60 request sites, 90 endpoints, 8 sampled files for sink recall, all as hash-verified stored source. The system's answers are sealed separately |
 | Adversarial | **Passed** (after two fixes) | 0 false connections (4 designed positives still connect), 0 source reads during build, 0 Python-level outbound connections, sentinels never fire, 13/13 tamper operations detected and then repaired to a clean `/integrity` |
 
 **The five module disagreements.** All are imports inside `backend/lab_envs/langchain_postgres`.
@@ -219,6 +219,57 @@ buildlens architecture eval api-score --preregistration …/preregistration.json
 ```
 
 Packet r1 was generated from run `949bf65b` before the D4 fixes. It was superseded before any labelling (`superseded/README.txt`); its sealed site answers equal r2's for all 60 sites.
+
+### AI-assisted API evaluation (exploratory, 2026-10-31)
+
+At the owner's request, the blind packet was labelled by an AI-assisted source review (Claude Opus 5.5), not by a human. This is **not** the pre-registered API evaluation: the frozen pre-registration says `"judging": "Human labelling only; no LLM judge."`. That suite stays open, and these results are exploratory evidence only.
+
+**Standing and independence:**
+
+- **Partial blindness.** The labeller implemented this system. Earlier in the same session it also saw parts of the system's API behaviour (for example the `listEntities` example and site counts). The labels were derived from source only, and `sealed/api.sealed.json` was not opened before the labels were frozen. Prior knowledge cannot be excluded.
+- **Shared design conventions.** The labelling conventions (what a request site is; registration-order dispatch) were chosen by the system's author, so agreement is not independent agreement.
+
+**Method:**
+
+1. **Endpoints.** A standalone AST script over the frozen corpus `fdc6761` (`ai-assisted/method/endpoints.py`, which imports nothing from BuildLens) joins each decorator path with the `APIRouter(prefix=…)` it resolves to, following imports. It checks that `main.py` mounts the router. All 90 endpoint units resolve to exactly one mounted route.
+   - `retrieval_routes.py` defines no router of its own. It decorates `POST /search` onto the router imported from `embedding_routes.py`, which `main.py` mounts as `embedding_router`. So `E057` is `POST /api/v1/projects/{project_id}/snapshots/{snapshot_id}/search`.
+2. **Sites.** Each of the 60 calls was read in `frontend/src/api/*.ts`.
+   - The labelled base is the fallback `http://127.0.0.1:8000/api/v1` from `client.ts:5`. The `VITE_API_BASE_URL` branch is not statically determinable.
+   - The method comes from the spread `init` (the Fetch default is GET).
+   - `ai-assisted/method/crosscheck.py` re-matched every labelled method and path against the reconstructed routes. There were 0 inconsistencies; the one pattern overlap is `S053`.
+3. **Sink sample.** A request site is a call that hands a URL to the HTTP layer: a direct sink, or a call to the URL-taking `request()` wrapper. Calls to endpoint-specific API functions (`getTree(…)`, `listRuns(…)`) are not sites; their request is sited in `api/*.ts`. Only `frontend/src/api/projects.ts` has sites, at lines 12 and 16.
+4. **Validation and freeze.** `validate_api_labels` accepted the labels. They were frozen read-only with label digest `e32d09f1…87fd5` (file sha256 `5cc63427…43ab`), in `ai-assisted/freeze.json`, before the sealed answers were opened.
+5. **Scoring.** The unchanged `buildlens architecture eval api-score` was then run against the original sealed answers (sha256 `387365dd…6106`, unchanged).
+
+**Results** (`ai-assisted/api.score.ai-assisted.json`):
+
+| Metric | Value | Role |
+| --- | --- | --- |
+| Precision | 58/58 = 1.000 (Wilson 0.938–1.000) | Gated ≥ 0.95: passed |
+| Recall | 58/59 = 0.983 (0.910–0.997) | Gated ≥ 0.80: passed |
+| Abstention | 1/59 = 0.017 (0.003–0.090) | Gated ≤ 0.20: passed |
+| Unbound-host local connections | 0 | Gate = 0: passed |
+| External-service labels | 0 | Gate = 0: passed |
+| Coverage | 60/60 | Diagnostic |
+| Ambiguous-set recall | 1/1 | Diagnostic |
+| Endpoint paths equal / methods equal | 90/90 / 90/90 | Diagnostic |
+| Site methods equal | 60/60 | Diagnostic |
+| Sink-sample recall | 2/2 (0.342–1.000); 0 system sites unmarked | Diagnostic |
+| **Mechanical verdict** | **`passed`** | Exploratory only |
+
+**Outcomes:** 58 `emitted_correct`, 0 `emitted_incorrect`, 1 `abstained`, 1 `correct_abstention`.
+
+- **`S017`** (`client.test.ts`, `request('/test')`): no route serves `/api/v1/test`. The system reported no candidate, matching the `none` label.
+- **`S053`** (`snapshots/latest`): it matches both `/snapshots/latest` (`E081`) and `/snapshots/{snapshot_id}` (`E080`).
+  - The label resolves by FastAPI registration order: `snapshot_routes.py:147` comes before `:159`.
+  - `api-matching` deliberately treats registration order as not statically known and reports `ambiguous [E080, E081]`, a documented limitation.
+  - No system defect was found. The labels were not changed after the reveal (`ai-assisted/analysis.post-reveal.json`).
+
+**Limits of this run:**
+
+- The site units are the system's own detected request sites. Sink recall rests on 8 files with only 2 request sites, so its interval is wide.
+- Only the fallback base is evaluated.
+- Endpoint labels came from a mechanical reconstruction that uses the same FastAPI joining rules as the system.
 
 ### Hardening found by the adversarial suite (D4)
 
