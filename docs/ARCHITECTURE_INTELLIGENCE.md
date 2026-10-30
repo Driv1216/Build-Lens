@@ -4,7 +4,7 @@ Stage 14 adds an immutable, evidence-backed **architecture model** on top of the
 semantic catalog. It is deterministic and uses no LLM, model download or network access. It
 reads PostgreSQL only and never executes or reads repository code during a build.
 
-- **Branch:** `stage14/architecture-intelligence`, from `main @ 7589e69`, which is code-equal to `b9811f9`.
+- **Branch:** `stage14/architecture-intelligence`, from `main @ 7589e69`, which is code-equal to `b9811f9`; merged into `main` on 2026-10-31 (no conflicts; `main` had not moved).
 - **Plan:** revision 2.1 (revision 2 plus contract addendum C-1…C-6).
 - **Milestones:**
   - A: module dependency graph (`1bfb88c`).

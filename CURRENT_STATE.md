@@ -1,9 +1,9 @@
 # BuildLens current state
 
 **As of 2026-10-31, BuildLens is implemented through Phase 3, Stage 14 — Architecture
-Intelligence (Milestones A–D plus review remediation R01–R05), on branch
-`stage14/architecture-intelligence`.** Stage 13
-(Semantic Project Model) is on `main`. Stage 12 (framework laboratory) is complete and Stage 11 is
+Intelligence (Milestones A–D plus review remediation R01–R05), merged into `main` from
+`stage14/architecture-intelligence` on 2026-10-31.** Stage 13 (Semantic Project Model) is also
+on `main`. Stage 12 (framework laboratory) is complete and Stage 11 is
 closed. The real-model quality evaluation of Stage 13 is **deferred, not passed**. Stage 14's
 pre-registered evaluation passed for fixtures, self-hosted module edges (re-scored with the
 corrected scorer) and the adversarial suite. Its pre-registered, human-labelled self-hosted API
@@ -134,7 +134,6 @@ Tracked in Git: the evaluation datasets (`.buildlens-eval/datasets/`) and the la
 
 - Human labelling and scoring of the Stage 14 API packet (the AI-assisted run is exploratory only).
 - Independent re-review of the Stage 14 remediation.
-- Merge Stage 14 into `main`.
 - Then Stage 15 — Execution-Flow Tracing (see `PROJECT_BLUEPRINT.md`). Not started.
 
 ---
