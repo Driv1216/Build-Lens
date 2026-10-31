@@ -200,6 +200,77 @@ def _raise(code: str) -> ArtifactExtraction:
     raise RuntimeError(code)
 
 
+def _flow(
+    reader: PosixSecureSourceReader, args: tuple[Any, ...], canary: list[str | None]
+) -> tuple[object, str, int]:
+    """Stage 15 flow evidence: one verified read, then the language's flow pass.
+
+    ``symbols`` are plain tuples: Python ``(id, start_line, start_column, name)``; TS/JS
+    ``(id, kind, start_offset, end_offset)``. Any pass error becomes a failed extraction.
+    """
+    from buildlens.domain.flow_evidence import (
+        PYTHON_FLOW,
+        TS_FLOW,
+        FlowExtraction,
+        flow_pass_contract,
+    )
+
+    root, locator, max_bytes, expected, language, symbols = args
+    raw = reader.read(root, locator, max_bytes, expected)
+    fingerprint = hashlib.sha256(raw.data).hexdigest()
+    extractor = PYTHON_FLOW if language == "Python" else TS_FLOW
+    try:
+        if language == "Python":
+            from buildlens.infrastructure.structural.python_flow import extract_python_flow
+
+            positions = {(line, column, name): uid for uid, line, column, name in symbols}
+            result: FlowExtraction = extract_python_flow(raw.data, positions)
+        else:
+            from buildlens.infrastructure.structural import typescript
+            from buildlens.infrastructure.structural.typescript_flow import extract_ts_flow
+
+            if not canary:
+                canary.append(typescript.verify_canary())
+            if canary[0] is not None:
+                raise RuntimeError(canary[0])
+            result = extract_ts_flow(locator, raw.data, list(symbols))
+    except Exception as error:
+        contract = flow_pass_contract(extractor) or {}
+        code = (
+            str(error)
+            if isinstance(error, RuntimeError) and str(error).isupper()
+            else "EXTRACTOR_FAILED"
+        )
+        result = FlowExtraction(
+            extractor,
+            contract,
+            digest(contract) if contract else "0" * 64,
+            "failed",
+            fingerprint,
+            (ParseDiagnostic(code, "Flow extraction did not complete.", "error"),),
+        )
+    return result, fingerprint, raw.size_bytes
+
+
+def _versions(reader: PosixSecureSourceReader, args: tuple[Any, ...]) -> tuple[object, str, int]:
+    """Stage 15 D17: one verified read of a version file, parsed as data."""
+    from buildlens.infrastructure.structural.framework_versions import (
+        VersionFileError,
+        parse_version_file,
+    )
+
+    root, locator, max_bytes, expected = args
+    raw = reader.read(root, locator, max_bytes, expected)
+    fingerprint = hashlib.sha256(raw.data).hexdigest()
+    try:
+        value: object = parse_version_file(locator, raw.data)
+    except VersionFileError as error:
+        value = str(error)
+    except Exception:
+        value = "UNPARSEABLE"
+    return value, fingerprint, raw.size_bytes
+
+
 def _worker(connection: Connection, progress: Any, max_rss_bytes: int = 0) -> None:
     def observe(count: int) -> None:
         progress.value = count
@@ -253,6 +324,13 @@ def _worker(connection: Connection, progress: Any, max_rss_bytes: int = 0) -> No
                         continue
                 elif operation == "additional":
                     result = _additional(reader, args, canary)
+                elif operation == "flow":
+                    result = _flow(reader, args, canary)
+                    if max_rss_bytes and _peak_rss_bytes() > max_rss_bytes:
+                        connection.send((False, ("RESOURCE_LIMIT", int(progress.value))))
+                        continue
+                elif operation == "flow_versions":
+                    result = _versions(reader, args)
                 elif operation == "process":
                     result = process_source(*args)
                 else:
@@ -479,6 +557,40 @@ class SupervisedSourceReader(SecureSourceReader):
                 (root, locator, max_bytes, expected_root_identity, language, extractors),
                 timeout,
             ),
+        )
+
+    def extract_flow(
+        self,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int] | None,
+        timeout: float,
+        language: str,
+        symbols: tuple[tuple[Any, ...], ...],
+    ) -> tuple[Any, str, int]:
+        """Stage 15: (``FlowExtraction``, sha256 of the bytes read, bytes read)."""
+        return cast(
+            tuple[Any, str, int],
+            self._run(
+                "flow",
+                (root, locator, max_bytes, expected_root_identity, language, symbols),
+                timeout,
+            ),
+        )
+
+    def read_version_file(
+        self,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int] | None,
+        timeout: float,
+    ) -> tuple[Any, str, int]:
+        """Stage 15 D17: (facts tuple or an error code, sha256 of the bytes, bytes read)."""
+        return cast(
+            tuple[Any, str, int],
+            self._run("flow_versions", (root, locator, max_bytes, expected_root_identity), timeout),
         )
 
     def close(self) -> None:

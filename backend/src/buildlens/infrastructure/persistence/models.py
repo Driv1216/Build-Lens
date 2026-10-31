@@ -93,6 +93,9 @@ class ProjectVersionRecord(Base):
     active_architecture_run_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), nullable=True
     )
+    active_flow_evidence_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
 
 
 class ArtifactIdentityRecord(Base):
@@ -2391,3 +2394,280 @@ class ArchitectureRuleSetRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ----------------------------------------------------------------------------- Stage 15
+
+_FLOW_DIGEST = "~ '^[0-9a-f]{64}$'"
+
+
+class FlowEvidenceRunRecord(Base):
+    """Stage 15 immutable flow evidence run, bound to one structural analysis."""
+
+    __tablename__ = "flow_evidence_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_version_id", "revision", name="uq_flow_evidence_runs_snapshot_revision"
+        ),
+        UniqueConstraint("id", "project_version_id", name="uq_flow_evidence_runs_id_snapshot"),
+        UniqueConstraint("id", "structural_analysis_id", name="uq_flow_evidence_runs_id_structure"),
+        ForeignKeyConstraint(
+            ["project_version_id", "project_id"],
+            ["project_versions.id", "project_versions.project_id"],
+            ondelete="CASCADE",
+            name="fk_flow_evidence_run_snapshot_owner",
+        ),
+        ForeignKeyConstraint(
+            ["structural_analysis_id", "project_version_id"],
+            ["structural_analyses.id", "structural_analyses.project_version_id"],
+            name="fk_flow_evidence_run_structure",
+        ),
+        ForeignKeyConstraint(
+            ["captured_active_flow_evidence_run_id", "project_version_id"],
+            ["flow_evidence_runs.id", "flow_evidence_runs.project_version_id"],
+            name="fk_flow_evidence_runs_captured_active",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint(
+            "outcome IN ('complete', 'partial', 'failed')", name="ck_flow_evidence_runs_outcome"
+        ),
+        CheckConstraint("completed_at >= started_at", name="ck_flow_evidence_runs_times"),
+        CheckConstraint("revision > 0", name="ck_flow_evidence_runs_revision"),
+        CheckConstraint(
+            f"contract_digest {_FLOW_DIGEST} AND input_authority_digest {_FLOW_DIGEST} AND "
+            f"(evidence_digest IS NULL OR evidence_digest {_FLOW_DIGEST})",
+            name="ck_flow_evidence_runs_digests",
+        ),
+        CheckConstraint(
+            "(outcome = 'failed') = (evidence_digest IS NULL) AND "
+            "(outcome = 'failed') = (failure_code IS NOT NULL)",
+            name="ck_flow_evidence_runs_failure",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    revision: Mapped[int] = mapped_column(nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    structural_revision: Mapped[int] = mapped_column(nullable=False)
+    contract: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    contract_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_authority_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    coverage: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    diagnostics: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    captured_active_flow_evidence_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    captured_latest_revision: Mapped[int] = mapped_column(nullable=False, server_default="0")
+
+
+class FlowArtifactCoverageRecord(Base):
+    __tablename__ = "flow_artifact_coverage"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_evidence_run_id", "structural_analysis_id"],
+            ["flow_evidence_runs.id", "flow_evidence_runs.structural_analysis_id"],
+            ondelete="CASCADE",
+            name="fk_flow_artifact_coverage_run",
+        ),
+        ForeignKeyConstraint(
+            ["artifact_analysis_id", "structural_analysis_id"],
+            ["artifact_analyses.id", "artifact_analyses.structural_analysis_id"],
+            ondelete="CASCADE",
+            name="fk_flow_artifact_coverage_artifact",
+        ),
+        CheckConstraint(
+            "state IN ('extracted', 'partial', 'failed', 'not_current', 'not_extracted', "
+            "'not_applicable')",
+            name="ck_flow_artifact_coverage_state",
+        ),
+        CheckConstraint(
+            "execution_mode IN ('extracted', 'reused', 'none')",
+            name="ck_flow_artifact_coverage_mode",
+        ),
+        CheckConstraint(
+            "scope_count >= 0 AND callsite_count >= 0", name="ck_flow_artifact_coverage_counts"
+        ),
+        CheckConstraint(
+            "(state IN ('extracted', 'partial')) = (evidence_digest IS NOT NULL)",
+            name="ck_flow_artifact_coverage_evidence",
+        ),
+    )
+    flow_evidence_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    artifact_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    locator: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    extractor: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    contract_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    execution_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    reuse_source_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    evidence_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scope_count: Mapped[int] = mapped_column(nullable=False)
+    callsite_count: Mapped[int] = mapped_column(nullable=False)
+    diagnostics: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+
+
+class _FlowSpanColumns:
+    start_line: Mapped[int | None] = mapped_column(nullable=True)
+    end_line: Mapped[int | None] = mapped_column(nullable=True)
+    start_column: Mapped[int | None] = mapped_column(nullable=True)
+    end_column: Mapped[int | None] = mapped_column(nullable=True)
+    start_offset: Mapped[int | None] = mapped_column(nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(nullable=True)
+
+
+class FlowScopeRecord(_FlowSpanColumns, Base):
+    __tablename__ = "flow_scopes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_evidence_run_id", "artifact_analysis_id"],
+            [
+                "flow_artifact_coverage.flow_evidence_run_id",
+                "flow_artifact_coverage.artifact_analysis_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_flow_scopes_coverage",
+        ),
+        ForeignKeyConstraint(
+            ["owner_symbol_id", "artifact_analysis_id"],
+            ["symbols.id", "symbols.artifact_analysis_id"],
+            ondelete="CASCADE",
+            name="fk_flow_scopes_owner",
+        ),
+        CheckConstraint(f"scope_digest {_FLOW_DIGEST}", name="ck_flow_scopes_digest"),
+        Index("ix_flow_scopes_owner", "owner_symbol_id"),
+    )
+    flow_evidence_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    scope_key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    parent_scope_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    owner_symbol_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    callable_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    truncated: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cfg: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    summary: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    scope_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+_SCOPE_FK = (
+    ["flow_evidence_run_id", "artifact_analysis_id", "scope_key"],
+    [
+        "flow_scopes.flow_evidence_run_id",
+        "flow_scopes.artifact_analysis_id",
+        "flow_scopes.scope_key",
+    ],
+)
+
+
+class FlowCallsiteRecord(_FlowSpanColumns, Base):
+    __tablename__ = "flow_callsites"
+    __table_args__ = (
+        ForeignKeyConstraint(*_SCOPE_FK, ondelete="CASCADE", name="fk_flow_callsites_scope"),
+        CheckConstraint("ordinal >= 0 AND cfg_node >= 0", name="ck_flow_callsites_ordinal"),
+        Index(
+            "ix_flow_callsites_position",
+            "flow_evidence_run_id",
+            "artifact_analysis_id",
+            "start_line",
+        ),
+    )
+    flow_evidence_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    scope_key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    cfg_node: Mapped[int] = mapped_column(nullable=False)
+    copies: Mapped[list[int]] = mapped_column(JSONB, nullable=False)
+    callee: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    arguments: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    awaited: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    text_key: Mapped[str | None] = mapped_column(String(600), nullable=True)
+
+
+class FlowJsxBindingRecord(_FlowSpanColumns, Base):
+    __tablename__ = "flow_jsx_bindings"
+    __table_args__ = (
+        ForeignKeyConstraint(*_SCOPE_FK, ondelete="CASCADE", name="fk_flow_jsx_bindings_scope"),
+        CheckConstraint("ordinal >= 0 AND cfg_node >= 0", name="ck_flow_jsx_bindings_ordinal"),
+    )
+    flow_evidence_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    scope_key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    cfg_node: Mapped[int] = mapped_column(nullable=False)
+    element: Mapped[str] = mapped_column(Text, nullable=False)
+    intrinsic: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    attribute: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
+class FlowDisplayTextRecord(Base):
+    __tablename__ = "flow_display_texts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_evidence_run_id", "artifact_analysis_id"],
+            [
+                "flow_artifact_coverage.flow_evidence_run_id",
+                "flow_artifact_coverage.artifact_analysis_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_flow_display_texts_coverage",
+        ),
+    )
+    flow_evidence_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    artifact_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    text_key: Mapped[str] = mapped_column(String(600), primary_key=True)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    flags: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class FlowFrameworkFactRecord(Base):
+    __tablename__ = "flow_framework_facts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_evidence_run_id"],
+            ["flow_evidence_runs.id"],
+            ondelete="CASCADE",
+            name="fk_flow_framework_facts_run",
+        ),
+        CheckConstraint("ecosystem IN ('python', 'npm')", name="ck_flow_framework_facts_ecosystem"),
+        CheckConstraint(
+            "source_kind IN ('lockfile', 'requirements_pin', 'declared')",
+            name="ck_flow_framework_facts_source",
+        ),
+        CheckConstraint(
+            f"input_fingerprint {_FLOW_DIGEST}", name="ck_flow_framework_facts_fingerprint"
+        ),
+    )
+    flow_evidence_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    ecosystem: Mapped[str] = mapped_column(String(16), nullable=False)
+    package: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    version_constraint: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    locator: Mapped[str] = mapped_column(Text, nullable=False)
+    scope: Mapped[str] = mapped_column(Text, nullable=False)
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+Base.metadata.tables["project_versions"].append_constraint(
+    ForeignKeyConstraint(
+        ["active_flow_evidence_run_id", "id"],
+        ["flow_evidence_runs.id", "flow_evidence_runs.project_version_id"],
+        name="fk_project_versions_active_flow_evidence",
+        use_alter=True,
+        deferrable=True,
+        initially="DEFERRED",
+    )
+)

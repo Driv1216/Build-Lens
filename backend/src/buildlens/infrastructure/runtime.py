@@ -13,6 +13,7 @@ from buildlens.application.architecture_rules import ArchitectureRulesService
 from buildlens.application.ask import AskService
 from buildlens.application.context import ContextService, RerankerRuntime
 from buildlens.application.embeddings import EmbeddingRuntime
+from buildlens.application.flow_evidence import FlowEvidenceService
 from buildlens.application.outbound_gate import StructuredGenerator
 from buildlens.application.processing import ProcessingService
 from buildlens.application.retrieval import RetrievalService
@@ -33,6 +34,7 @@ from buildlens.infrastructure.persistence.database import (
     create_session_factory_from_engine,
 )
 from buildlens.infrastructure.persistence.embeddings import SqlAlchemyEmbeddingStore
+from buildlens.infrastructure.persistence.flow_evidence import SqlAlchemyFlowEvidenceStore
 from buildlens.infrastructure.persistence.processing import SqlAlchemyProcessingStore
 from buildlens.infrastructure.persistence.retrieval import (
     SqlAlchemyContextEvidenceStore,
@@ -43,6 +45,7 @@ from buildlens.infrastructure.persistence.semantic_generation import SqlAlchemyG
 from buildlens.infrastructure.persistence.structural import SqlAlchemyStructuralAnalysisStore
 from buildlens.infrastructure.reranking.supervisor import SupervisedCrossEncoder
 from buildlens.infrastructure.structural.supervisor import SupervisedSourceReader
+from buildlens.infrastructure.structural.worker import DEFAULT_MAX_RSS_BYTES
 
 
 def processing_service(state: Any) -> ProcessingService:
@@ -77,6 +80,22 @@ def architecture_service(state: Any) -> ArchitectureService:
         semantic_catalog_service(state),
         state.architecture_lock,
         state.architecture_cache,
+    )
+
+
+def flow_evidence_service(state: Any) -> FlowEvidenceService:
+    """Stage 15: the only Stage 15 operation that reads source (supervised, fingerprint-checked)."""
+    s = state.settings
+
+    def reader() -> SupervisedSourceReader:
+        return SupervisedSourceReader(s.structure_artifact_timeout_seconds, DEFAULT_MAX_RSS_BYTES)
+
+    return FlowEvidenceService(
+        SqlAlchemyFlowEvidenceStore(state.session_factory),
+        reader,
+        state.flow_evidence_lock,
+        max_source_bytes=s.structure_max_source_bytes,
+        artifact_timeout_seconds=s.structure_artifact_timeout_seconds,
     )
 
 
@@ -192,6 +211,7 @@ class LocalRuntime:
         self.semantic_lock = Lock()
         self.architecture_lock = Lock()
         self.architecture_cache = ArchitectureGraphCache()
+        self.flow_evidence_lock = Lock()
         self.embedding_runtime = EmbeddingRuntime(
             SupervisedSentenceTransformer(
                 Path(settings.embeddings_cache_dir).expanduser(),

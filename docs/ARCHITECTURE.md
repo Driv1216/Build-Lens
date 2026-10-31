@@ -473,3 +473,11 @@ deviations: [ARCHITECTURE_INTELLIGENCE.md](ARCHITECTURE_INTELLIGENCE.md).
   - a containment-only tree root;
   - Stage 13 `verify_facts` now also compares the stored fact text, and loads authority rows in bulk.
 
+
+## Stage 15 — Flow Tracing (in progress)
+
+**Status:** Milestone A is implemented on a local branch and is uncommitted. Details: [FLOW_TRACING.md](FLOW_TRACING.md).
+
+- **The only Stage 15 source read.** `application/flow_evidence.py` runs an explicit flow evidence run bound to the active structural analysis. The supervised worker gains the ops `flow` and `flow_versions`; existing ops are unchanged.
+- **What it extracts.** `infrastructure/structural/python_flow.py` and `typescript_flow.py` lower each scope into a `flow-cfg.v1` statement-level CFG (`domain/flow_cfg.py`) and record callsites, bindings, JSX bindings and summaries as analysis-safe shapes. Display text is stored separately.
+- **Persistence.** `infrastructure/persistence/flow_evidence.py` publishes under the snapshot lock and writes only Stage 15 tables plus `project_versions.active_flow_evidence_run_id` (migration `0017`). No Stage 3–14 contract, pointer or freshness rule changes.

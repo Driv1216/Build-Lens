@@ -7,6 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from buildlens import __version__
 from buildlens.cli.architecture import app as architecture_app
 from buildlens.cli.evaluation import app as evaluation_app
+from buildlens.cli.flow import app as flow_app
 from buildlens.cli.lab import app as lab_app
 from buildlens.cli.semantic import app as semantic_app
 from buildlens.core.config import get_settings
@@ -19,6 +20,7 @@ app.add_typer(evaluation_app, name="eval")
 app.add_typer(lab_app, name="lab")
 app.add_typer(semantic_app, name="semantic")
 app.add_typer(architecture_app, name="architecture")
+app.add_typer(flow_app, name="flow")
 embeddings_app = typer.Typer(help="Manage the pinned local embedding model.")
 app.add_typer(embeddings_app, name="embeddings")
 reranking_app = typer.Typer(help="Manage the pinned local cross-encoder reranker.")
@@ -124,6 +126,13 @@ def diagnostics() -> None:
                     "architecture_evidence_links",
                     "architecture_components",
                     "architecture_diagnostics",
+                    "flow_evidence_runs",
+                    "flow_artifact_coverage",
+                    "flow_scopes",
+                    "flow_callsites",
+                    "flow_jsx_bindings",
+                    "flow_display_texts",
+                    "flow_framework_facts",
                 )
             }
             content_bytes = connection.scalar(

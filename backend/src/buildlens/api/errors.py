@@ -49,6 +49,16 @@ from buildlens.application.embeddings import (
     EmbeddingPreparationRequiredError,
     EmbeddingUnavailableError,
 )
+from buildlens.application.flow_evidence import (
+    FlowEvidenceBusyError,
+    FlowEvidenceConflictError,
+    FlowEvidenceLimitError,
+    FlowEvidenceNotFoundError,
+    FlowEvidenceRequiredError,
+    FlowEvidenceStaleError,
+    FlowEvidenceUnavailableError,
+    FlowStructureRequiredError,
+)
 from buildlens.application.processing import (
     CurrentContentUnavailableError,
     ProcessingBusyError,
@@ -307,6 +317,32 @@ def register_errors(app: FastAPI) -> None:
             "ARCHITECTURE_QUERY_INVALID",
             "The architecture query is invalid.",
         ),
+        FlowEvidenceNotFoundError: (404, "FLOW_EVIDENCE_NOT_FOUND", "Flow evidence was not found."),
+        FlowEvidenceRequiredError: (
+            409,
+            "FLOW_EVIDENCE_REQUIRED",
+            "Run flow evidence extraction for this snapshot first.",
+        ),
+        FlowEvidenceStaleError: (
+            409,
+            "FLOW_EVIDENCE_STALE",
+            "The flow evidence run is stale; run flow evidence extraction again.",
+        ),
+        FlowStructureRequiredError: (
+            409,
+            "FLOW_STRUCTURE_REQUIRED",
+            "Flow evidence needs a current structural analysis of this snapshot.",
+        ),
+        FlowEvidenceLimitError: (
+            409,
+            "FLOW_EVIDENCE_LIMIT_EXCEEDED",
+            "The snapshot exceeds a flow evidence limit; the run was recorded as failed.",
+        ),
+        FlowEvidenceUnavailableError: (
+            503,
+            "OPERATION_UNAVAILABLE",
+            "Operation infrastructure is unavailable.",
+        ),
         ValueError: (422, "PREREQUISITE_INVALID", "Operation prerequisites are invalid."),
     }
     error: type[Exception]
@@ -325,6 +361,8 @@ def register_errors(app: FastAPI) -> None:
         SemanticCatalogConflictError,
         ArchitectureBusyError,
         ArchitectureConflictError,
+        FlowEvidenceBusyError,
+        FlowEvidenceConflictError,
         GenerationConflictError,
         RunFencedError,
         BudgetExhaustedError,

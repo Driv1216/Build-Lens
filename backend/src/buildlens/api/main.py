@@ -80,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "/semantic/catalog",
                         "/architecture",
                         "/architecture-rules",
+                        "/flow/evidence",
                         "/semantic/generation/plan",
                         "/semantic/generation",
                         "/embeddings",
@@ -133,6 +134,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from buildlens.api.architecture_rule_routes import router as architecture_rule_router
 
     app.include_router(architecture_rule_router)
+    from buildlens.api.flow_routes import router as flow_router
+
+    app.include_router(flow_router)
     app.include_router(generation_router)
     app.include_router(generation_runtime_router)
     app.include_router(embedding_router)
