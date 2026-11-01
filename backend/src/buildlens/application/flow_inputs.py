@@ -376,6 +376,40 @@ class Emitter:
         )
         return key
 
+    def entry(
+        self,
+        kind: str,
+        ident: str,
+        label: str,
+        target: str,
+        locator: str | None,
+        evidence: Iterable[str],
+        attributes: dict[str, Any] | None = None,
+        tier: str = "derived",
+        conditions: Iterable[str] = (),
+    ) -> str:
+        """An ``entry_point`` node (``flow-entry-points.v1``) that ``enters`` ``target``."""
+        evidence = tuple(evidence)
+        key = self.node(
+            f"entry:{kind}:{ident}",
+            "entry_point",
+            label,
+            locator,
+            {"kind": kind, **(attributes or {})},
+            evidence,
+        )
+        self.edge(
+            "enters",
+            key,
+            target,
+            tier,
+            "flow-entry-points.v1",
+            conditions,
+            {"kind": kind},
+            evidence,
+        )
+        return key
+
     def diagnose(self, code: str, subject: str | None, **attributes: Any) -> None:
         self.diagnostics.append(FlowDiagnostic(code, subject, attributes))
 

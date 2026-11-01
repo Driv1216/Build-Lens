@@ -69,6 +69,12 @@ from buildlens.application.flow_evidence import (
     FlowEvidenceUnavailableError,
     FlowStructureRequiredError,
 )
+from buildlens.application.flow_trace_service import (
+    FlowEntrySearchUnavailableError,
+    FlowTraceNotFoundError,
+    FlowTraceNotPinnableError,
+    FlowTraceTooLargeError,
+)
 from buildlens.application.processing import (
     CurrentContentUnavailableError,
     ProcessingBusyError,
@@ -338,6 +344,22 @@ def register_errors(app: FastAPI) -> None:
             "Flow evidence, catalog and architecture must be current over one structural analysis.",
         ),
         FlowBuildError: (409, "FLOW_BUILD_FAILED", "The flow model build failed closed."),
+        FlowTraceNotFoundError: (404, "FLOW_TRACE_NOT_FOUND", "The pinned trace was not found."),
+        FlowTraceTooLargeError: (
+            409,
+            "FLOW_TRACE_TOO_LARGE",
+            "The trace exceeds the verification budget; narrow its bounds.",
+        ),
+        FlowTraceNotPinnableError: (
+            409,
+            "FLOW_TRACE_NOT_PINNABLE",
+            "A trace that hit its deadline cannot be pinned.",
+        ),
+        FlowEntrySearchUnavailableError: (
+            409,
+            "FLOW_ENTRY_SEARCH_UNAVAILABLE",
+            "Entry-point search needs retrieval.",
+        ),
         FlowEvidenceRequiredError: (
             409,
             "FLOW_EVIDENCE_REQUIRED",

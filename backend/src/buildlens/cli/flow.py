@@ -14,9 +14,15 @@ import typer
 
 from buildlens.application.flow_evidence import FlowEvidenceService
 from buildlens.core.config import get_settings
-from buildlens.infrastructure.runtime import LocalRuntime, flow_evidence_service, flow_service
+from buildlens.domain.flow_trace import MAX_DEPTH, MAX_HOPS, TraceQuery
+from buildlens.infrastructure.runtime import (
+    LocalRuntime,
+    flow_evidence_service,
+    flow_service,
+    flow_trace_service,
+)
 
-app = typer.Typer(help="Flow tracing evidence: per-scope CFGs, callsites and bindings.")
+app = typer.Typer(help="Flow tracing: evidence, the flow model and verified FlowTraces.")
 evidence_app = typer.Typer(help="The flow evidence run (the only Stage 15 source read).")
 app.add_typer(evidence_app, name="evidence")
 
@@ -122,3 +128,77 @@ def integrity(
 ) -> None:
     """Full inspection: every element, evidence item and cited row, plus the graph digest."""
     _model(lambda service: service.integrity(project, snapshot, run))
+
+
+def _traces(call: Callable[[Any], Any]) -> None:
+    with _runtime() as runtime:
+        _emit(call(flow_trace_service(runtime)))
+
+
+def _trace_query(entry: str, direction: str, max_depth: int, max_hops: int) -> TraceQuery:
+    if direction not in {"forward", "backward"}:
+        raise typer.BadParameter("direction must be forward or backward")
+    return TraceQuery(entry, direction, max_depth, max_hops)  # type: ignore[arg-type]
+
+
+@app.command("entries")
+def entries(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    query: str | None = typer.Option(None, "--q", help="Search text; candidates only"),
+    kind: str | None = typer.Option(None, "--kind"),
+    mode: str = typer.Option("lexical", "--mode"),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Entry points (or ranked candidates for a search; the user chooses)."""
+    _traces(lambda service: service.entries(project, snapshot, run, kind, query, mode))
+
+
+@app.command("trace")
+def trace(
+    entry: str = typer.Argument(..., help="An entry-point or node key"),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    direction: str = typer.Option("forward", "--direction"),
+    max_depth: int = typer.Option(MAX_DEPTH, "--max-depth", min=1, max=64),
+    max_hops: int = typer.Option(MAX_HOPS, "--max-hops", min=1, max=10_000),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """A verified FlowTrace with its four verdicts per step (never an execution claim)."""
+    query = _trace_query(entry, direction, max_depth, max_hops)
+    _traces(lambda service: service.trace(project, snapshot, run, query))
+
+
+@app.command("path")
+def path(
+    source: str = typer.Argument(...),
+    target: str = typer.Argument(...),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """One shortest structural witness between two nodes (L3; other paths may exist)."""
+    _traces(lambda service: service.path(project, snapshot, run, source, target))
+
+
+@app.command("pin")
+def pin(
+    entry: str = typer.Argument(...),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    direction: str = typer.Option("forward", "--direction"),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Compute, verify and pin a trace (D4)."""
+    query = _trace_query(entry, direction, MAX_DEPTH, MAX_HOPS)
+    _traces(lambda service: service.pin(project, snapshot, run, query))
+
+
+@app.command("verify")
+def verify(
+    digest: str = typer.Argument(..., help="A pinned trace digest"),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+) -> None:
+    """Re-verify a pinned trace: current, stale (with reasons) or integrity_failed."""
+    _traces(lambda service: service.pinned(project, snapshot, digest))

@@ -1,4 +1,4 @@
-"""Stage 15 flow evidence HTTP contracts (Milestone A: extraction, status, coverage, inspection).
+"""Stage 15 flow HTTP contracts: evidence (A), the flow model (B) and FlowTraces (C).
 
 Every read accepts ``run_id``. Without it, the active run must be fresh (409
 ``FLOW_EVIDENCE_REQUIRED`` / ``FLOW_EVIDENCE_STALE``); explicit history is labelled with its
@@ -6,15 +6,17 @@ Every read accepts ``run_id``. Without it, the active run must be fresh (409
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Path, Query
+from pydantic import BaseModel, Field
 
-from buildlens.api.dependencies import get_flow_evidence_service
+from buildlens.api.dependencies import get_flow_evidence_service, get_flow_trace_service
 from buildlens.application.flow_evidence import FlowEvidenceService
+from buildlens.application.flow_trace_service import FlowTraceService
 from buildlens.domain.flow_evidence import ArtifactFlowCoverage, FlowEvidenceRun, FlowScope
+from buildlens.domain.flow_trace import MAX_DEPTH, MAX_HOPS, TraceQuery
 
 router = APIRouter(
     prefix="/api/v1/projects/{project_id}/snapshots/{snapshot_id}/flow",
@@ -576,3 +578,78 @@ def model_integrity(
     value = service.integrity(project_id, snapshot_id, run_id)
     run = value.pop("run")
     return {"run_id": run.id, **value}
+
+
+# ----------------------------------------------------------------------------- traces (Milestone C)
+
+
+class TracePinRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    entry: str = Field(..., min_length=1, max_length=2048)
+    direction: Literal["forward", "backward"] = "forward"
+    max_depth: int = Field(MAX_DEPTH, ge=1, le=64)
+    max_hops: int = Field(MAX_HOPS, ge=1, le=10_000)
+    run_id: UUID | None = None
+
+
+@router.get("/entries")
+def trace_entries(
+    project_id: UUID,
+    snapshot_id: UUID,
+    q: str | None = Query(None, min_length=1, max_length=500),
+    kind: str | None = Query(None, max_length=32),
+    mode: Literal["exact", "lexical", "semantic", "hybrid"] = "lexical",
+    limit: int = Query(50, ge=1, le=200),
+    run_id: UUID | None = None,
+    service: FlowTraceService = Depends(get_flow_trace_service),
+) -> dict[str, Any]:
+    return service.entries(project_id, snapshot_id, run_id, kind, q, mode, limit)
+
+
+@router.get("/trace")
+def flow_trace(
+    project_id: UUID,
+    snapshot_id: UUID,
+    entry: str = Query(..., min_length=1, max_length=2048),
+    direction: Literal["forward", "backward"] = "forward",
+    max_depth: int = Query(MAX_DEPTH, ge=1, le=64),
+    max_hops: int = Query(MAX_HOPS, ge=1, le=10_000),
+    run_id: UUID | None = None,
+    service: FlowTraceService = Depends(get_flow_trace_service),
+) -> dict[str, Any]:
+    query = TraceQuery(entry, direction, max_depth, max_hops)
+    return service.trace(project_id, snapshot_id, run_id, query)
+
+
+@router.get("/path")
+def flow_path(
+    project_id: UUID,
+    snapshot_id: UUID,
+    source: str = Query(..., min_length=1, max_length=2048),
+    target: str = Query(..., min_length=1, max_length=2048),
+    run_id: UUID | None = None,
+    service: FlowTraceService = Depends(get_flow_trace_service),
+) -> dict[str, Any]:
+    return service.path(project_id, snapshot_id, run_id, source, target)
+
+
+@router.post("/traces")
+def pin_trace(
+    project_id: UUID,
+    snapshot_id: UUID,
+    body: TracePinRequest,
+    service: FlowTraceService = Depends(get_flow_trace_service),
+) -> dict[str, Any]:
+    query = TraceQuery(body.entry, body.direction, body.max_depth, body.max_hops)
+    return service.pin(project_id, snapshot_id, body.run_id, query)
+
+
+@router.get("/traces/{trace_digest}")
+def pinned_trace(
+    project_id: UUID,
+    snapshot_id: UUID,
+    trace_digest: str = Path(..., pattern="^[0-9a-f]{64}$"),
+    service: FlowTraceService = Depends(get_flow_trace_service),
+) -> dict[str, Any]:
+    return service.pinned(project_id, snapshot_id, trace_digest)

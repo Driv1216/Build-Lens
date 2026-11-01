@@ -20,7 +20,7 @@ from uuid import UUID
 from buildlens.domain.flow_evidence import flow_evidence_contract
 from buildlens.domain.source import digest
 
-FLOW_MODEL_VERSION = "flow-model.v1"
+FLOW_MODEL_VERSION = "flow-model.v2"  # v2: entry points and scope identities (Milestone C)
 FLOW_INTEGRITY_VERSION = "flow-integrity.v1"
 RULES = {
     "py_resolution": "py-call-resolution.v1",
@@ -39,6 +39,7 @@ RULES = {
     "ts_workspaces": "ts-workspace-packages.v1",
     "descriptors": "flow-request-descriptors.v1",
     "stage14_stitching": "stage14-span-stitching.v1",
+    "entry_points": "flow-entry-points.v1",
 }
 # The Stage 14 API-matching evaluation has no human labels yet (D1): every HTTP hop says so.
 API_MATCHING_EVALUATION = "not_human_evaluated"
@@ -95,6 +96,7 @@ FAMILIES: dict[str, str] = {
     "constructs": "invocation",
     "binds_prop_callback": "invocation",
     "continues_with": "invocation",
+    "enters": "invocation",
     # effects
     "performs": "effect",
     "on_table": "effect",
@@ -178,6 +180,18 @@ class FlowNode:
 
     def element_digest(self, evidence: tuple[str, ...] | None = None) -> str:
         return str(digest({**self.fields(), "evidence": sorted(evidence or self.evidence)}))
+
+    def portable_digest(self, evidence: tuple[str, ...]) -> str:
+        """Without database-assigned attributes (the stable symbol identity)."""
+        fields = self.fields()
+        fields["attributes"] = {
+            k: v for k, v in self.attributes.items() if k not in NON_PORTABLE_ATTRIBUTES
+        }
+        return str(digest({**fields, "evidence": sorted(evidence)}))
+
+
+# Node attributes that carry database-assigned ids (excluded from the portable digest).
+NON_PORTABLE_ATTRIBUTES = frozenset({"identity"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,7 +297,10 @@ def graph_digest_of(
         digest(
             {
                 "contract": FLOW_MODEL_VERSION,
-                "nodes": sorted([n.key, n.element_digest(ev(n.evidence))] for n in nodes),
+                "nodes": sorted(
+                    [n.key, n.portable_digest(ev(n.evidence)) if portable else n.element_digest()]
+                    for n in nodes
+                ),
                 "edges": sorted([e.key, e.element_digest(ev(e.evidence))] for e in edges),
                 "diagnostics": sorted(d.digest for d in diagnostics),
             }

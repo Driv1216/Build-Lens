@@ -82,6 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "/architecture-rules",
                         "/flow/evidence",
                         "/flow",
+                        "/flow/traces",
                         "/semantic/generation/plan",
                         "/semantic/generation",
                         "/embeddings",

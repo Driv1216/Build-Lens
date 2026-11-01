@@ -4,7 +4,8 @@
 - Milestones A0 and A are done. Milestone A is committed on the local branch `stage15/flow-tracing` (`3cb2af8`).
 - **Milestone B is implemented and committed locally** on the same branch. Its acceptance checks pass locally: designed fixtures, zero-edge non-links, the tamper suite and portable-digest reproduction. Approximations stay labelled in the model. Milestone B is not reviewed.
 - Nothing has been independently reviewed.
-- Milestones C–F (`FlowTrace` engine, `/flows` UI, explanations, evaluation) are **not started**.
+- **Milestone C (the `FlowTrace` engine) is implemented and committed locally.** Its designed oracles pass locally.
+- Milestones D–F (`/flows` UI, explanations, evaluation) are **not started**.
 
 The approved plan is Revision 3.1, which includes the A0 amendments approved on 2026-11-01. It lives outside the repository, in the owner's planning notes.
 
@@ -386,4 +387,206 @@ The most frequent `unresolved` reasons are `BUILTIN` 4,883, `EXTERNAL_PACKAGE:sq
 - **Descriptor base URL.** `ts-flow.v1` keeps literal text only for root-relative paths, so absolute `baseUrl` origins are not retained. Descriptor links carry `BASE_UNKNOWN` unless the factory's `baseUrl` is a root-relative literal (`BASE_FROM_FACTORY_LITERAL`).
 - **Attribution scope.** Application-wide response conditions are attributed to the whole repository, not to each FastAPI application: a stated over-approximation.
 - **The D10 factory-shape recognizer**, described in the A0 correction above.
+
+## Milestone C — the `FlowTrace` engine (implemented; committed locally)
+
+A `FlowTrace` (`flow-trace.v1`) is computed on demand. It walks one verified flow model run plus the scope CFGs it cites. Like the model, traces read PostgreSQL only (INV-1); a test deletes the repository before tracing. A trace is persisted only when pinned (D4), in `flow_trace_records`, so no migration was needed.
+
+**Code:**
+- `domain/flow_trace.py`: the contract, bounds and the sound fragment;
+- `application/flow_trace.py`: the pure engine;
+- `application/flow_trace_service.py`: verified reads, entries, pinning and the per-run graph cache.
+
+### Entry points (`flow-entry-points.v1`)
+
+The builder now emits `entry_point` nodes with `enters` edges (model contract `flow-model.v2`). The kinds are:
+- `http_endpoint`: a Stage 14 endpoint → its handler;
+- `cli_command`: Typer or Click command decorators;
+- `asyncio_run`;
+- `dom_event`: a handler registered on an intrinsic element;
+- `effect`: `useEffect`/`useLayoutEffect`;
+- `module`.
+
+Scope nodes also carry the symbol's stable identity, which the portable digest excludes because it is database-assigned.
+
+**Natural-language discovery** (`/entries?q=`) runs the existing `RetrievalService` (lexical by default) and maps hits to scopes by symbol identity. It then walks backward to the entry points that reach those scopes, within 8 hops. Candidates are ranked by hit rank, then distance, then key, each with its reason. **The user chooses**; no entry or edge is ever selected automatically.
+
+**Not covered:** route-component entries (TanStack Router and the Next.js App Router remain the D16 gap).
+
+### The walk and its four verdicts
+
+**Forward walk** (bounded depth-first, k=1 call context), in this order:
+1. `injects` setup;
+2. callsites in CFG order: invocation, scheduling, effect and request edges;
+3. scope-level registrations;
+4. exit outcomes.
+
+**Edge handling:**
+- Requests cross by `issues_request` → `calls_endpoint` → `handled_by`.
+- Outcomes cross the response boundary to teardown and background lanes, then `responds` back to the frontend continuation.
+- Edges whose body does not run (`creates_*`) and effects are leaf steps.
+- A revisit is a `shared` step; recursion is a `cycle_ref`.
+- A generator dependency's body is split at its `yield`: setup runs to the `yield`, teardown resumes after it (`finally` copies count).
+
+**Per step**, the four verdicts are kept apart:
+- **L1:** the edge's tier, rule and conditions;
+- **L2:** CFG reachability. The verdicts are `reachable_in_model`, `unreachable_static`, `unreachable_after_non_returning_call`, or `reachable_if_raises` with the raising nodes;
+- **L3:** the path condition, as the disjunctive normal form of control-dependence guards accumulated from the entry (at most 16 terms; `approximate` beyond that);
+- **L4:** feasibility.
+
+**Lanes:**
+- Each scheduler gets a lane, marked `ORDER_NOT_DETERMINED`.
+- Three lanes carry a stated order:
+  - the main lane is sequential by CFG within a scope;
+  - teardown is ordered by the FastAPI version table;
+  - TanStack mutation callbacks are ordered by their contract.
+
+**Layers:** every hop is assigned one of Entry, Frontend, HTTP, Route, Dependencies, Service, Data, External or Scheduler.
+
+**Ambiguity** produces segments, one per alternative (`AMBIGUOUS_CANDIDATE`, `SEMANTICS_ALTERNATIVE`); the engine never chooses.
+
+**Gaps:**
+- Unresolved callsites are gaps, except builtin, global and external-package calls, which are listed as `boundaries`;
+- truncated and opaque scopes are gaps;
+- any gap makes the status `incomplete_evidence`;
+- truncation by depth, hop limit or deadline is never reported as `complete`.
+
+**Database effects (`sqlalchemy-ops.v2`, path level):**
+- Each `stage`/`dml`/`flush` operation is classified as `staged`, `sent_uncommitted` or `commit_reached`. `commit_reached` requires one of:
+  - a commit on the same session (same receiver and reaching definitions, CFG-reachable after the operation);
+  - a transaction scope;
+  - a session injected by the dependency that commits (`SESSION_IDENTITY_BY_PARAMETER`).
+  Otherwise the state is `commit_reached_session_unknown`.
+- The commit's position relative to the response is `COMMIT_BEFORE_RESPONSE`, `COMMIT_BEFORE_RESPONSE_SEND` or `COMMIT_AFTER_RESPONSE_SENT`.
+- The claim is always "a commit is reached on the path; it may still raise", never "saved".
+
+**Backward walk:** incoming invocation, resolution and request edges up to entry points. A scope with no callers gets a coverage-gated absence claim: `no_callers_in_model` only when all of these hold:
+- coverage is complete;
+- there are no dynamic callsites in that language (unknown callees, callable parameters, unbound prop callbacks, star imports);
+- no unresolved callsite has the same name;
+- the scope is not a module.
+
+Otherwise the verdict is `ABSENCE_NOT_DETERMINABLE` with its reasons.
+
+**Structural path** (`/path`): one shortest witness, labelled `L3_structural_witness` and "other paths may exist". Absence within bounds is never proof that no path exists.
+
+### Sound fragment (`flow-feasibility.v1`)
+
+**Variables** are (scope, local name, reaching definitions). A variable is admissible only when all of these hold:
+- the scope has no dynamic features or `with`;
+- the name is not `nonlocal` or `global`;
+- no nested scope rebinds it.
+
+**Atoms in the fragment:**
+- **Python:** `is None` / `is not None`, and `is True`/`is False` (identity);
+- **JS:** `===`/`!==` against a primitive literal, `== null`/`!= null`, `typeof`, and truthiness (`HOST_OBJECT_FALSY_EXCLUDED`);
+- **Python `==` and truthiness:** only when every reaching definition is a literal or an unshadowed builtin value-type constructor (annotations do not count);
+- **literal knowledge:** a local whose only reaching definition is one literal has that value.
+
+**Opaque atoms** (fresh unknowns, never used to refute):
+- `isinstance`/`instanceof`;
+- calls, attributes and getters;
+- loose `==`;
+- overridable operators;
+- loop and case outcomes.
+
+**Branch rule:** one activation of a scope takes one outcome at a branch outside every loop, so opposite outcomes of the same branch on one path contradict. This is how a background task registered after `if not name: raise …` is refuted on the 400 path.
+
+**Decision:** an exact per-variable domain intersection. Cross-type numeric equality is undecided. A disjunction is refuted only when every term is and the guard set is not approximate. Every verdict lists its assumptions.
+
+**Not in this version:** `isinstance` refutation (the plan allows it when the class's metaclass and hierarchy resolve), and the lab z3 experiment (Milestone F).
+
+### Integrity, reproducibility and pinning
+
+- **INV-6:** every trace and path re-verifies the hops' nodes, the steps' edges, their evidence items and every cited row. It also checks that the graph-cache digests equal the stored ones (`CACHE_DIFFERS`), and fails closed with 409 `FLOW_INTEGRITY_FAILED` (the cache entry is evicted). The verification budget is 25,000 elements (`FLOW_TRACE_TOO_LARGE`).
+- **INV-7:** `trace_digest` = sha256 over {contract, graph digest, normalised query, result}. The result includes a `source_digest` over the touched artifacts' fingerprints and the digests of the scope evidence used. Recomputation is byte-identical.
+- **Pinning:** `POST …/flow/traces` pins a trace (a trace that hit its deadline is refused, as not reproducible). `GET …/flow/traces/{digest}` re-verifies it as one of:
+  - `current`;
+  - `stale`, with reasons, when its run is no longer current;
+  - `integrity_failed`, when recomputation differs or verification fails.
+
+**HTTP routes:** `GET …/flow/entries`, `/trace`, `/path`, `POST /traces`, `GET /traces/{digest}`. **CLI:** `buildlens flow entries|trace|path|pin|verify`. The CLI was not exercised at this gate.
+
+### Measured (local, 2026-11-01, single run; indicative, not the S7 protocol)
+
+The run was on BuildLens `5c65617`, using `.buildlens-eval/runs/stage15-milestone-c-20261101/` (`flow_trace.buildlens-5c65617.json`, with the script alongside).
+
+**Entry points:**
+
+| Kind | Count |
+|---|---|
+| `http_endpoint` | 90 |
+| `dom_event` | 107 |
+| `cli_command` | 53 |
+| `effect` | 40 |
+| `asyncio_run` | 31 |
+| `module` | 335 |
+
+**Sample:** up to 40 entries per kind for `http_endpoint`, `dom_event`, `cli_command` and `effect`, each traced forward and backward. That is 320 traces.
+
+**Results:**
+- **Status:**
+  - all 160 backward traces are `complete`;
+  - of the 160 forward traces, 6 are `complete` and 154 are `incomplete_evidence`;
+  - none hit the deadline, the hop limit or the depth limit.
+  The forward gaps are the model's unresolved callsites: mostly `RECEIVER_TYPE_UNKNOWN`, `CALL_RESULT_UNKNOWN`, `ANNOTATION_UNRESOLVED` and `MRO_INCOMPLETE`.
+- **Size:** at most 313 hops per trace (median 2, because backward traces from entries are short).
+- **Feasibility:** 10,641 steps `consistent_in_fragment`, 34,948 `undetermined`, and 0 refuted. BuildLens has no contradictory guards within the fragment.
+- **Reproducibility:** every forward trace recomputed byte-identically.
+
+**Latency** (wall time per trace, including verification and the upstream freshness check):
+
+| Traces | Median | Max |
+|---|---|---|
+| Forward, by entry kind | 0.56–0.85 s | 2.2 s |
+| Backward | ≈ 0.5 s | — |
+
+- The first trace, which also loads the graph, took 0.64 s.
+- About 0.78 s of a typical trace is the Stage 13/14 freshness check.
+
+### Verification (Milestone C gate, Python 3.14.6, disposable PostgreSQL 16 / pgvector 0.8.6)
+
+**`tests/integration/test_flow_trace.py` (6):**
+- the designed whole-path oracle from a DOM click to the database and back: journey order, layers, lanes, `responds` continuations, the database effect, and the branch oracle that refutes the 400-path background task;
+- byte-identical recomputation through a fresh cache;
+- no execution wording;
+- the feasibility oracles of plan §6.2 (S2), each with its designed verdict:
+
+  | Case | Verdict |
+  |---|---|
+  | `v is None` then `is not None` | refuted |
+  | literal-typed `==` | refuted / consistent |
+  | overridden `__eq__` | undetermined |
+  | JS `===` and `typeof` contradictions | refuted |
+  | loose `==` | undetermined |
+  | a getter | undetermined |
+  | a call evaluated twice | undetermined |
+  | a closure-rebound variable | undetermined |
+
+- a commit in yield-dependency teardown → `COMMIT_AFTER_RESPONSE_SENT`;
+- absence gating in both directions: Python gives `no_callers_in_model`, TS gives `ABSENCE_NOT_DETERMINABLE` (dynamic callsites);
+- the backward walk to the entry;
+- the structural witness;
+- pinning: `current` → tampered `integrity_failed` → restored `current`, with zero source reads;
+- the HTTP contract, including natural-language discovery and stale pins;
+- stale models block traces.
+
+**`tests/unit/test_flow_feasibility.py` (6):** the fragment's contradiction rules, `consistent` only when everything is decided, opaque atoms never refuting, the branch rule, disjunction and approximation semantics, and the canonical digest.
+
+**Gate selection:** the flow unit tests (A–C), `test_flow_evidence`, `test_flow_model`, `test_flow_trace`, `test_schema`, `test_upgrade` and `test_persistent_embeddings`: **83 passed**. ruff and mypy are clean.
+
+**Defects found and fixed during the C work:**
+- teardown statements in `finally` were missed, because only one lowered copy was checked;
+- external-instance calls were counted as gaps;
+- background tasks lacked their registration guard;
+- the path search ignored effect edges;
+- the 415 guard missed `/flow/traces`;
+- the portable digest included the new identity attribute;
+- child-scope lookup scanned every node, and loop membership was recomputed per branch.
+
+### Deviations from the plan (for owner review)
+
+- **Bounds:** `fanout` is recorded in the query but the walk relies on the model's fan-out cap. Hiding refuted segments is left to the UI; there is no query option.
+- **Pinned digest scope:** the pinned record is looked up by digest within the snapshot. The newest matching run's record is the one re-verified.
+- **Upstream cost:** about 0.78 s of a typical BuildLens trace is the existing Stage 13/14 freshness check (processing, catalog and architecture status), not the engine.
 

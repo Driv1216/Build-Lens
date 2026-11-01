@@ -64,6 +64,7 @@ from buildlens.infrastructure.persistence.models import (
     FlowNodeRecord,
     FlowRunRecord,
     FlowScopeRecord,
+    FlowTraceRecord,
     ImportReferenceRecord,
     ProjectVersionRecord,
     SymbolRecord,
@@ -655,10 +656,139 @@ class SqlAlchemyFlowStore(FlowStore):
                 )
             ]
 
+    # ----------------------------------------------------------------- trace inputs (Milestone C)
+
+    def graph(self, run_id: UUID) -> tuple[dict[str, FlowNode], list[FlowEdge]]:
+        """Every node and edge of a run, for the trace engine's per-run cache."""
+        with self._session_factory() as session:
+            nodes = {
+                r.node_key: _node(r)
+                for r in session.scalars(
+                    select(FlowNodeRecord)
+                    .where(FlowNodeRecord.flow_run_id == run_id)
+                    .order_by(FlowNodeRecord.node_key)
+                )
+            }
+            edges = [
+                _edge(r)
+                for r in session.scalars(
+                    select(FlowEdgeRecord)
+                    .where(FlowEdgeRecord.flow_run_id == run_id)
+                    .order_by(FlowEdgeRecord.edge_key)
+                )
+            ]
+        return nodes, edges
+
+    def scopes(
+        self, evidence_run_id: UUID, keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], ScopeInput]:
+        """Flow evidence scopes (with callsites and JSX) by (locator, scope key)."""
+        wanted = set(keys)
+        if not wanted:
+            return {}
+        found: dict[tuple[str, str], ScopeInput] = {}
+        with self._session_factory() as session:
+            coverage = {
+                c.locator: c
+                for c in session.scalars(
+                    select(FlowArtifactCoverageRecord).where(
+                        FlowArtifactCoverageRecord.flow_evidence_run_id == evidence_run_id,
+                        FlowArtifactCoverageRecord.locator.in_({loc for loc, _ in wanted}),
+                    )
+                )
+            }
+            for locator, key in sorted(wanted):
+                cov = coverage.get(locator)
+                if cov is None:
+                    continue
+                r = session.get(FlowScopeRecord, (evidence_run_id, cov.artifact_analysis_id, key))
+                if r is None:
+                    continue
+                calls = session.scalars(
+                    select(FlowCallsiteRecord)
+                    .where(
+                        FlowCallsiteRecord.flow_evidence_run_id == evidence_run_id,
+                        FlowCallsiteRecord.artifact_analysis_id == cov.artifact_analysis_id,
+                        FlowCallsiteRecord.scope_key == key,
+                    )
+                    .order_by(FlowCallsiteRecord.ordinal)
+                ).all()
+                jsx = session.scalars(
+                    select(FlowJsxBindingRecord)
+                    .where(
+                        FlowJsxBindingRecord.flow_evidence_run_id == evidence_run_id,
+                        FlowJsxBindingRecord.artifact_analysis_id == cov.artifact_analysis_id,
+                        FlowJsxBindingRecord.scope_key == key,
+                    )
+                    .order_by(FlowJsxBindingRecord.ordinal)
+                ).all()
+                found[(locator, key)] = ScopeInput(
+                    cov.artifact_analysis_id,
+                    locator,
+                    cov.language or "",
+                    _scope(r, [_callsite(c) for c in calls], [_jsx(j) for j in jsx]),
+                )
+        return found
+
+    def fingerprints(self, evidence_run_id: UUID, locators: set[str]) -> dict[str, str | None]:
+        """Input fingerprints of the artifacts a trace touches (its ``source_digest``)."""
+        if not locators:
+            return {}
+        with self._session_factory() as session:
+            return {
+                r.locator: r.input_fingerprint
+                for r in session.scalars(
+                    select(FlowArtifactCoverageRecord).where(
+                        FlowArtifactCoverageRecord.flow_evidence_run_id == evidence_run_id,
+                        FlowArtifactCoverageRecord.locator.in_(locators),
+                    )
+                )
+            }
+
+    def pin(
+        self, run: FlowRun, trace_digest: str, query: dict[str, Any], result: dict[str, Any]
+    ) -> None:
+        with self._session_factory.begin() as session:
+            if session.get(FlowTraceRecord, (run.id, trace_digest)) is None:
+                session.add(
+                    FlowTraceRecord(
+                        flow_run_id=run.id,
+                        trace_digest=trace_digest,
+                        query=query,
+                        result=result,
+                        reason="pinned",
+                    )
+                )
+
+    def pinned(
+        self, project_id: UUID, snapshot_id: UUID, trace_digest: str
+    ) -> list[tuple[UUID, dict[str, Any], dict[str, Any]]]:
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(FlowTraceRecord.flow_run_id, FlowTraceRecord.query, FlowTraceRecord.result)
+                .join(FlowRunRecord, FlowRunRecord.id == FlowTraceRecord.flow_run_id)
+                .where(
+                    FlowRunRecord.project_id == project_id,
+                    FlowRunRecord.project_version_id == snapshot_id,
+                    FlowTraceRecord.trace_digest == trace_digest,
+                )
+                .order_by(FlowRunRecord.revision)
+            ).all()
+        return [(r[0], dict(r[1]), dict(r[2])) for r in rows]
+
     # ----------------------------------------------------------------- verification (INV-6)
 
-    def verify(self, run: FlowRun, node_keys: list[str], edge_keys: list[str]) -> list[str]:
-        """Failures (empty when every element, evidence item and cited row verifies)."""
+    def verify(
+        self,
+        run: FlowRun,
+        node_keys: list[str],
+        edge_keys: list[str],
+        expected: dict[str, str] | None = None,
+    ) -> list[str]:
+        """Failures (empty when every element, evidence item and cited row verifies).
+
+        ``expected`` maps element keys to the digests a cached computation used; a stored
+        element that differs from them fails (the cache must equal the database)."""
         failures: list[str] = []
         with self._session_factory() as session:
             nodes = (
@@ -685,10 +815,14 @@ class SqlAlchemyFlowStore(FlowStore):
             for n in nodes:
                 if _node(n).element_digest() != n.node_digest:
                     failures.append(f"NODE_DIGEST_MISMATCH:{n.node_key}")
+                if expected and expected.get(n.node_key, n.node_digest) != n.node_digest:
+                    failures.append(f"CACHE_DIFFERS:{n.node_key}")
                 cited.update(n.evidence)
             for e in edges:
                 if _edge(e).element_digest() != e.edge_digest:
                     failures.append(f"EDGE_DIGEST_MISMATCH:{e.edge_key}")
+                if expected and expected.get(e.edge_key, e.edge_digest) != e.edge_digest:
+                    failures.append(f"CACHE_DIFFERS:{e.edge_key}")
                 cited.update(e.evidence)
             failures += self._verify_evidence(session, run, cited)
         return failures

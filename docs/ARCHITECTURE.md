@@ -476,7 +476,7 @@ deviations: [ARCHITECTURE_INTELLIGENCE.md](ARCHITECTURE_INTELLIGENCE.md).
 
 ## Stage 15 — Flow Tracing (in progress)
 
-**Status:** Milestone A is committed on a local branch. Milestone B (the flow model) is implemented and committed on the local branch. Details: [FLOW_TRACING.md](FLOW_TRACING.md).
+**Status:** Milestone A is committed on a local branch. Milestone B (the flow model) is committed on the local branch; Milestone C (the `FlowTrace` engine) is committed on the local branch. Details: [FLOW_TRACING.md](FLOW_TRACING.md).
 
 - **The only Stage 15 source read.** `application/flow_evidence.py` runs an explicit flow evidence run bound to the active structural analysis. The supervised worker gains the ops `flow` and `flow_versions`; existing ops are unchanged.
 - **What it extracts.** `infrastructure/structural/python_flow.py` and `typescript_flow.py` lower each scope into a `flow-cfg.v1` statement-level CFG (`domain/flow_cfg.py`) and record callsites, bindings, JSX bindings and summaries as analysis-safe shapes. Display text is stored separately.
@@ -487,3 +487,7 @@ deviations: [ARCHITECTURE_INTELLIGENCE.md](ARCHITECTURE_INTELLIGENCE.md).
   - `infrastructure/persistence/flow.py` publishes them, checking the captured authority, to `flow_*` tables plus `project_versions.active_flow_run_id` (migration `0018`).
   - Reads re-verify the returned elements, their evidence and every cited row.
   - HTTP hops reuse Stage 14 `calls_endpoint` branches unchanged and stay `inferred` with `HTTP_LINK_INDEPENDENT_EVALUATION_PENDING`.
+- **FlowTraces (Milestone C).**
+  - `application/flow_trace.py` walks a verified run forward or backward from an `entry_point`, with bounds, lanes and layers.
+  - Each step keeps four verdicts apart: resolution, CFG reachability, the control-dependence path condition, and feasibility in a sound fragment (`domain/flow_trace.py`).
+  - `application/flow_trace_service.py` re-verifies every returned element against PostgreSQL, keeps a per-run graph cache, pins traces in `flow_trace_records` (D4), and proposes natural-language entry candidates through `RetrievalService`. The user chooses.

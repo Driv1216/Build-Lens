@@ -174,6 +174,7 @@ _REGISTRATION_TAILS = {
     "fixture",
     "parametrize",
 }
+_CLI_TAILS = {"command", "callback", "group"}
 _CONTEXT_MANAGERS = {"contextlib.contextmanager", "contextlib.asynccontextmanager"}
 _NORETURN = {
     "typing.NoReturn",
@@ -274,11 +275,15 @@ class PythonFlow:
         self._unlinked_handlers = False
         self._protocols: dict[tuple[str, str], bool] = {}
         self.by_identity: dict[UUID, ScopeView] = {}
+        self.identity_of: dict[tuple[str, str], str] = {}
         owners = {s.id: s for s in inp.symbols}
         for view in self.views.values():
             owner = view.input.scope.owner_symbol_id
             if owner is not None and owner in owners and owners[owner].stable_identity_id:
                 self.by_identity[owners[owner].stable_identity_id] = view  # type: ignore[index]
+                self.identity_of[(view.input.locator, view.input.scope.key)] = str(
+                    owners[owner].stable_identity_id
+                )
 
     # ----------------------------------------------------------------- lookup
 
@@ -811,11 +816,27 @@ class PythonFlow:
                     "callable_kind": sc.scope.callable_kind,
                     "scope": key,
                     "truncated": sc.scope.truncated,
+                    "identity": self.identity_of.get((locator, key)),
+                    "language": "Python",
                 },
                 [self.em.scope_ev(sc)],
             )
             if sc.scope.truncated:
                 self.em.diagnose("FLOW_SCOPE_TRUNCATED", node, limit=sc.scope.truncated)
+            if sc.scope.kind == "module":
+                self.em.entry("module", locator, locator, node, locator, [self.em.scope_ev(sc)])
+            elif sc.scope.kind in {"function", "method"} and any(
+                name.startswith(("typer.", "click.")) and name.rsplit(".", 1)[-1] in _CLI_TAILS
+                for name in self.decorator_names(view)
+            ):
+                self.em.entry(
+                    "cli_command",
+                    f"{locator}#{key}",
+                    sc.scope.name or key,
+                    node,
+                    locator,
+                    [self.em.scope_ev(sc)],
+                )
             for callsite in sc.scope.callsites:
                 self.callsite(view, callsite)
             self.iteration(view)
@@ -1585,6 +1606,17 @@ class PythonFlow:
             (n or "").endswith("TaskGroup.create_task") for n in names
         ):
             self._scheduled(view, callsite, key, ev, "asyncio_task")
+        if "asyncio.run" in names:
+            for argument in callsite.arguments[:1]:
+                for target in self._inner_call_targets(view, argument.get("shape") or {}):
+                    em.entry(
+                        "asyncio_run",
+                        key,
+                        "asyncio.run()",
+                        target,
+                        view.input.locator,
+                        [ev],
+                    )
         if "asyncio.gather" in names:
             for argument in callsite.arguments:
                 inner = argument.get("shape") or {}
@@ -1832,6 +1864,21 @@ class PythonFlow:
                 (),
                 {},
                 [self.em.stage14_ev(element), self.em.scope_ev(view.input)],
+            )
+            paths = [
+                item.get("path")
+                for item in element.attributes.get("paths") or []
+                if isinstance(item, dict) and item.get("path")
+            ]
+            methods = element.attributes.get("methods") or []
+            self.em.entry(
+                "http_endpoint",
+                element.key,
+                f"{'/'.join(methods) or '?'} {paths[0] if paths else '?'}",
+                handler,
+                view.input.locator,
+                [self.em.stage14_ev(element)],
+                {"methods": methods, "paths": paths},
             )
             self.injects(view, handler, set(), 0)
             outcomes = self.responses(view, handler)
@@ -2415,6 +2462,7 @@ class PythonFlow:
                     "step": "background",
                     "after": "response_send",
                     "relative_to_teardown": sorted(backgrounds) or None,
+                    "callsite": callsite_key,
                 },
                 ev,
                 f"background:{handler}",

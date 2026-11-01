@@ -13,6 +13,7 @@ from buildlens.application.embeddings import EmbeddingService
 from buildlens.application.fingerprinting import SnapshotFingerprinter
 from buildlens.application.flow import FlowService
 from buildlens.application.flow_evidence import FlowEvidenceService
+from buildlens.application.flow_trace_service import FlowTraceService
 from buildlens.application.processing import ProcessingService
 from buildlens.application.projects import ProjectService
 from buildlens.application.retrieval import RetrievalService
@@ -33,6 +34,7 @@ from buildlens.infrastructure.runtime import (
     context_service,
     flow_evidence_service,
     flow_service,
+    flow_trace_service,
     processing_service,
     retrieval_service,
     semantic_catalog_service,
@@ -104,6 +106,10 @@ def get_flow_evidence_service(request: Request) -> FlowEvidenceService:
 
 def get_flow_service(request: Request) -> FlowService:
     return flow_service(request.app.state)
+
+
+def get_flow_trace_service(request: Request) -> FlowTraceService:
+    return flow_trace_service(request.app.state)
 
 
 def get_architecture_service(request: Request) -> ArchitectureService:

@@ -424,6 +424,71 @@ SEMANTICS_REPOSITORY = {
 }
 
 
+# Milestone C oracles: feasibility in the sound fragment, a commit in dependency teardown, and
+# scopes with designed guards (the trace engine's verdicts are checked against these).
+TRACE_REPOSITORY = {
+    **FLOW_REPOSITORY,
+    "backend/app/main.py": (
+        "from fastapi import FastAPI\n\n"
+        "from app.api import router\n"
+        "from app.tx import router as tx\n\n"
+        "app = FastAPI()\n"
+        "app.include_router(router)\n"
+        "app.include_router(tx)\n"
+    ),
+    "backend/app/tx.py": (
+        "from fastapi import APIRouter, Depends\n"
+        "from sqlalchemy.orm import Session, sessionmaker\n\n"
+        "from app.models import Item\n\n"
+        "factory = sessionmaker()\n"
+        "router = APIRouter(prefix='/api/tx')\n\n\n"
+        "def get_tx():\n"
+        "    session = factory()\n"
+        "    try:\n        yield session\n        session.commit()\n"
+        "    finally:\n        session.close()\n\n\n"
+        "@router.post('')\n"
+        "def tx_item(name: str, session: Session = Depends(get_tx)):\n"
+        "    session.add(Item(name=name))\n"
+        "    return {'ok': True}\n"
+    ),
+    "backend/app/feasible.py": (
+        "class Thing:\n"
+        "    def __eq__(self, other):\n        return True\n\n\n"
+        "def target() -> None:\n    pass\n\n\n"
+        "def nones(v):\n"
+        "    if v is None:\n"
+        "        if v is not None:\n            target()\n"
+        "        target()\n\n\n"
+        "def literal() -> None:\n"
+        "    x = 1\n"
+        "    if x == 2:\n        target()\n"
+        "    if x == 1:\n        target()\n\n\n"
+        "def overridden() -> None:\n"
+        "    x = Thing()\n"
+        "    if x == 1:\n        target()\n\n\n"
+        "def lonely() -> int:\n    return 1\n"
+    ),
+    "frontend/src/feasible.ts": (
+        "function target() {\n  return 1;\n}\n\n"
+        "export function strict(x: number) {\n"
+        "  if (x === 1) {\n    if (x === 2) {\n      target();\n    }\n  }\n}\n\n"
+        "export function loose(x: any) {\n  if (x == 1) {\n    target();\n  }\n}\n\n"
+        "export function getter(o: { ok: boolean }) {\n  if (o.ok) {\n    target();\n  }\n}\n\n"
+        "export function twice(check: () => boolean) {\n"
+        "  if (check()) {\n    if (!check()) {\n      target();\n    }\n  }\n}\n\n"
+        "export function rebound() {\n"
+        "  let x = 1;\n"
+        "  const bump = () => {\n    x = 2;\n  };\n"
+        "  bump();\n"
+        "  if (x === 1) {\n    if (x === 2) {\n      target();\n    }\n  }\n}\n\n"
+        "function orphan() {\n  return 2;\n}\n\n"
+        "export function types(v: unknown) {\n"
+        "  if (typeof v === 'string') {\n"
+        "    if (typeof v === 'number') {\n      target();\n    }\n  }\n}\n"
+    ),
+}
+
+
 class FlowStack:
     """The real stack from snapshot to flow model over a synthetic repository."""
 

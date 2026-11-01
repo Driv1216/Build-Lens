@@ -843,12 +843,23 @@ class TypeScriptFlow:
                     "callable_kind": sc.scope.callable_kind,
                     "scope": key,
                     "truncated": sc.scope.truncated,
+                    "identity": self._identity(sc.scope.owner_symbol_id),
+                    "language": sc.language,
                 },
                 [self.em.scope_ev(sc)],
             )
             if sc.scope.truncated:
                 self.em.diagnose(
                     "FLOW_SCOPE_TRUNCATED", scope_key(locator, key), limit=sc.scope.truncated
+                )
+            if sc.scope.kind == "module":
+                self.em.entry(
+                    "module",
+                    locator,
+                    locator,
+                    scope_key(locator, key),
+                    locator,
+                    [self.em.scope_ev(sc)],
                 )
         for view in self.views.values():
             self.jsx(view)
@@ -960,6 +971,17 @@ class TypeScriptFlow:
                             {"jsx": key},
                             [ev],
                             key,
+                        )
+                        em.entry(
+                            "dom_event",
+                            key,
+                            f"<{binding.element} {binding.attribute}>",
+                            target,
+                            sc.locator,
+                            [ev],
+                            {"event": binding.attribute, "element": binding.element},
+                            "inferred" if conditions else h.tier,
+                            ("ELEMENT_MUST_BE_MOUNTED", *conditions),
                         )
                     elif h.kind == "prop":
                         em.edge(
@@ -1173,6 +1195,17 @@ class TypeScriptFlow:
                         [ev],
                     )
                     self.effects.setdefault(component, []).append((target, _deps(deps), ev))
+                    em.entry(
+                        "effect",
+                        key,
+                        hook,
+                        target,
+                        view.input.locator,
+                        [ev],
+                        {"scheduler": scheduler, "deps": _deps(deps)},
+                        "inferred",
+                        ("EFFECT_TIMING_RELATIVE_TO_PAINT_NOT_DETERMINED",),
+                    )
                     self.cleanup(h, target, scheduler, ev)
             return
         if package == "react" and hook == "useMemo" and args:
@@ -1400,6 +1433,10 @@ class TypeScriptFlow:
                     {},
                     [ev],
                 )
+
+    def _identity(self, owner: Any) -> str | None:
+        symbol = self.symbols.get(owner) if owner is not None else None
+        return str(symbol.stable_identity_id) if symbol and symbol.stable_identity_id else None
 
     # ----------------------------------------------------------------- React state and effects
 

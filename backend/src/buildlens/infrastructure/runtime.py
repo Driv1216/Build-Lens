@@ -15,6 +15,7 @@ from buildlens.application.context import ContextService, RerankerRuntime
 from buildlens.application.embeddings import EmbeddingRuntime
 from buildlens.application.flow import FlowService
 from buildlens.application.flow_evidence import FlowEvidenceService
+from buildlens.application.flow_trace_service import FlowTraceService, TraceGraphCache
 from buildlens.application.outbound_gate import StructuredGenerator
 from buildlens.application.processing import ProcessingService
 from buildlens.application.retrieval import RetrievalService
@@ -98,6 +99,16 @@ def flow_evidence_service(state: Any) -> FlowEvidenceService:
         state.flow_evidence_lock,
         max_source_bytes=s.structure_max_source_bytes,
         artifact_timeout_seconds=s.structure_artifact_timeout_seconds,
+    )
+
+
+def flow_trace_service(state: Any) -> FlowTraceService:
+    """Stage 15 traces over the verified flow model (per-run graph cache, DB only)."""
+    return FlowTraceService(
+        flow_service(state),
+        SqlAlchemyFlowStore(state.session_factory),
+        retrieval_service(state),
+        state.flow_trace_cache,
     )
 
 
@@ -226,6 +237,7 @@ class LocalRuntime:
         self.architecture_cache = ArchitectureGraphCache()
         self.flow_evidence_lock = Lock()
         self.flow_lock = Lock()
+        self.flow_trace_cache = TraceGraphCache()
         self.embedding_runtime = EmbeddingRuntime(
             SupervisedSentenceTransformer(
                 Path(settings.embeddings_cache_dir).expanduser(),
