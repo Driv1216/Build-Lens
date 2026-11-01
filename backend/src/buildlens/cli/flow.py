@@ -14,7 +14,7 @@ import typer
 
 from buildlens.application.flow_evidence import FlowEvidenceService
 from buildlens.core.config import get_settings
-from buildlens.infrastructure.runtime import LocalRuntime, flow_evidence_service
+from buildlens.infrastructure.runtime import LocalRuntime, flow_evidence_service, flow_service
 
 app = typer.Typer(help="Flow tracing evidence: per-scope CFGs, callsites and bindings.")
 evidence_app = typer.Typer(help="The flow evidence run (the only Stage 15 source read).")
@@ -84,3 +84,41 @@ def facts(
         return {"run_id": value.id, "freshness_reasons": reasons, "items": items}
 
     _service(call)
+
+
+def _model(call: Callable[[Any], Any]) -> None:
+    with _runtime() as runtime:
+        _emit(call(flow_service(runtime)))
+
+
+@app.command("build")
+def build(project: UUID = typer.Option(...), snapshot: UUID = typer.Option(...)) -> None:
+    """Build (or reuse) the flow model from current evidence, catalog and architecture runs."""
+    _model(lambda service: service.build(project, snapshot))
+
+
+@app.command("status")
+def model_status(project: UUID = typer.Option(...), snapshot: UUID = typer.Option(...)) -> None:
+    """The flow model's latest attempt, active run and freshness."""
+    _model(lambda service: service.status(project, snapshot))
+
+
+@app.command("node")
+def node(
+    key: str = typer.Argument(..., help="A flow node key, e.g. scope:app/api.py#m.0"),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """A verified node with its incoming and outgoing edges."""
+    _model(lambda service: service.node(project, snapshot, run, key))
+
+
+@app.command("integrity")
+def integrity(
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    run: UUID | None = typer.Option(None, "--run"),
+) -> None:
+    """Full inspection: every element, evidence item and cited row, plus the graph digest."""
+    _model(lambda service: service.integrity(project, snapshot, run))

@@ -258,10 +258,9 @@ def test_downgrade_refuses_while_flow_evidence_exists(pg_engine: Engine, tmp_pat
     flow.extract(stack.project.id, snapshot.id)
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).parents[2] / "alembic"))
-    with pytest.raises(Exception, match="Stage 15 flow evidence runs exist"):
+    with pytest.raises(Exception, match="Stage 15 flow (evidence|model) runs"):
         command.downgrade(config, "0016_architecture_rules")
     with pg_engine.connect() as connection:
         assert (
-            connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0017_flow_evidence"
+            connection.scalar(text("SELECT version_num FROM alembic_version")) == "0018_flow_model"
         )

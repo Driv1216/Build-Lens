@@ -96,6 +96,7 @@ class ProjectVersionRecord(Base):
     active_flow_evidence_run_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), nullable=True
     )
+    active_flow_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
 
 
 class ArtifactIdentityRecord(Base):
@@ -2666,6 +2667,227 @@ Base.metadata.tables["project_versions"].append_constraint(
         ["active_flow_evidence_run_id", "id"],
         ["flow_evidence_runs.id", "flow_evidence_runs.project_version_id"],
         name="fk_project_versions_active_flow_evidence",
+        use_alter=True,
+        deferrable=True,
+        initially="DEFERRED",
+    )
+)
+
+
+class FlowModuleFactRecord(Base):
+    __tablename__ = "flow_module_facts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_evidence_run_id"],
+            ["flow_evidence_runs.id"],
+            ondelete="CASCADE",
+            name="fk_flow_module_facts_run",
+        ),
+        CheckConstraint("kind IN ('tsconfig', 'package')", name="ck_flow_module_facts_kind"),
+        CheckConstraint(
+            f"input_fingerprint {_FLOW_DIGEST}", name="ck_flow_module_facts_fingerprint"
+        ),
+    )
+    flow_evidence_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    locator: Mapped[str] = mapped_column(Text, nullable=False)
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    facts: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class FlowRunRecord(Base):
+    """Stage 15 immutable flow model run (a projection of evidence, catalog and architecture)."""
+
+    __tablename__ = "flow_runs"
+    __table_args__ = (
+        UniqueConstraint("project_version_id", "revision", name="uq_flow_runs_snapshot_revision"),
+        UniqueConstraint("id", "project_version_id", name="uq_flow_runs_id_snapshot"),
+        ForeignKeyConstraint(
+            ["project_version_id", "project_id"],
+            ["project_versions.id", "project_versions.project_id"],
+            ondelete="CASCADE",
+            name="fk_flow_run_snapshot_owner",
+        ),
+        ForeignKeyConstraint(
+            ["flow_evidence_run_id", "structural_analysis_id"],
+            ["flow_evidence_runs.id", "flow_evidence_runs.structural_analysis_id"],
+            name="fk_flow_run_evidence",
+        ),
+        ForeignKeyConstraint(
+            ["catalog_run_id", "project_version_id"],
+            ["semantic_catalog_runs.id", "semantic_catalog_runs.project_version_id"],
+            name="fk_flow_run_catalog",
+        ),
+        ForeignKeyConstraint(
+            ["architecture_run_id", "project_version_id"],
+            ["architecture_runs.id", "architecture_runs.project_version_id"],
+            name="fk_flow_run_architecture",
+        ),
+        ForeignKeyConstraint(
+            ["captured_active_flow_run_id", "project_version_id"],
+            ["flow_runs.id", "flow_runs.project_version_id"],
+            name="fk_flow_runs_captured_active",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint(
+            "outcome IN ('complete', 'partial', 'failed')", name="ck_flow_runs_outcome"
+        ),
+        CheckConstraint("completed_at >= started_at", name="ck_flow_runs_times"),
+        CheckConstraint("revision > 0", name="ck_flow_runs_revision"),
+        CheckConstraint(
+            "(outcome = 'failed') = (graph_digest IS NULL) AND "
+            "(graph_digest IS NULL) = (portable_digest IS NULL) AND "
+            "(outcome = 'failed') = (failure_code IS NOT NULL) AND "
+            f"(graph_digest IS NULL OR (graph_digest {_FLOW_DIGEST} AND "
+            f"portable_digest {_FLOW_DIGEST}))",
+            name="ck_flow_runs_digests",
+        ),
+        CheckConstraint(
+            f"contract_digest {_FLOW_DIGEST} AND input_authority_digest {_FLOW_DIGEST} AND "
+            f"evidence_digest {_FLOW_DIGEST} AND catalog_digest {_FLOW_DIGEST} AND "
+            f"architecture_graph_digest {_FLOW_DIGEST}",
+            name="ck_flow_runs_authority",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    revision: Mapped[int] = mapped_column(nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    flow_evidence_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    evidence_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    catalog_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    catalog_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    architecture_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    architecture_graph_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    structural_analysis_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    contract: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    contract_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_authority_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    graph_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    portable_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    coverage: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    diagnostics: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    captured_active_flow_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    captured_latest_revision: Mapped[int] = mapped_column(nullable=False, server_default="0")
+
+
+class FlowEvidenceItemRecord(Base):
+    __tablename__ = "flow_evidence_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_run_id"], ["flow_runs.id"], ondelete="CASCADE", name="fk_flow_evidence_items_run"
+        ),
+        CheckConstraint(f"digest {_FLOW_DIGEST}", name="ck_flow_evidence_items_digest"),
+    )
+    flow_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    refs: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    derived: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
+class FlowNodeRecord(Base):
+    __tablename__ = "flow_nodes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_run_id"], ["flow_runs.id"], ondelete="CASCADE", name="fk_flow_nodes_run"
+        ),
+        CheckConstraint(f"node_digest {_FLOW_DIGEST}", name="ck_flow_nodes_digest"),
+    )
+    flow_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    node_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    locator: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attributes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    evidence: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    node_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class FlowEdgeRecord(Base):
+    __tablename__ = "flow_edges"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_run_id"], ["flow_runs.id"], ondelete="CASCADE", name="fk_flow_edges_run"
+        ),
+        UniqueConstraint("flow_run_id", "edge_key", name="uq_flow_edges_key"),
+        CheckConstraint(
+            "tier IN ('observed', 'derived', 'inferred', 'unknown')", name="ck_flow_edges_tier"
+        ),
+        CheckConstraint(
+            "family IN ('resolution', 'invocation', 'effect', 'response')",
+            name="ck_flow_edges_family",
+        ),
+        CheckConstraint(f"edge_digest {_FLOW_DIGEST}", name="ck_flow_edges_digest"),
+        Index("ix_flow_edges_source", "flow_run_id", "source_key"),
+        Index("ix_flow_edges_target", "flow_run_id", "target_key"),
+    )
+    flow_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    edge_key: Mapped[str] = mapped_column(Text, nullable=False)
+    relation: Mapped[str] = mapped_column(String(32), nullable=False)
+    family: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_key: Mapped[str] = mapped_column(Text, nullable=False)
+    target_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    rule: Mapped[str] = mapped_column(String(64), nullable=False)
+    conditions: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    attributes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    evidence: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    edge_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class FlowDiagnosticRecord(Base):
+    __tablename__ = "flow_diagnostics"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_run_id"], ["flow_runs.id"], ondelete="CASCADE", name="fk_flow_diagnostics_run"
+        ),
+        CheckConstraint(f"diagnostic_digest {_FLOW_DIGEST}", name="ck_flow_diagnostics_digest"),
+    )
+    flow_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attributes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    diagnostic_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class FlowTraceRecord(Base):
+    """A pinned ``FlowTrace`` (D4): stored only when pinned or bound to an explanation."""
+
+    __tablename__ = "flow_trace_records"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["flow_run_id"], ["flow_runs.id"], ondelete="CASCADE", name="fk_flow_trace_records_run"
+        ),
+        CheckConstraint(f"trace_digest {_FLOW_DIGEST}", name="ck_flow_trace_records_digest"),
+        CheckConstraint("reason IN ('pinned', 'explanation')", name="ck_flow_trace_records_reason"),
+    )
+    flow_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    trace_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    query: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    result: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+Base.metadata.tables["project_versions"].append_constraint(
+    ForeignKeyConstraint(
+        ["active_flow_run_id", "id"],
+        ["flow_runs.id", "flow_runs.project_version_id"],
+        name="fk_project_versions_active_flow",
         use_alter=True,
         deferrable=True,
         initially="DEFERRED",

@@ -32,9 +32,11 @@ from buildlens.domain.source import (
 )
 from buildlens.domain.structural import ParseDiagnostic, SourceSpan
 
-FLOW_EVIDENCE_VERSION = "flow-evidence.v1"
-PYTHON_FLOW = "python-flow.v1"
-TS_FLOW = "ts-flow.v1"
+# v2 (Milestone B): module-resolution facts from tsconfig and package.json (D9, D13).
+FLOW_EVIDENCE_VERSION = "flow-evidence.v2"
+MODULE_FACTS = "module-facts.v1"
+PYTHON_FLOW = "python-flow.v2"  # v2: return annotations and star imports (Milestone B)
+TS_FLOW = "ts-flow.v2"  # v2: class extends clause and instance field count (Milestone B)
 VERSION_FACTS = "framework-version-facts.v1"
 SHAPES_VERSION = "flow-shapes.v1"
 DISPLAY_VERSION = "flow-display.v1"
@@ -178,7 +180,8 @@ def version_facts_contract() -> dict[str, Any]:
     return {
         "version_facts": VERSION_FACTS,
         "reader": READER_VERSION,
-        "files": sorted(VERSION_FILES) + ["requirements*.txt"],
+        "files": sorted(VERSION_FILES) + ["requirements*.txt", "tsconfig*.json"],
+        "module_facts": MODULE_FACTS,
         "packages": {key: list(values) for key, values in VERSION_PACKAGES.items()},
         "max_bytes": VERSION_FILE_BYTES,
         "parsers": "tomllib+json+yaml.safe_load",
@@ -358,6 +361,15 @@ def _callsite(c: FlowCallsite) -> dict[str, Any]:
     }
 
 
+def callsite_digest(c: FlowCallsite) -> str:
+    """Row digest of a stored callsite (cited by flow model evidence)."""
+    return str(digest(_callsite(c)))
+
+
+def jsx_digest(j: FlowJsxBinding) -> str:
+    return str(digest(_jsx(j)))
+
+
 def _jsx(j: FlowJsxBinding) -> dict[str, Any]:
     return {
         "ordinal": j.ordinal,
@@ -423,6 +435,17 @@ class FrameworkFact:
     @property
     def directory(self) -> str:
         return self.locator.rsplit("/", 1)[0] if "/" in self.locator else ""
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleFact:
+    """Module-resolution facts read as data from a tsconfig or package.json (D9, D13)."""
+
+    kind: Literal["tsconfig", "package"]
+    locator: str
+    input_fingerprint: str
+    facts: dict[str, Any]
+    truncated: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -256,14 +256,24 @@ def _versions(reader: PosixSecureSourceReader, args: tuple[Any, ...]) -> tuple[o
     """Stage 15 D17: one verified read of a version file, parsed as data."""
     from buildlens.infrastructure.structural.framework_versions import (
         VersionFileError,
+        is_tsconfig,
+        is_version_file,
+        parse_module_file,
         parse_version_file,
     )
 
     root, locator, max_bytes, expected = args
     raw = reader.read(root, locator, max_bytes, expected)
     fingerprint = hashlib.sha256(raw.data).hexdigest()
+    # (version facts, module facts) or an error code; both are parsed as data only.
     try:
-        value: object = parse_version_file(locator, raw.data)
+        facts = parse_version_file(locator, raw.data) if is_version_file(locator) else ()
+        module = (
+            parse_module_file(locator, raw.data)
+            if is_tsconfig(locator) or locator.rsplit("/", 1)[-1].lower() == "package.json"
+            else None
+        )
+        value: object = (facts, module)
     except VersionFileError as error:
         value = str(error)
     except Exception:

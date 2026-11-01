@@ -476,8 +476,14 @@ deviations: [ARCHITECTURE_INTELLIGENCE.md](ARCHITECTURE_INTELLIGENCE.md).
 
 ## Stage 15 — Flow Tracing (in progress)
 
-**Status:** Milestone A is implemented on a local branch and is uncommitted. Details: [FLOW_TRACING.md](FLOW_TRACING.md).
+**Status:** Milestone A is committed on a local branch. Milestone B (the flow model) is implemented and committed on the local branch. Details: [FLOW_TRACING.md](FLOW_TRACING.md).
 
 - **The only Stage 15 source read.** `application/flow_evidence.py` runs an explicit flow evidence run bound to the active structural analysis. The supervised worker gains the ops `flow` and `flow_versions`; existing ops are unchanged.
 - **What it extracts.** `infrastructure/structural/python_flow.py` and `typescript_flow.py` lower each scope into a `flow-cfg.v1` statement-level CFG (`domain/flow_cfg.py`) and record callsites, bindings, JSX bindings and summaries as analysis-safe shapes. Display text is stored separately.
 - **Persistence.** `infrastructure/persistence/flow_evidence.py` publishes under the snapshot lock and writes only Stage 15 tables plus `project_versions.active_flow_evidence_run_id` (migration `0017`). No Stage 3–14 contract, pointer or freshness rule changes.
+- **Flow model (Milestone B).**
+  - `application/flow.py` builds a flow model run from one flow evidence run, catalog run and architecture run over the same structural analysis. It reads PostgreSQL only.
+  - The pure builder lives in `flow_builder.py`, `flow_python.py`, `flow_typescript.py` and `flow_inputs.py`. It emits nodes and edges in four families (resolution, invocation, effect, response), each carrying a tier, rule, conditions and cited evidence.
+  - `infrastructure/persistence/flow.py` publishes them, checking the captured authority, to `flow_*` tables plus `project_versions.active_flow_run_id` (migration `0018`).
+  - Reads re-verify the returned elements, their evidence and every cited row.
+  - HTTP hops reuse Stage 14 `calls_endpoint` branches unchanged and stay `inferred` with `HTTP_LINK_INDEPENDENT_EVALUATION_PENDING`.

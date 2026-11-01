@@ -193,3 +193,101 @@ def is_version_file(locator: str) -> bool:
         "pnpm-lock.yaml",
         "package.json",
     } or (name.startswith("requirements") and name.endswith(".txt"))
+
+
+# ----------------------------------------------------------------------------- module facts
+
+MODULE_FACT_BYTES = 65_536  # bound on the JSON kept per file (paths/exports maps)
+
+
+def strip_jsonc(source: str) -> str:
+    """Remove ``//`` and ``/* */`` comments outside string literals, then trailing commas."""
+    out: list[str] = []
+    index, size = 0, len(source)
+    while index < size:
+        char = source[index]
+        if char == '"':
+            end = index + 1
+            while end < size and source[end] != '"':
+                end += 2 if source[end] == "\\" else 1
+            out.append(source[index : end + 1])
+            index = end + 1
+        elif source.startswith("//", index):
+            newline = source.find("\n", index)
+            index = size if newline < 0 else newline
+        elif source.startswith("/*", index):
+            end = source.find("*/", index + 2)
+            index = size if end < 0 else end + 2
+        else:
+            out.append(char)
+            index += 1
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+
+
+def is_tsconfig(locator: str) -> bool:
+    name = locator.rsplit("/", 1)[-1].lower()
+    return name.startswith("tsconfig") and name.endswith(".json")
+
+
+def is_manifest_file(locator: str) -> bool:
+    return is_version_file(locator) or is_tsconfig(locator)
+
+
+def parse_module_file(locator: str, data: bytes) -> dict[str, Any] | None:
+    """Module-resolution facts (D9, D13) from a tsconfig or package.json, as bounded data.
+
+    tsconfig: ``compilerOptions.baseUrl/paths/rootDir/outDir`` and ``extends``.
+    package.json: ``name``, ``main``, ``module``, ``types``, ``exports``, ``workspaces``.
+    Anything else in the file is ignored; nothing is resolved or executed here.
+    """
+    name = locator.rsplit("/", 1)[-1].lower()
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise VersionFileError("ENCODING_ERROR") from error
+    try:
+        if is_tsconfig(locator):
+            document = json.loads(strip_jsonc(text))
+            if not isinstance(document, dict):
+                raise VersionFileError("UNEXPECTED_STRUCTURE")
+            options = document.get("compilerOptions") or {}
+            if not isinstance(options, dict):
+                options = {}
+            paths = options.get("paths")
+            facts: dict[str, Any] = {
+                "extends": document.get("extends")
+                if isinstance(document.get("extends"), (str, list))
+                else None,
+                "baseUrl": options.get("baseUrl")
+                if isinstance(options.get("baseUrl"), str)
+                else None,
+                "paths": {
+                    str(key): [str(v) for v in values if isinstance(v, str)][:16]
+                    for key, values in list(paths.items())[:256]
+                    if isinstance(values, list)
+                }
+                if isinstance(paths, dict)
+                else None,
+                "rootDir": options.get("rootDir")
+                if isinstance(options.get("rootDir"), str)
+                else None,
+                "outDir": options.get("outDir") if isinstance(options.get("outDir"), str) else None,
+            }
+            kind = "tsconfig"
+        elif name == "package.json":
+            document = json.loads(text)
+            if not isinstance(document, dict):
+                raise VersionFileError("UNEXPECTED_STRUCTURE")
+            facts = {
+                key: document.get(key)
+                for key in ("name", "main", "module", "types", "exports", "workspaces")
+                if key in document
+            }
+            kind = "package"
+        else:
+            return None
+    except json.JSONDecodeError as error:
+        raise VersionFileError("UNPARSEABLE") from error
+    if len(json.dumps(facts, sort_keys=True)) > MODULE_FACT_BYTES:
+        return {"kind": kind, "facts": {}, "truncated": True}
+    return {"kind": kind, "facts": facts, "truncated": False}

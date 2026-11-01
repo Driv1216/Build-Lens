@@ -13,6 +13,7 @@ from buildlens.application.architecture_rules import ArchitectureRulesService
 from buildlens.application.ask import AskService
 from buildlens.application.context import ContextService, RerankerRuntime
 from buildlens.application.embeddings import EmbeddingRuntime
+from buildlens.application.flow import FlowService
 from buildlens.application.flow_evidence import FlowEvidenceService
 from buildlens.application.outbound_gate import StructuredGenerator
 from buildlens.application.processing import ProcessingService
@@ -34,6 +35,7 @@ from buildlens.infrastructure.persistence.database import (
     create_session_factory_from_engine,
 )
 from buildlens.infrastructure.persistence.embeddings import SqlAlchemyEmbeddingStore
+from buildlens.infrastructure.persistence.flow import SqlAlchemyFlowStore
 from buildlens.infrastructure.persistence.flow_evidence import SqlAlchemyFlowEvidenceStore
 from buildlens.infrastructure.persistence.processing import SqlAlchemyProcessingStore
 from buildlens.infrastructure.persistence.retrieval import (
@@ -96,6 +98,17 @@ def flow_evidence_service(state: Any) -> FlowEvidenceService:
         state.flow_evidence_lock,
         max_source_bytes=s.structure_max_source_bytes,
         artifact_timeout_seconds=s.structure_artifact_timeout_seconds,
+    )
+
+
+def flow_service(state: Any) -> FlowService:
+    """Stage 15 flow model: a DB-only projection (zero source reads)."""
+    return FlowService(
+        SqlAlchemyFlowStore(state.session_factory),
+        flow_evidence_service(state),
+        semantic_catalog_service(state),
+        architecture_service(state),
+        state.flow_lock,
     )
 
 
@@ -212,6 +225,7 @@ class LocalRuntime:
         self.architecture_lock = Lock()
         self.architecture_cache = ArchitectureGraphCache()
         self.flow_evidence_lock = Lock()
+        self.flow_lock = Lock()
         self.embedding_runtime = EmbeddingRuntime(
             SupervisedSentenceTransformer(
                 Path(settings.embeddings_cache_dir).expanduser(),

@@ -49,6 +49,16 @@ from buildlens.application.embeddings import (
     EmbeddingPreparationRequiredError,
     EmbeddingUnavailableError,
 )
+from buildlens.application.flow import (
+    FlowBusyError,
+    FlowConflictError,
+    FlowInputsInconsistentError,
+    FlowIntegrityError,
+    FlowNotFoundError,
+    FlowRequiredError,
+    FlowStaleError,
+)
+from buildlens.application.flow_builder import FlowBuildError
 from buildlens.application.flow_evidence import (
     FlowEvidenceBusyError,
     FlowEvidenceConflictError,
@@ -318,6 +328,16 @@ def register_errors(app: FastAPI) -> None:
             "The architecture query is invalid.",
         ),
         FlowEvidenceNotFoundError: (404, "FLOW_EVIDENCE_NOT_FOUND", "Flow evidence was not found."),
+        FlowNotFoundError: (404, "FLOW_NOT_FOUND", "The flow model element or run was not found."),
+        FlowRequiredError: (409, "FLOW_REQUIRED", "Build the flow model for this snapshot first."),
+        FlowStaleError: (409, "FLOW_STALE", "The flow model run is stale; build it again."),
+        FlowIntegrityError: (409, "FLOW_INTEGRITY_FAILED", "Flow model verification failed."),
+        FlowInputsInconsistentError: (
+            409,
+            "FLOW_INPUTS_INCONSISTENT",
+            "Flow evidence, catalog and architecture must be current over one structural analysis.",
+        ),
+        FlowBuildError: (409, "FLOW_BUILD_FAILED", "The flow model build failed closed."),
         FlowEvidenceRequiredError: (
             409,
             "FLOW_EVIDENCE_REQUIRED",
@@ -363,6 +383,8 @@ def register_errors(app: FastAPI) -> None:
         ArchitectureConflictError,
         FlowEvidenceBusyError,
         FlowEvidenceConflictError,
+        FlowBusyError,
+        FlowConflictError,
         GenerationConflictError,
         RunFencedError,
         BudgetExhaustedError,

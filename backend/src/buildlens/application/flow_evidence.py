@@ -34,6 +34,7 @@ from buildlens.domain.flow_evidence import (
     FlowExtraction,
     FlowScope,
     FrameworkFact,
+    ModuleFact,
     coverage_summary,
     flow_evidence_contract,
     flow_pass_digest,
@@ -140,6 +141,7 @@ class FlowEvidencePayload:
     extractions: dict[UUID, FlowExtraction]
     facts: tuple[FrameworkFact, ...]
     version_files: tuple[dict[str, Any], ...] = ()
+    module_facts: tuple[ModuleFact, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +178,7 @@ class FlowEvidenceStore(Protocol):
     def scopes(self, run_id: UUID, artifact_analysis_id: UUID) -> list[FlowScope]: ...
     def display_texts(self, run_id: UUID, artifact_analysis_id: UUID) -> list[DisplayText]: ...
     def framework_facts(self, run_id: UUID) -> list[FrameworkFact]: ...
+    def module_facts(self, run_id: UUID) -> list[ModuleFact]: ...
 
 
 class FlowSourceReader(Protocol):
@@ -411,10 +414,15 @@ class FlowEvidenceService:
                         ),
                         key=json.dumps,
                     ),
+                    "modules": sorted(
+                        [m.kind, m.locator, m.input_fingerprint, digest(m.facts)]
+                        for m in payload.module_facts
+                    ),
                 }
             )
             summary = coverage_summary(list(payload.coverage))
             summary["framework_facts"] = len(payload.facts)
+            summary["module_facts"] = len(payload.module_facts)
             summary["version_files"] = list(payload.version_files)
             run = replace(
                 run,
@@ -551,10 +559,14 @@ class FlowEvidenceService:
                         ),
                     )
                 )
-            facts, version_files = self._versions(reader, project_id, snapshot_id, source, deadline)
+            facts, modules, version_files = self._versions(
+                reader, project_id, snapshot_id, source, deadline
+            )
         finally:
             reader.close()
-        return FlowEvidencePayload(tuple(coverage), extractions, tuple(facts), tuple(version_files))
+        return FlowEvidencePayload(
+            tuple(coverage), extractions, tuple(facts), tuple(version_files), tuple(modules)
+        )
 
     def _reuse(
         self, project_id: UUID, item: ArtifactInput, contract_digest: str
@@ -573,10 +585,11 @@ class FlowEvidenceService:
         snapshot_id: UUID,
         source: SnapshotSource,
         deadline: float,
-    ) -> tuple[list[FrameworkFact], list[dict[str, Any]]]:
+    ) -> tuple[list[FrameworkFact], list[ModuleFact], list[dict[str, Any]]]:
         """Version files read as data (D17). An unreadable file leaves no facts, only a state."""
         assert source.canonical_root is not None
         facts: list[FrameworkFact] = []
+        modules: list[ModuleFact] = []
         states: list[dict[str, Any]] = []
         for item in self._store.version_files(project_id, snapshot_id):
             code: str | None = None
@@ -603,7 +616,18 @@ class FlowEvidenceService:
                     elif isinstance(value, str):
                         code = value
                     else:
-                        facts.extend(value)
+                        version_facts, module = value
+                        facts.extend(version_facts)
+                        if module is not None:
+                            modules.append(
+                                ModuleFact(
+                                    module["kind"],
+                                    item.locator,
+                                    fingerprint,
+                                    module["facts"],
+                                    bool(module.get("truncated")),
+                                )
+                            )
             states.append(
                 {
                     "locator": item.locator,
@@ -611,7 +635,7 @@ class FlowEvidenceService:
                     "code": code,
                 }
             )
-        return facts, states
+        return facts, modules, states
 
     # ----------------------------------------------------------------- reads
 

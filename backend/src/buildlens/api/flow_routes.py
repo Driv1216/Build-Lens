@@ -309,3 +309,270 @@ def framework_facts(
             for f in facts
         ],
     )
+
+
+# ----------------------------------------------------------------------------- Milestone B
+
+from buildlens.api.dependencies import get_flow_service  # noqa: E402
+from buildlens.application.flow import FlowService  # noqa: E402
+from buildlens.domain.flow import FlowEdge, FlowNode, FlowRun  # noqa: E402
+
+
+class FlowRunResponse(BaseModel):
+    run_id: UUID
+    snapshot_id: UUID
+    revision: int
+    started_at: datetime
+    completed_at: datetime
+    outcome: str
+    flow_evidence_run_id: UUID
+    catalog_run_id: UUID
+    architecture_run_id: UUID
+    structural_analysis_id: UUID
+    input_authority_digest: str
+    graph_digest: str | None
+    portable_digest: str | None
+    contract: dict[str, Any]
+    coverage: dict[str, Any]
+    diagnostics: list[str]
+    failure_code: str | None
+    superseded: bool
+
+
+class FlowStatusResponse(BaseModel):
+    latest_attempt: FlowRunResponse | None
+    active_run: FlowRunResponse | None
+    freshness: str
+    freshness_reasons: list[str]
+    contract: dict[str, Any]
+    inputs_ready: bool
+
+
+class FlowHistoryResponse(BaseModel):
+    items: list[FlowRunResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class FlowNodeResponse(BaseModel):
+    key: str
+    kind: str
+    label: str
+    locator: str | None
+    attributes: dict[str, Any]
+    evidence: list[str]
+
+
+class FlowEdgeResponse(BaseModel):
+    key: str
+    relation: str
+    family: str
+    source_key: str
+    target_key: str | None
+    tier: str
+    rule: str
+    conditions: list[str]
+    attributes: dict[str, Any]
+    evidence: list[str]
+
+
+class FlowNodeDetailResponse(Scoped):
+    verification: str = "verified"
+    node: FlowNodeResponse
+    outgoing: list[FlowEdgeResponse]
+    incoming: list[FlowEdgeResponse]
+    outgoing_total: int
+    incoming_total: int
+
+
+class FlowEdgePageResponse(Scoped):
+    verification: str = "verified"
+    items: list[FlowEdgeResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+def flow_run(x: FlowRun) -> FlowRunResponse:
+    return FlowRunResponse(
+        run_id=x.id,
+        snapshot_id=x.project_version_id,
+        revision=x.revision,
+        started_at=x.started_at,
+        completed_at=x.completed_at,
+        outcome=x.outcome,
+        flow_evidence_run_id=x.flow_evidence_run_id,
+        catalog_run_id=x.catalog_run_id,
+        architecture_run_id=x.architecture_run_id,
+        structural_analysis_id=x.structural_analysis_id,
+        input_authority_digest=x.input_authority_digest,
+        graph_digest=x.graph_digest,
+        portable_digest=x.portable_digest,
+        contract=x.contract,
+        coverage=x.coverage,
+        diagnostics=list(x.diagnostics),
+        failure_code=x.failure_code,
+        superseded=x.superseded,
+    )
+
+
+def flow_node(n: FlowNode) -> FlowNodeResponse:
+    return FlowNodeResponse(
+        key=n.key,
+        kind=n.kind,
+        label=n.label,
+        locator=n.locator,
+        attributes=n.attributes,
+        evidence=list(n.evidence),
+    )
+
+
+def flow_edge(e: FlowEdge) -> FlowEdgeResponse:
+    return FlowEdgeResponse(
+        key=e.key,
+        relation=e.relation,
+        family=e.family,
+        source_key=e.source_key,
+        target_key=e.target_key,
+        tier=e.tier,
+        rule=e.rule,
+        conditions=list(e.conditions),
+        attributes=e.attributes,
+        evidence=list(e.evidence),
+    )
+
+
+def flow_status(service: FlowService, project_id: UUID, snapshot_id: UUID) -> FlowStatusResponse:
+    value = service.status(project_id, snapshot_id)
+    return FlowStatusResponse(
+        latest_attempt=flow_run(value.latest) if value.latest else None,
+        active_run=flow_run(value.active) if value.active else None,
+        freshness=value.freshness,
+        freshness_reasons=list(value.freshness_reasons),
+        contract=value.contract,
+        inputs_ready=value.inputs_ready,
+    )
+
+
+@router.post("", response_model=FlowStatusResponse)
+def build_model(
+    project_id: UUID, snapshot_id: UUID, service: FlowService = Depends(get_flow_service)
+) -> FlowStatusResponse:
+    service.build(project_id, snapshot_id)
+    return flow_status(service, project_id, snapshot_id)
+
+
+@router.get("", response_model=FlowStatusResponse)
+def model_status(
+    project_id: UUID, snapshot_id: UUID, service: FlowService = Depends(get_flow_service)
+) -> FlowStatusResponse:
+    return flow_status(service, project_id, snapshot_id)
+
+
+@router.get("/runs", response_model=FlowHistoryResponse)
+def model_history(
+    project_id: UUID,
+    snapshot_id: UUID,
+    limit: int = Query(20, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    service: FlowService = Depends(get_flow_service),
+) -> FlowHistoryResponse:
+    values, total = service.history(project_id, snapshot_id, limit, offset)
+    return FlowHistoryResponse(
+        items=[flow_run(x) for x in values], total=total, limit=limit, offset=offset
+    )
+
+
+@router.get("/runs/{run_id}", response_model=FlowRunResponse)
+def model_run(
+    project_id: UUID,
+    snapshot_id: UUID,
+    run_id: UUID,
+    service: FlowService = Depends(get_flow_service),
+) -> FlowRunResponse:
+    return flow_run(service.run(project_id, snapshot_id, run_id))
+
+
+@router.get("/node", response_model=FlowNodeDetailResponse)
+def model_node(
+    project_id: UUID,
+    snapshot_id: UUID,
+    key: str = Query(..., min_length=1, max_length=2048),
+    run_id: UUID | None = None,
+    service: FlowService = Depends(get_flow_service),
+) -> FlowNodeDetailResponse:
+    value = service.node(project_id, snapshot_id, run_id, key)
+    return FlowNodeDetailResponse(
+        run_id=value["run"].id,
+        freshness_reasons=list(value["freshness_reasons"]),
+        node=flow_node(value["node"]),
+        outgoing=[flow_edge(e) for e in value["outgoing"]],
+        incoming=[flow_edge(e) for e in value["incoming"]],
+        outgoing_total=value["outgoing_total"],
+        incoming_total=value["incoming_total"],
+    )
+
+
+@router.get("/edges", response_model=FlowEdgePageResponse)
+def model_edges(
+    project_id: UUID,
+    snapshot_id: UUID,
+    run_id: UUID | None = None,
+    source: str | None = Query(None, max_length=2048),
+    target: str | None = Query(None, max_length=2048),
+    relation: str | None = Query(None, max_length=32),
+    tier: str | None = Query(None, max_length=16),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    service: FlowService = Depends(get_flow_service),
+) -> FlowEdgePageResponse:
+    value = service.edges(
+        project_id,
+        snapshot_id,
+        run_id,
+        source=source,
+        target=target,
+        relation=relation,
+        tier=tier,
+        limit=limit,
+        offset=offset,
+    )
+    return FlowEdgePageResponse(
+        run_id=value["run"].id,
+        freshness_reasons=list(value["freshness_reasons"]),
+        items=[flow_edge(e) for e in value["edges"]],
+        total=value["total"],
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/diagnostics")
+def model_diagnostics(
+    project_id: UUID,
+    snapshot_id: UUID,
+    run_id: UUID | None = None,
+    service: FlowService = Depends(get_flow_service),
+) -> dict[str, Any]:
+    value = service.diagnostics(project_id, snapshot_id, run_id)
+    return {
+        "run_id": value["run"].id,
+        "freshness_reasons": list(value["freshness_reasons"]),
+        "items": [
+            {"code": d.code, "subject": d.subject, "attributes": d.attributes}
+            for d in value["diagnostics"]
+        ],
+    }
+
+
+@router.get("/integrity")
+def model_integrity(
+    project_id: UUID,
+    snapshot_id: UUID,
+    run_id: UUID | None = None,
+    service: FlowService = Depends(get_flow_service),
+) -> dict[str, Any]:
+    value = service.integrity(project_id, snapshot_id, run_id)
+    run = value.pop("run")
+    return {"run_id": run.id, **value}

@@ -455,3 +455,38 @@ def node_ids(cfg: dict[str, Any], kind: str) -> list[int]:
 def lines(cfg: dict[str, Any], ids: Iterable[int]) -> list[int | None]:
     nodes = cfg["nodes"]
     return [nodes[i].get("span", [None])[0] for i in ids]
+
+
+def reaching_definitions(
+    graph: Graph, definitions: list[tuple[int, str, int]]
+) -> dict[int, dict[str, frozenset[int]]]:
+    """Intraprocedural reaching definitions over the whole CFG (exceptional edges included).
+
+    ``definitions`` are ``(node, name, ordinal)``; within one node a later ordinal kills an
+    earlier one of the same name. Returns, per node, the definition ordinals of each name that
+    reach the node's *entry* (definitions made at the node itself are not included).
+    """
+    gen: dict[int, dict[str, int]] = {}
+    for node, name, ordinal in sorted(definitions, key=lambda item: item[2]):
+        gen.setdefault(node, {})[name] = ordinal
+    preds: list[list[int]] = [[] for _ in range(graph.count)]
+    for source, target, _, _ in graph.edges:
+        preds[target].append(source)
+    entry: list[dict[str, frozenset[int]]] = [{} for _ in range(graph.count)]
+    exit_: list[dict[str, frozenset[int]]] = [{} for _ in range(graph.count)]
+    changed = True
+    while changed:
+        changed = False
+        for node in range(graph.count):
+            merged: dict[str, set[int]] = {}
+            for pred in preds[node]:
+                for name, values in exit_[pred].items():
+                    merged.setdefault(name, set()).update(values)
+            incoming = {name: frozenset(values) for name, values in merged.items()}
+            outgoing = dict(incoming)
+            for name, ordinal in gen.get(node, {}).items():
+                outgoing[name] = frozenset({ordinal})
+            if incoming != entry[node] or outgoing != exit_[node]:
+                entry[node], exit_[node] = incoming, outgoing
+                changed = True
+    return {node: entry[node] for node in range(graph.count)}

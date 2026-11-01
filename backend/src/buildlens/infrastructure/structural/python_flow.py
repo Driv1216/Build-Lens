@@ -1,4 +1,4 @@
-"""Stage 15 ``python-flow.v1``: per-scope CFGs, callsites, bindings and summaries.
+"""Stage 15 ``python-flow.v2``: per-scope CFGs, callsites, bindings and summaries.
 
 It re-parses the bytes with ``ast`` (never imports or executes them) and attaches scopes to the
 frozen parser's symbols by exact declaration position, as ``python-facts.v1`` does. Nothing
@@ -209,6 +209,7 @@ class _Scope:
     awaits: int = 0
     nonlocal_names: set[str] = field(default_factory=set)
     global_names: set[str] = field(default_factory=set)
+    star_imports: list[dict[str, Any]] = field(default_factory=list)
     dynamic: set[str] = field(default_factory=set)
     called_names: set[str] = field(default_factory=set)
     executes: list[list[Any]] = field(default_factory=list)
@@ -746,6 +747,8 @@ class _Lowerer:
                 }
                 if bound != "*":
                     scope.bind(bound, node, "import", value)
+                elif len(scope.star_imports) < SUMMARY_SHAPES:
+                    scope.star_imports.append({"module": value["module"], "level": value["level"]})
             return node
         if isinstance(s, ast.Global):
             scope.global_names.update(s.names)
@@ -1070,7 +1073,15 @@ def _lower(
                 scope.shape(d) for d in getattr(node, "decorator_list", [])[:SUMMARY_SHAPES]
             ],
             "bases": [scope.shape(b) for b in getattr(node, "bases", [])[:SUMMARY_SHAPES]],
+            "keywords": [
+                {"kw": k.arg, "shape": scope.shape(k.value)}
+                for k in getattr(node, "keywords", [])[:SUMMARY_SHAPES]
+            ],
             "returns": scope.returns,
+            "return_annotation": scope.shape(node.returns)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.returns
+            else None,
+            "star_imports": scope.star_imports,
             "raises": scope.raises,
             "invokes_parameter": sorted(
                 p["index"]

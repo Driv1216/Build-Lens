@@ -1,6 +1,10 @@
 # Stage 15 — Flow Tracing
 
-**Status (2026-11-01):** Milestones A0 and A are implemented on the local branch `stage15/flow-tracing`. They are not committed and not independently reviewed. Milestones B–F (flow model, `FlowTrace` engine, `/flows` UI, explanations, evaluation) are **not started**.
+**Status (2026-11-01):**
+- Milestones A0 and A are done. Milestone A is committed on the local branch `stage15/flow-tracing` (`3cb2af8`).
+- **Milestone B is implemented and committed locally** on the same branch. Its acceptance checks pass locally: designed fixtures, zero-edge non-links, the tamper suite and portable-digest reproduction. Approximations stay labelled in the model. Milestone B is not reviewed.
+- Nothing has been independently reviewed.
+- Milestones C–F (`FlowTrace` engine, `/flows` UI, explanations, evaluation) are **not started**.
 
 The approved plan is Revision 3.1, which includes the A0 amendments approved on 2026-11-01. It lives outside the repository, in the owner's planning notes.
 
@@ -19,6 +23,12 @@ A0 was a lab-only, read-only spike. Its evidence is in `.buildlens-eval/runs/sta
   - Aliases are 42.8% of the template's imports and 27.7% of Polar web's.
   - Stage 14 records 0 request sites in the template.
 - **New decisions D13–D17**, approved by the owner: workspace packages, TanStack Query, external callback contracts, a router gap, and reading version files as data.
+
+**Correction found in Milestone B (for owner review).** The A0 report treated the template's hey-api client as the `@hey-api/client-*` package. In fact the client runtime is **vendored**: the generated `client.gen.ts` imports `axios` directly. Binding by package name therefore misses it. D10 now also recognises a factory shape, `DESCRIPTOR_CLIENT_FACTORY_SHAPE`, with these conditions:
+- the factory returns an object literal with at least three HTTP-verb keys and a `request` key;
+- it is built in a module that imports `axios` or calls `fetch`.
+
+This is a structural heuristic, so its links stay `inferred`. It needs the owner's approval as a D10 amendment.
 
 ## Milestone A — the flow evidence run (D11)
 
@@ -137,3 +147,243 @@ The flow evidence run, measured in a disposable PostgreSQL 16/pgvector 0.8.6 dat
 
 - **Stale virtualenv copy.** The repository virtualenv holds a stale, non-editable `buildlens` copy (Finder-style `* 2.py` duplicates under `site-packages/buildlens`). Milestone A checks therefore ran with `PYTHONPATH=src:.`.
 - **Test database.** A disposable test database container, `buildlens-stage15-test` (loopback port 55450, trust authentication), was created for these tests. The existing `buildlens-stage14-test` container was not used or changed.
+
+## Milestone B — the flow model (implemented; committed locally)
+
+A flow model run captures one flow evidence run, the semantic catalog run and the architecture run, all over the **same** structural analysis. Otherwise the build fails with `FLOW_INPUTS_INCONSISTENT`. It reads only PostgreSQL (INV-1). It writes only `flow_*` tables and `project_versions.active_flow_run_id` (migration `0018_flow_model`, INV-3).
+
+The builder is pure:
+- `application/flow_builder.py` holds the version table, stitching and responses;
+- `flow_python.py` and `flow_typescript.py` hold resolution and the framework semantics;
+- `flow_inputs.py` holds the inputs, the emitter and scope views.
+
+The domain is in `domain/flow.py` (`flow-model.v1`, `flow-integrity.v1`). The store is `infrastructure/persistence/flow.py`, and the service is `application/flow.py`.
+
+### Implemented
+
+**Resolution** (`py-call-resolution.v1`, `ts-call-resolution.v1`):
+- reaching definitions on the CFG (`flow_cfg.reaching_definitions`);
+- imports through Stage 13 `ImportResolver`, with at most two re-export hops;
+- `self`/`cls` through the C3 MRO, with `MRO_INCOMPLETE` for external bases;
+- override `dispatch_candidate`s, fan-out capped;
+- annotation receivers (`ANNOTATION_TRUSTED`) and `Depends` provider return types;
+- one-level callbacks;
+- TS lexical scope, ES/CommonJS imports, `this`, and prop callbacks (`PROP_CALLBACK_BINDING`);
+- `ts-path-aliases.v1` (D9) with an `extends` chain of depth ≤ 3;
+- `ts-workspace-packages.v1` (D13), with dist→source mapping only through literal `rootDir`/`outDir`.
+
+No cross-file name similarity is ever used.
+
+**Construction** (`py-construction.v1`):
+- the metaclass `__call__` override gives `unknown` plus a candidate;
+- `__new__` → `__init__`: `derived` only when `__new__` returns `super().__new__`. Otherwise `INIT_CONDITIONAL_ON_NEW_RESULT`, or no `__init__` at all when `__new__` returns another type (`NEW_RETURNS_OTHER_TYPE`);
+- the dataclass-generated `__init__` → `__post_init__`, only for a resolved `dataclasses.dataclass` without `init=False` and without an explicit `__init__`;
+- an Enum call is a lookup;
+- framework model bases get `CONSTRUCTION_FRAMEWORK_NOT_MODELLED`.
+
+**Async:**
+- `creates_coroutine` / `creates_generator` (the body does not run);
+- `awaits`;
+- `invokes_until_first_await` for JS async functions;
+- `asyncio.create_task` / `gather` registers, with `ORDER_NOT_DETERMINED`.
+
+**FastAPI:**
+- `handled_by` from Stage 14 endpoints;
+- `injects` setup and teardown edges, with the A0-verified version table. Alternatives are per row; a declared range spanning a semantics boundary yields `SEMANTICS_ALTERNATIVE`;
+- background tasks as `registers` with `fastapi_background`;
+- exit-specific `response_outcome`s:
+  - the route `status_code`;
+  - the POST default of 200;
+  - a returned `Response` used as-is;
+  - dynamic `response.status_code`;
+  - `HTTPException`;
+  - the framework 422;
+  - unhandled → `status_unknown` with a 500 alternative, never an unconditional 500.
+
+**Application-wide response conditions.** These are attributed to the whole repository, not per application:
+- `MIDDLEWARE_PRESENT_NOT_MODELLED` on every outcome;
+- `EXCEPTION_HANDLER_TABLE_NOT_STATIC` and `EXCEPTION_HANDLER_REGISTERED_NOT_LINKED` on exceptional outcomes;
+- `VALIDATION_HANDLER_REGISTERED` on the 422.
+
+**SQLAlchemy** (`sqlalchemy-ops.v2`):
+- the operation classes `performs` (query, stage, dml, flush, commit, rollback, close);
+- `on_table` through Stage 14 `maps_table`, including for an inline `session.add(M(...))`;
+- raw `text()` SQL gets `RAW_SQL_NOT_PARSED` and **no** table.
+
+**React:**
+- registration versus invocation: DOM `registers` with `scheduled_by` (`ELEMENT_MUST_BE_MOUNTED`);
+- `useCallback` does not invoke;
+- `useMemo` invokes in the render phase;
+- `useEffect`/`useLayoutEffect` register with `react_commit`;
+- `setState` → `schedules_render` (`RENDER_MAY_BAIL_OUT`, `UPDATES_MAY_BE_BATCHED`);
+- navigation and storage effects.
+
+**Libraries:**
+- TanStack Query (D14): `mutate`/`mutateAsync` → `tanstack_mutation`, with rejection propagation and `onMutate`/`onSuccess`/`onError`/`onSettled` continuations, plus `useQuery` and a literal `enabled`;
+- react-hook-form `handleSubmit` (D15).
+
+**HTTP:**
+- Stage 14 request sites are stitched to callsites by exact span (`issues_request`);
+- `calls_endpoint` branches are copied with their Stage 14 conditions;
+- hey-api/openapi-fetch descriptor sites (D10) are matched by method and segment;
+- `responds` maps outcomes back to `fulfilled`/`rejected` continuations through the wrapper's `!response.ok` guard (`OK_GUARD_RECOGNIZED`).
+
+**Every HTTP hop is `inferred`** and carries `HTTP_LINK_INDEPENDENT_EVALUATION_PENDING` (D1). The contract records `api_matching_evaluation: not_human_evaluated`.
+
+**Integrity and freshness (INV-4–INV-6):**
+- element digests cover every semantic field plus the evidence set;
+- evidence items cite rows by id and row digest;
+- every node and edge read re-verifies the returned elements, their evidence and each cited row (flow evidence rows, Stage 14 elements, import rows, framework and module facts), and fails closed with 409 `FLOW_INTEGRITY_FAILED`;
+- the run has a `graph_digest` and a `portable_digest`;
+- an unchanged rebuild short-circuits;
+- a stale input gives 409 `FLOW_STALE`, while history stays readable and labelled.
+
+**HTTP routes** under `…/flow`: `POST|GET ""`, `/runs[/{id}]`, `/node?key=`, `/edges`, `/diagnostics`, `/integrity`.
+
+**CLI:** `buildlens flow build|status|node|integrity`. The CLI was **not exercised** at this gate.
+
+### Completion pass (the items that were open at the first B checkpoint)
+
+**Generators** (`py-async-semantics.v2`):
+- `for x in g` over a generator iterator → `iterates` (`GENERATOR_FINALIZATION_NOT_MODELLED`);
+- `next(g)`, `g.send()` and `__next__` → `resumes`;
+- `g.throw()`, `g.close()` and the async forms → `throws_into` (`close` throws `GeneratorExit`);
+- `with m()` over a `@contextmanager`/`@asynccontextmanager` generator → two `resumes` edges. `enter` runs to the first `yield`; `exit` resumes normally or throws in (`SUPPRESSION_DECIDED_BY_GENERATOR`), and the value bound by `as` is the yielded value, which is unknown;
+- generator state is not tracked (`GENERATOR_STATE_NOT_TRACKED`).
+
+**Python resolution:**
+- `DECORATOR_MAY_WRAP` (tier `inferred`) for any decorator outside the transparent set: `staticmethod`, `classmethod`, `property`, `abstractmethod`, `dataclass`, `overload`/`final`/`override`, `functools.wraps`, context managers, and framework registration decorators;
+- `NoReturn`/`Never` return annotations (`NORETURN_ANNOTATION_TRUSTED`) and callees whose normal exit is unreachable (`CALLEE_NEVER_RETURNS`) give `normal_continuation: false`, as do `sys.exit` and `os._exit` (`PROCESS_EXIT`);
+- `Protocol` receivers get structural `dispatch_candidate`s (`PROTOCOL_IMPLEMENTATION_CANDIDATES`): only repository classes defining every public protocol method, capped by fan-out. ABC subclasses use the existing override candidates;
+- `STAR_IMPORT` for names a module may receive from `import *`;
+- `CONDITIONAL_IMPORT` when an import is one of several reaching definitions (`try`/`except ImportError`, `if`).
+
+**SQLAlchemy:** `with session.begin()` / `begin_nested()` / `sessionmaker.begin()` → a `transaction_boundary` that commits on normal and rolls back on exceptional completion. Only body operations on the **same session identity** get `in_transaction`: the same reaching definitions of the receiver, or the item's `as` value. Other operations get no claim.
+
+**FastAPI:**
+- **Exceptions below the handler.** An `HTTPException` raised in an injected dependency (`RAISED_IN_DEPENDENCY`) or in a callee within three resolved hops (`RAISED_IN_CALLEE`) becomes a handler outcome with its status and a `raises_to` edge from the raising callsite. These carry `PROPAGATION_THROUGH_CALLERS_NOT_VERIFIED`.
+- **Static exception handlers.** `@app.exception_handler(E)` and `add_exception_handler(E, h)` registrations with a resolvable `E` and `h` are linked by `raises_to`:
+  - `HTTPException` and `RequestValidationError` outcomes link by type;
+  - unhandled outcomes link to every other handler, with `EXCEPTION_TYPE_MATCH_NOT_DETERMINED`;
+  - registrations that do not resolve give `EXCEPTION_HANDLER_REGISTERED_NOT_LINKED`;
+  - table-driven loops keep `EXCEPTION_HANDLER_TABLE_NOT_STATIC`.
+- **The response boundary.** A `framework_response_send` scheduler joins three kinds of `response_boundary` edge: every outcome is sent through it; yield-dependency teardowns record the side (`sides`, from the version table); background tasks run after the send (`relative_to_teardown`).
+- **Background tasks:**
+  - `BACKGROUND_TASKS_DROPPED_BY_RESPONSE` when the handler returns a `Response` constructed with its own `background`;
+  - `BACKGROUND_TASK_USES_DEPENDENCY_RESOURCE` when a task argument is provided, directly or transitively, by a yield dependency.
+- **Dependencies:**
+  - `DEPENDENCY_SIDE_EFFECTS_ON_422_POSSIBLE` on the 422 outcome of a handler with dependencies;
+  - `use_cache` recorded on every setup `injects` edge (`USE_CACHE_UNKNOWN` when it is not literal).
+
+**React, TanStack Query and JavaScript async:**
+- a function returned by an effect is registered as its cleanup (`react_commit:cleanup`, `CLEANUP_BEFORE_RERUN_OR_UNMOUNT`);
+- a state setter → `may_rerun_effect` for effects of the same component whose dependencies list that state, or that have no dependency array. It never says "runs" (`DEPENDENCY_CHANGE_NOT_DETERMINED`, `RENDER_MAY_BAIL_OUT`), and `schedules_render` now names the owning component and state;
+- `useQueryClient().invalidateQueries`/`refetchQueries`/`resetQueries` → `may_refetch` (`QUERY_KEY_MATCH_NOT_DETERMINED`);
+- `setTimeout`/`setInterval`/`requestAnimationFrame`/`queueMicrotask` and `.then`/`.catch`/`.finally` reactions → `registers` with `timer`/`animation_frame`/`microtask` (`ORDER_NOT_DETERMINED`). Promise reactions add `THENABLE_ASSUMED`.
+
+**TS construction** (`ts-construction.v1`):
+- `new C()` → `constructs`, then the class's constructor. A class without one runs its base's (`IMPLICIT_SUPER_CONSTRUCTOR`, along the `extends` chain);
+- `super(...)` resolves to the base constructor (`SUPER_CONSTRUCTOR`);
+- a constructor that returns a value gives `CONSTRUCTOR_RETURN_OVERRIDE` (tier `unknown`);
+- instance field initialisers are counted but not lowered (`FIELD_INITIALISERS_NOT_LOWERED`).
+
+**Contract bump.** The extractor contracts are now `python-flow.v2` (return annotations, star imports) and `ts-flow.v2` (class `extends` and the instance-field count). Every evidence run under the older contracts is stale and is re-extracted.
+
+### Remaining approximations (labelled in the model, not open plan items)
+
+- Exception propagation through intermediate callers' `except` clauses is not verified.
+- Generator state, finalisation, and unhandled promise rejections are not modelled.
+- Protocol matching is by method names, not signatures.
+- TS instance field initialisers are not lowered.
+- The `@contextmanager` value bound by `as` is unknown.
+
+Done before encoding, as the plan requires: the TanStack Query 5.104.1 and react-hook-form 7.88.0 callback semantics were verified against their pinned source (draft `.buildlens-eval/runs/stage15-milestone-b-20261101/library-semantics.v1.draft.json`). Every FastAPI version pinned in the corpora is within 0.105.0–0.157.0.
+
+Path-level database effects (`staged`, `commit_reached`, `COMMIT_AFTER_RESPONSE_SENT`) are computed along trace paths, so they belong to Milestone C.
+
+### Measured (local, 2026-11-01, single run; indicative, not the S7 protocol)
+
+The run was on BuildLens `5c65617` (`git archive`), in a disposable database. Results are in `.buildlens-eval/runs/stage15-milestone-b-20261101/flow_model.buildlens-5c65617.json`.
+
+**Output:**
+- The model run's outcome is `partial`, because 5 artifacts are partial in the evidence run.
+- The model has 37,444 nodes and 80,923 edges. By tier: observed 31,552, derived 22,983, inferred 5,275, unknown 21,113.
+- 90 handlers, 295 response outcomes, 92 `injects` edges and 15 `on_table` edges.
+- From the completion pass: 126 `resumes` (`@contextmanager` `with` blocks), 204 `raises_to`, 298 `response_boundary`, 57 `may_rerun_effect`, and 107 `dispatch_candidate` edges (18 before, mostly from `Protocol` store receivers). There were no `iterates` or `in_transaction` edges: BuildLens has no `for` over a repository generator and no `with session.begin()`.
+- 60/60 Stage 14 request sites stitched by span (0 unstitched), with 58 `calls_endpoint` branches.
+- 0 diagnostics.
+
+**Cost:**
+
+| Step | Result |
+|---|---|
+| Flow build | 14.2 s |
+| Unchanged rebuild | 0.68 s (short-circuits to the same run) |
+| Full integrity | 6.8 s; verified, 0 failures |
+| Parent peak RSS | 373 → 853 MB across the build |
+| Flow tables | about 124 MB (nodes 22 MB, edges 78 MB, evidence items 24 MB) |
+
+Full integrity took 25.7 s before the bulk preload of cited evidence rows.
+
+The most frequent `unresolved` reasons are `BUILTIN` 4,883, `EXTERNAL_PACKAGE:sqlalchemy` 3,555, `CALL_RESULT_UNKNOWN` 2,456 and `RECEIVER_TYPE_UNKNOWN` 1,234.
+
+### Defects found and fixed during Milestone B verification
+
+1. `on_table` targeted a `db_table` node that was never emitted.
+2. **A forbidden link:** descriptor matching read a non-existent `method` attribute, so a POST descriptor also linked to a GET endpoint. Stage 14 nodes store `methods`.
+3. A `__new__` that returns another type still produced a conditional `__init__` edge.
+4. An inline `session.add(M(...))` attributed no table.
+5. A declared range spanning only the 0.106/0.118 boundaries was not marked `SEMANTICS_ALTERNATIVE`.
+6. **A runtime crash on any truncated scope:** `diagnose(code=…)` collided with the code parameter.
+7. Edges emitted without attributes stored `None`.
+8. **The portable digest did not reproduce.** Stage 14 element digests cover catalog identity ids, so citations now carry an id-free `portable` projection.
+9. Full integrity re-fetched cited rows once per citation.
+10. In the completion pass: `schedules_render` named the nested callback rather than the component that owns the state, and `super(...)` callsites had no label.
+
+### Verification (Milestone B gate, Python 3.14.6, disposable PostgreSQL 16 / pgvector 0.8.6)
+
+**`tests/integration/test_flow_model.py` (8).** Two designed fixtures check every family above against a designed verdict: `tests/flow_support.py::DESIGNED_REPOSITORY` and `SEMANTICS_REPOSITORY` (the completion pass). The second also includes non-links: a repository `begin()` is no transaction, and a list loop is not generator iteration. Beyond that, the module covers:
+- **Adversarial non-links, all with zero edges:**
+  - an unimported same-name function;
+  - a homoglyph;
+  - `getattr`;
+  - a `.GET` on an unrelated object;
+  - `useMutation` from another package;
+  - a local `handleSubmit`;
+  - a POST descriptor against a GET endpoint;
+  - raw SQL.
+- **The tamper suite**, detected by both the verified reads and `integrity`:
+  - a node field;
+  - an edge tier;
+  - a cited evidence item;
+  - a cited flow callsite row (`CITED_ROW_CHANGED:flow_scopes`);
+  - a cited Stage 14 node;
+  - a deleted edge.
+- **INV-5:** an unchanged rebuild short-circuits. A second project over identical bytes, in the same database with every id different, gives an equal `portable_digest` and a different `graph_digest`. Reproduction across two separate databases was not run.
+- **INV-3:** every pre-existing table is byte-identical over its pre-existing columns.
+- **INV-4:** the inputs stay fresh; a later structural run makes current reads fail closed while history stays readable.
+- **The HTTP contract.**
+- **A truncated-scope regression test**, where the run is `partial`.
+- **The 0018 downgrade refusal.**
+
+**`tests/unit/test_flow_model_rules.py` (20):** the FastAPI version table per row, plus ranges, unknown versions and precedence; constraint satisfaction; descriptor method and segment matching; tsconfig `paths` with `extends` and JSONC; and workspace dist→source mapping with and without literal evidence.
+
+**Gate selection:** the flow unit tests (A and B), `test_flow_evidence`, `test_flow_model`, `test_schema`, `test_upgrade` and `test_persistent_embeddings`: **71 passed**, after the completion pass. The migration round trip was not repeated, because the completion pass changed no migration or model.
+
+**Migrations:**
+- single head `0018_flow_model`;
+- the empty-database round trip 0018 → 0016 → 0018 leaves 0 `flow_` objects after the downgrade and gives an identical `pg_dump -s` (3,958 lines), apart from the `\restrict` tokens.
+
+**Static checks:** ruff check and format are clean; **mypy is clean on `src`** and on the new test modules.
+
+**Not run**, under the proportional-verification workflow: the full backend suite, the Python 3.11 suite, the frontend suite (there are no frontend changes) and the baselines. Those belong to stage closure.
+
+### Deviations from the plan (for owner review)
+
+- **Evidence storage.** `flow_nodes.evidence` and `flow_edges.evidence` are JSON arrays of evidence-item digests, verified on read. There is no separate `flow_evidence_links` FK table, and `flow_evidence` is named `flow_evidence_items`.
+- **Module layout.** The builder is split into `flow_python.py`, `flow_typescript.py`, `flow_builder.py` and `flow_inputs.py`, rather than the per-framework modules named in §2.4.
+- **Evidence contract bump.** The flow evidence contract is now `flow-evidence.v2`: it adds module facts (`module-facts.v1`; tsconfig and package manifests read as data for D9 and D13). Milestone A evidence runs are therefore stale under the new contract and are rebuilt.
+- **Descriptor base URL.** `ts-flow.v1` keeps literal text only for root-relative paths, so absolute `baseUrl` origins are not retained. Descriptor links carry `BASE_UNKNOWN` unless the factory's `baseUrl` is a root-relative literal (`BASE_FROM_FACTORY_LITERAL`).
+- **Attribution scope.** Application-wide response conditions are attributed to the whole repository, not to each FastAPI application: a stated over-approximation.
+- **The D10 factory-shape recognizer**, described in the A0 correction above.
+

@@ -35,6 +35,7 @@ from buildlens.domain.flow_evidence import (
     FlowJsxBinding,
     FlowScope,
     FrameworkFact,
+    ModuleFact,
     flow_pass_contract,
 )
 from buildlens.domain.source import digest, structural_contract
@@ -48,12 +49,13 @@ from buildlens.infrastructure.persistence.models import (
     FlowEvidenceRunRecord,
     FlowFrameworkFactRecord,
     FlowJsxBindingRecord,
+    FlowModuleFactRecord,
     FlowScopeRecord,
     ProjectVersionRecord,
     StructuralAnalysisRecord,
     SymbolRecord,
 )
-from buildlens.infrastructure.structural.framework_versions import is_version_file
+from buildlens.infrastructure.structural.framework_versions import is_manifest_file
 
 _BATCH = 1000
 
@@ -245,7 +247,7 @@ class SqlAlchemyFlowEvidenceStore:
                     record.content_digest if record.fingerprint_status == "fingerprinted" else None,
                 )
                 for record in records
-                if is_version_file(record.locator)
+                if is_manifest_file(record.locator)
             ]
 
     def reusable(
@@ -568,6 +570,22 @@ class SqlAlchemyFlowEvidenceStore:
                 for ordinal, f in enumerate(payload.facts)
             ],
         )
+        self._rows(
+            session,
+            FlowModuleFactRecord,
+            [
+                {
+                    "flow_evidence_run_id": run_id,
+                    "ordinal": ordinal,
+                    "kind": m.kind,
+                    "locator": m.locator,
+                    "input_fingerprint": m.input_fingerprint,
+                    "facts": m.facts,
+                    "truncated": m.truncated,
+                }
+                for ordinal, m in enumerate(payload.module_facts)
+            ],
+        )
 
     # ----------------------------------------------------------------- reads
 
@@ -684,6 +702,15 @@ class SqlAlchemyFlowEvidenceStore:
         with self._session_factory() as session:
             return self._texts(session, run_id, artifact_analysis_id)
 
+    def module_facts(self, run_id: UUID) -> list[ModuleFact]:
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(FlowModuleFactRecord)
+                .where(FlowModuleFactRecord.flow_evidence_run_id == run_id)
+                .order_by(FlowModuleFactRecord.ordinal)
+            ).all()
+            return [_module_fact(r) for r in records]
+
     def framework_facts(self, run_id: UUID) -> list[FrameworkFact]:
         with self._session_factory() as session:
             records = session.scalars(
@@ -704,6 +731,10 @@ class SqlAlchemyFlowEvidenceStore:
                 )
                 for r in records
             ]
+
+
+def _module_fact(r: FlowModuleFactRecord) -> ModuleFact:
+    return ModuleFact(r.kind, r.locator, r.input_fingerprint, dict(r.facts), r.truncated)
 
 
 def _scope_order(keys: list[str]) -> list[str]:

@@ -469,6 +469,5 @@ def test_persistence_restart_exact_search_and_unchanged_reuse(
         command.downgrade(config, "0007_evidence_ownership")
     with pg_engine.connect() as connection:
         assert (
-            connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0017_flow_evidence"
+            connection.scalar(text("SELECT version_num FROM alembic_version")) == "0018_flow_model"
         )

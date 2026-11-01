@@ -1,4 +1,4 @@
-"""Stage 15 ``ts-flow.v1``: per-scope CFGs, callsites, bindings and JSX bindings for TS/TSX/JS.
+"""Stage 15 ``ts-flow.v2``: per-scope CFGs, callsites, bindings and JSX bindings for TS/TSX/JS.
 
 Parse-only tree-sitter, the same grammars, decoding and partial-parse rule as the declaration
 pass: a top-level statement containing an ERROR or MISSING node is skipped (``partial``).
@@ -380,6 +380,17 @@ class _Scope:
             }
         if t == "assignment_expression":
             return self.shape(node.child_by_field_name("right"), d)
+        if t == "binary_expression":
+            operator = _text(node.child_by_field_name("operator"))
+            if operator in {"??", "||"}:
+                return {
+                    "k": "fallback",
+                    "op": operator,
+                    "options": [
+                        self.shape(node.child_by_field_name("left"), d),
+                        self.shape(node.child_by_field_name("right"), d),
+                    ],
+                }
         return {"k": "other", "node": t}
 
     def template(self, node: tree_sitter.Node, depth: int) -> dict[str, Any]:
@@ -536,10 +547,29 @@ class _Scope:
                 return {"op": "instanceof", "var": _text(left), "class": _text(right)}
             return {"op": "opaque", "reason": "BINARY"}
         if t == "member_expression":
-            return {"op": "opaque", "reason": "ATTRIBUTE"}
+            # Opaque for feasibility, but the identifier path is analysis-safe (e.g. a wrapper's
+            # ``response.ok`` guard, recognised by Milestone B response handling).
+            path = self.shape(test)
+            names = _identifier_path(path)
+            value: dict[str, Any] = {"op": "opaque", "reason": "ATTRIBUTE"}
+            if names is not None:
+                value["path"] = names
+            return value
         if t in {"call_expression", "new_expression"}:
             return {"op": "opaque", "reason": "CALL"}
         return {"op": "opaque", "reason": t.upper()}
+
+
+def _identifier_path(shape: dict[str, Any]) -> list[str] | None:
+    """``a.b.c`` as identifiers when the member chain is rooted at a name or ``this``."""
+    if shape.get("k") != "attr":
+        return None
+    root = shape.get("root") or {}
+    if root.get("k") == "name":
+        return [str(root["id"]), *shape.get("path", [])]
+    if root.get("k") == "this":
+        return ["this", *shape.get("path", [])]
+    return None
 
 
 def _string_shape(text: str) -> dict[str, Any]:
@@ -960,9 +990,18 @@ class _Lowerer:
             return node
         if t in {"class_declaration", "abstract_class_declaration"}:
             node = b.follow(cur, "class", span)
+            extends: dict[str, Any] | None = None
             for child in _named(s):
                 if child.type in {"decorator", "class_heritage"}:
                     node = self.expr(child, node) or node
+                if child.type == "class_heritage":
+                    for clause in _named(child):
+                        if clause.type == "extends_clause":
+                            value = clause.child_by_field_name("value") or (
+                                _named(clause)[0] if _named(clause) else None
+                            )
+                            extends = scope.shape(value) if value is not None else None
+            fields = 0
             body = s.child_by_field_name("body")
             if body is not None:
                 for member in _named(body):
@@ -974,9 +1013,18 @@ class _Lowerer:
                         _text(c) == "static" for c in member.children if not c.is_named
                     ):
                         node = self.expr(member.child_by_field_name("value"), node) or node
+                    elif member.type in {"public_field_definition", "field_definition"} and (
+                        member.child_by_field_name("value") is not None
+                    ):
+                        fields += 1  # instance initialisers run at construction (not lowered)
             name = _text(s.child_by_field_name("name"))
             if name:
-                scope.bind(name, node, "class", {"k": "class", "span": span})
+                scope.bind(
+                    name,
+                    node,
+                    "class",
+                    {"k": "class", "span": span, "extends": extends, "instance_fields": fields},
+                )
             return node
         if t in {"lexical_declaration", "variable_declaration"}:
             node = b.follow(cur, "declare", span)

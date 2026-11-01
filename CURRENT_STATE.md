@@ -13,9 +13,10 @@ labelling only" clause. Stage 14 has not been independently accepted: the remedi
 technical review is implemented and verified locally, and awaits re-review.
 
 **Stage 15 — Flow Tracing (in progress, 2026-11-01):**
-- Done: Milestones A0 (the coverage, semantics and cost spike) and A (the flow evidence run, migration `0017`).
-- Location: the local branch `stage15/flow-tracing`. **Not committed, not reviewed.**
-- Not started: Milestones B–F.
+- Done: Milestones A0 (the coverage, semantics and cost spike) and A (the flow evidence run, migration `0017`). Milestone A is committed locally (`3cb2af8`).
+- **Milestone B (the flow model, migration `0018`) is implemented and committed locally.** Its acceptance checks pass locally (designed fixtures, zero-edge non-links, tamper suite, portable digest).
+- Location: the local branch `stage15/flow-tracing`. **Not reviewed.**
+- Not started: Milestones C–F.
 - Details: [docs/FLOW_TRACING.md](docs/FLOW_TRACING.md).
 
 | Stage | Implementation | Quality and real-provider evidence |
@@ -26,7 +27,7 @@ technical review is implemented and verified locally, and awaits re-review.
 | 12: LangChain / LlamaIndex laboratory | Complete 2026-10-25 | 900/900 offline retrieval benchmark; no framework adopted; real lab generation not implemented |
 | 13: Semantic Project Model | Complete: multi-language structure, deterministic catalog, controlled generation, evaluation and hardening, independent review repairs | **Deferred**: no real-model output has been produced or judged |
 | 14: Architecture Intelligence | Complete: module graph, literal evidence and API connections, views, subsystem candidates, declared rules, evaluation and hardening; review findings R01–R05 remediated | **Passed:** fixtures; self-hosted module edges (precision and recall 0.9989, unchanged under the corrected scorer); adversarial suite. **Exploratory, AI-assisted:** self-hosted API packet mechanically `passed` (precision 58/58, recall 58/59). **Not done:** the pre-registered human API labelling. **Awaiting re-review:** the remediation |
-| 15: Flow Tracing | **In progress:** A0 spike and Milestone A flow evidence run, on a local branch, uncommitted | Milestone A gate passed locally (flow unit and integration tests, 387-test gate selection, migration round trip). No flow model, trace or evaluation yet |
+| 15: Flow Tracing | **In progress:** A0 spike; Milestone A flow evidence run (committed locally); Milestone B flow model implemented (committed locally), on a local branch | Milestone A gate passed locally. Milestone B gate selection passed locally (71 tests, migration round trip, mypy clean); designed fixtures, zero-edge non-links, tamper suite. Every HTTP hop stays inferred and caveated. No trace engine or evaluation yet |
 
 ## What works now
 
@@ -141,7 +142,7 @@ Tracked in Git: the evaluation datasets (`.buildlens-eval/datasets/`) and the la
 
 - Human labelling and scoring of the Stage 14 API packet (the AI-assisted run is exploratory only).
 - Independent re-review of the Stage 14 remediation.
-- Stage 15 — Flow Tracing: Milestone B (flow model and resolution) after the owner reviews Milestone A ([docs/FLOW_TRACING.md](docs/FLOW_TRACING.md)).
+- Stage 15 — Flow Tracing: Milestone C (the `FlowTrace` engine), after the owner reviews the Milestone B deviations and the D10 factory-shape amendment ([docs/FLOW_TRACING.md](docs/FLOW_TRACING.md)).
 
 ---
 
