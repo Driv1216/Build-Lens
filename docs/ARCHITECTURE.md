@@ -491,3 +491,10 @@ deviations: [ARCHITECTURE_INTELLIGENCE.md](ARCHITECTURE_INTELLIGENCE.md).
   - `application/flow_trace.py` walks a verified run forward or backward from an `entry_point`, with bounds, lanes and layers.
   - Each step keeps four verdicts apart: resolution, CFG reachability, the control-dependence path condition, and feasibility in a sound fragment (`domain/flow_trace.py`).
   - `application/flow_trace_service.py` re-verifies every returned element against PostgreSQL, keeps a per-run graph cache, pins traces in `flow_trace_records` (D4), and proposes natural-language entry candidates through `RetrievalService`. The user chooses.
+- **The `/flows` UI (Milestone D).** `frontend/src/components/flows/` renders verified traces read-only:
+  - an entry panel, with natural-language candidates shown as candidates only;
+  - an outline with four separate verdicts per step;
+  - a lane diagram over `layered()`;
+  - response and branch panels;
+  - a step inspector with stored source.
+  State lives in URL parameters, and requests go through the same stale-safe `useRequest`/`useLatestRequest` hooks.

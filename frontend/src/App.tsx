@@ -4,6 +4,7 @@ import { createProject, listProjects, type Project } from './api/projects'
 import { ProjectSnapshotPanel } from './components/ProjectSnapshotPanel'
 import { ArchitecturePage } from './components/architecture/ArchitecturePage'
 import { ExplorePage } from './components/explore/ExplorePage'
+import { FlowsPage } from './components/flows/FlowsPage'
 import { ExperimentBuilder } from './components/lab/ExperimentBuilder'
 import { IndexInspector } from './components/lab/IndexInspector'
 import { LabLayout } from './components/lab/LabLayout'
@@ -55,7 +56,7 @@ function Dashboard() {
         <p className="eyebrow">Phase 2 · Stage 12 · Evidence, retrieval and framework laboratory</p>
         <h1>BuildLens</h1>
         <p className="subtitle">Register local projects, capture snapshots, prepare local embeddings, and search exact source evidence.</p>
-        <nav className="app-nav"><Link to="/explore">Explore the semantic catalog →</Link> <Link to="/architecture">Architecture →</Link> <Link to="/lab">Open the LangChain / LlamaIndex laboratory →</Link></nav>
+        <nav className="app-nav"><Link to="/explore">Explore the semantic catalog →</Link> <Link to="/architecture">Architecture →</Link> <Link to="/flows">Flow traces →</Link> <Link to="/lab">Open the LangChain / LlamaIndex laboratory →</Link></nav>
       </header>
 
       <section className="card" aria-labelledby="new-project-heading">
@@ -110,6 +111,7 @@ function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/explore" element={<ExplorePage />} />
         <Route path="/architecture" element={<ArchitecturePage />} />
+        <Route path="/flows" element={<FlowsPage />} />
         <Route path="/lab" element={<LabLayout />}>
           <Route index element={<LabOverview />} />
           <Route path="experiments" element={<ExperimentBuilder />} />

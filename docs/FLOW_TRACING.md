@@ -5,7 +5,8 @@
 - **Milestone B is implemented and committed locally** on the same branch. Its acceptance checks pass locally: designed fixtures, zero-edge non-links, the tamper suite and portable-digest reproduction. Approximations stay labelled in the model. Milestone B is not reviewed.
 - Nothing has been independently reviewed.
 - **Milestone C (the `FlowTrace` engine) is implemented and committed locally.** Its designed oracles pass locally.
-- Milestones D–F (`/flows` UI, explanations, evaluation) are **not started**.
+- **Milestone D (the `/flows` UI) is implemented and committed locally.** Its frontend tests and a browser run on a real BuildLens trace pass locally.
+- Milestones E–F (explanations, evaluation) are **not started**.
 
 The approved plan is Revision 3.1, which includes the A0 amendments approved on 2026-11-01. It lives outside the repository, in the owner's planning notes.
 
@@ -589,4 +590,74 @@ The run was on BuildLens `5c65617`, using `.buildlens-eval/runs/stage15-mileston
 - **Bounds:** `fanout` is recorded in the query but the walk relies on the model's fan-out cap. Hiding refuted segments is left to the UI; there is no query option.
 - **Pinned digest scope:** the pinned record is looked up by digest within the snapshot. The newest matching run's record is the one re-verified.
 - **Upstream cost:** about 0.78 s of a typical BuildLens trace is the existing Stage 13/14 freshness check (processing, catalog and architecture status), not the engine.
+
+## Milestone D — the `/flows` UI (implemented; committed locally)
+
+A read-only workspace at `/flows?project=&snapshot=&entry=&direction=&depth=&view=&step=&refuted=`. Its state lives in URL parameters, like `/architecture`. Except for the explicit build and pin actions, it only reads, and every response it shows was verified server-side.
+
+**Code:** `frontend/src/api/flow.ts` and `frontend/src/components/flows/` (`FlowsPage`, `TraceViews`, `StepInspector`, `FlowPanel`, `format`). A "Flow tracing" card in the snapshot panel extracts flow evidence and builds the flow model.
+
+**Entry panel:**
+- **Natural-language search** shows the mode actually used ("Mode used: lexical") and each candidate's reason: the search-hit rank, the file, and the distance from the entry. It says the user chooses, and nothing is selected automatically.
+- **Entry list** by kind.
+- **Explicit node key** input.
+
+**Trace header:**
+- status, hop and step counts, the weakest tier, and `verified`;
+- the HTTP caveat stated in words;
+- gaps under "Why this is not a complete claim";
+- absence verdicts with their reasons;
+- the trace digest, with **Pin** and **Re-verify** (`current` / `stale` / `integrity_failed`).
+
+**Views:**
+
+| View | What it shows |
+|---|---|
+| Outline (primary) | Each step indented by depth with its relation and four separate chips: the L1 tier badge, L2 reachability and L4 feasibility; L3 is in the inspector and the branches view. Also the lane, alternatives (`alternative · G0`), candidates, "body does not run", "seen above", cycles, the HTTP caveat and conditions |
+| Lanes | A hand-written SVG over `layered()`, one row per lane, with each lane's order statement ("order not determined" unless a contract orders it) and a screen-reader list as a fallback. Left-to-right placement is the walk's layering, not time |
+| Responses | Exit-specific outcomes, the steps that reach them with their conditions, and the client continuation (fulfilled / rejected / either). Also the path's database effects, with "the client may observe success before the commit" for `COMMIT_AFTER_RESPONSE_SENT` |
+| Branches | Each guarded step's condition in words, its feasibility, and the approximate flag |
+
+**Wording:** relations are described neutrally. Scheduling ("registers (runs later)") is kept apart from running, an inferred link is never called a call, and the page never says "executes".
+
+**Filter:** "Hide refuted steps" is presentation only; the page states how many are hidden and that the trace keeps them.
+
+**Step inspector:**
+- the four verdicts, each with its rule, conditions and assumptions, and "not an execution" on L3;
+- the edge attributes, shown through `visible()`;
+- the evidence count;
+- the scope's stored source through `SourceView`, loaded by `symbol:{identity}`, with the callsite line marked as cited.
+
+**Safety:**
+- **Bidi controls** in labels and attributes are shown as `⟪U+…⟫`.
+- **Errors fail closed.** Flow error codes are explained (for example: integrity failure → "no partial trace is shown"), and no partial content is rendered.
+- **Stale models** show their reasons and no entries or traces.
+- **Requests are scoped.** Results are tied to their inputs through `useRequest`/`useLatestRequest`, so a late response never paints under a newer selection.
+
+**Backend addition:** trace hops carry the scope's `identity`, and steps carry the callsite `line`. This lets the inspector load and mark source.
+
+### Verification
+
+- **`frontend/src/components/flows/Flows.test.tsx` (7):**
+  - four separate verdicts, the caveats, alternatives, lanes, responses (continuations and the commit-after-send wording) and branches render;
+  - the inspector shows the four verdicts and the cited line in stored source;
+  - the refuted filter keeps the trace;
+  - search proposes candidates with reasons and starts no trace until the user picks;
+  - integrity failures fail closed;
+  - stale models show no entries;
+  - a **Profiler-pattern stale-safety test**: no committed frame shows the old entry's trace after a new entry is selected, and a late response for the old entry never applies.
+  - In every test, a `console.error` spy must stay empty.
+- **Frontend gate:** `vitest run` 53/53 across 11 files, `eslint .` clean, and `npm run build` succeeded (`tsc -b` and Vite).
+- **Browser run (2026-11-01):**
+  - **Setup:** the local Vite dev server and API, a scratch database, and the read-only BuildLens `5c65617` corpus copy, built through the HTTP API: structure → processing → catalog → architecture → flow evidence → flow model.
+  - **Trace checked:** the "New snapshot" button in `ProjectSnapshotPanel` (283 hops, 1,423 steps). The outline crosses `may reach endpoint create_snapshot` with the HTTP caveat, through the `begin()` transaction scope, to `response continues at POST`.
+  - **Responses view:** shows the handler's 404/409 `raise` outcomes as rejected at the client.
+  - **Lanes:** render 283 hops and 737 edges.
+  - **Inspector:** shows `create_snapshot`'s stored source.
+  - **Pin:** pin then re-verify gives `current`.
+  - **Search:** "create snapshot" proposed `POST …/snapshots` (distance 0) and the click entry (distance 6).
+  - **Console:** no errors on `/flows` or on the dashboard (whose flow card shows both runs fresh).
+  - **One finding, not a UI defect:** the "Build architecture" button's trace reaches `request(base(p, s), …)` but crosses no HTTP link. Stage 14 records no request site for a non-literal URL builder, and its contract stays unchanged.
+
+**Not run:** the full backend suite and the Python 3.11 suite, which belong to stage closure.
 

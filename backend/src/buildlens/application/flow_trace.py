@@ -805,6 +805,9 @@ class _Walk:
         reach = self.e.reachability(facts, node)
         lane = _lane(hop.lane, edge)
         extra: dict[str, Any] = {"callsite": via} if via else {}
+        line = self.g.nodes[via].attributes.get("line") if via and via in self.g.nodes else None
+        if isinstance(line, int):
+            extra["line"] = line
         target_key = edge.target_key
         if edge.relation == "unresolved" or target_key is None:
             step = self.step(hop, edge, None, reach, terms, approximate, lane, **extra)
@@ -1002,6 +1005,7 @@ class _Walk:
                     "depth": h.depth,
                     "lane": h.lane,
                     "layer": _layer(node, h.node, self.g),
+                    "identity": node.attributes.get("identity") if node else None,
                     **({"phase": h.phase} if h.phase else {}),
                 }
             )
