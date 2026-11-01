@@ -69,6 +69,11 @@ from buildlens.application.flow_evidence import (
     FlowEvidenceUnavailableError,
     FlowStructureRequiredError,
 )
+from buildlens.application.flow_explanation import (
+    FlowExplanationDisabledError,
+    FlowExplanationNotFoundError,
+    FlowExplanationPlanInvalidError,
+)
 from buildlens.application.flow_trace_service import (
     FlowEntrySearchUnavailableError,
     FlowTraceNotFoundError,
@@ -345,6 +350,16 @@ def register_errors(app: FastAPI) -> None:
         ),
         FlowBuildError: (409, "FLOW_BUILD_FAILED", "The flow model build failed closed."),
         FlowTraceNotFoundError: (404, "FLOW_TRACE_NOT_FOUND", "The pinned trace was not found."),
+        FlowExplanationNotFoundError: (
+            404,
+            "FLOW_EXPLANATION_NOT_FOUND",
+            "The explanation plan or run was not found.",
+        ),
+        FlowExplanationDisabledError: (
+            409,
+            "FLOW_EXPLANATION_DISABLED",
+            "Generation is not enabled; nothing was sent.",
+        ),
         FlowTraceTooLargeError: (
             409,
             "FLOW_TRACE_TOO_LARGE",
@@ -447,6 +462,21 @@ def register_errors(app: FastAPI) -> None:
         )
 
     app.add_exception_handler(RequestValidationError, validation_handler)
+
+    async def explanation_plan_handler(request: Request, error: Exception) -> JSONResponse:
+        assert isinstance(error, FlowExplanationPlanInvalidError)
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "FLOW_EXPLANATION_PLAN_INVALID",
+                    "message": "The explanation plan cannot be used; nothing was sent.",
+                    "reason": error.code,
+                }
+            },
+        )
+
+    app.add_exception_handler(FlowExplanationPlanInvalidError, explanation_plan_handler)
 
     from buildlens.domain.lab import LabError
 

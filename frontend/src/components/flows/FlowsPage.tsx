@@ -6,10 +6,11 @@ import { latestSnapshot } from '../../api/snapshots'
 import { TierBadge } from '../architecture/parts'
 import { useLatestRequest, useRequest } from '../architecture/useRequest'
 import { describeFlow, explained, shown, STATUS_TEXT } from './format'
+import { ExplanationPanel } from './ExplanationPanel'
 import { StepInspector } from './StepInspector'
 import { BranchPanel, LaneDiagram, ResponsePanel, TraceOutline } from './TraceViews'
 
-const VIEWS = ['outline', 'lanes', 'responses', 'branches'] as const
+const VIEWS = ['outline', 'lanes', 'responses', 'branches', 'explanation'] as const
 type View = (typeof VIEWS)[number]
 const KINDS = ['http_endpoint', 'dom_event', 'effect', 'cli_command', 'asyncio_run', 'module'] as const
 type Scope = { projectId: string; snapshotId: string; revision: string }
@@ -177,11 +178,18 @@ function TraceArea({ projectId, snapshotId, revision, entry, direction, depth, v
           {view === 'lanes' && <LaneDiagram trace={value} selected={step} onSelect={id => update({ step: id })} />}
           {view === 'responses' && <ResponsePanel trace={value} selected={step} onSelect={id => update({ step: id })} />}
           {view === 'branches' && <BranchPanel trace={value} selected={step} onSelect={id => update({ step: id })} />}
+          {view === 'explanation' && <PinnedExplanation projectId={projectId} snapshotId={snapshotId} digest={value.trace_digest} onSelect={id => update({ step: id })} />}
         </div>
         <StepInspector key={`${value.trace_digest}/${step}`} projectId={projectId} snapshotId={snapshotId} trace={value} step={step} />
       </div>
     </>}
   </>
+}
+
+function PinnedExplanation({ projectId, snapshotId, digest, onSelect }: { projectId: string; snapshotId: string; digest: string; onSelect: (step: string) => void }) {
+  const pinned = useRequest(signal => getPinned(projectId, snapshotId, digest, signal).then(value => value.status === 'current').catch(() => false), [projectId, snapshotId, digest])
+  if (pinned.value === null) return <p className="note" role="status">Checking whether this trace is pinned…</p>
+  return <ExplanationPanel projectId={projectId} snapshotId={snapshotId} digest={digest} pinned={pinned.value} onSelect={onSelect} />
 }
 
 function PinControl({ projectId, snapshotId, entry, direction, depth, digest }: { projectId: string; snapshotId: string; entry: string; direction: 'forward' | 'backward'; depth: number; digest: string }) {

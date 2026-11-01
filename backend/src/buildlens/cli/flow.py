@@ -18,6 +18,7 @@ from buildlens.domain.flow_trace import MAX_DEPTH, MAX_HOPS, TraceQuery
 from buildlens.infrastructure.runtime import (
     LocalRuntime,
     flow_evidence_service,
+    flow_explanation_service,
     flow_service,
     flow_trace_service,
 )
@@ -202,3 +203,48 @@ def verify(
 ) -> None:
     """Re-verify a pinned trace: current, stale (with reasons) or integrity_failed."""
     _traces(lambda service: service.pinned(project, snapshot, digest))
+
+
+explain_app = typer.Typer(
+    help="Plan-gated explanations of pinned traces (validated; never evidence)."
+)
+app.add_typer(explain_app, name="explain")
+
+
+def _explanations(call: Callable[[Any], Any]) -> None:
+    with _runtime() as runtime:
+        _emit(call(flow_explanation_service(runtime)))
+
+
+@explain_app.command("plan")
+def explain_plan(
+    digest: str = typer.Argument(..., help="A pinned trace digest"),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+) -> None:
+    """Plan an explanation: the exact outbound bytes, provider and retention note. Sends nothing."""
+    _explanations(lambda service: service.plan(project, snapshot, digest))
+
+
+@explain_app.command("run")
+def explain_run(
+    plan: UUID = typer.Argument(...),
+    plan_digest: str = typer.Option(..., "--plan-digest"),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+    confirm: bool = typer.Option(False, "--confirm", help="Required: send exactly the plan"),
+) -> None:
+    """Confirm a plan and send its single request through the outbound gate."""
+    if not confirm:
+        raise typer.BadParameter("Pass --confirm to send exactly the planned request.")
+    _explanations(lambda service: service.execute(project, snapshot, plan, plan_digest, True))
+
+
+@explain_app.command("show")
+def explain_show(
+    run: UUID = typer.Argument(...),
+    project: UUID = typer.Option(...),
+    snapshot: UUID = typer.Option(...),
+) -> None:
+    """An explanation run with its validated claims and rejection codes."""
+    _explanations(lambda service: service.run(project, snapshot, run))

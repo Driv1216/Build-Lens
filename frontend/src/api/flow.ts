@@ -169,3 +169,52 @@ export const pinTrace = (projectId: string, snapshotId: string, entry: string, d
   request<FlowTrace>(`${base(projectId, snapshotId)}/traces`, { method: 'POST', body: JSON.stringify({ entry, direction, max_depth: maxDepth }), signal })
 export const getPinned = (projectId: string, snapshotId: string, digest: string, signal?: AbortSignal) =>
   request<PinnedTrace>(`${base(projectId, snapshotId)}/traces/${digest}`, { signal })
+
+// ---- Milestone E: plan-gated explanations (never evidence; validated against the pinned trace).
+export type ExplanationConfig = {
+  enabled: boolean
+  provider: string
+  model: string
+  sharing_class: string
+  retention_note: string
+  status: Record<string, unknown>
+  contract: Record<string, unknown>
+}
+export type ExplanationPlan = {
+  plan_id: string
+  trace_digest: string
+  package_digest: string
+  request_digest: string
+  request_bytes: number
+  provider: string
+  model: string
+  retention_note: string
+  plan_digest: string
+  expires_at: string
+  package: { steps: number; excerpts: number; truncated: boolean; caveats: string[] }
+  enabled: boolean
+  sent: number
+}
+export type ExplanationClaim = { ordinal: number; level: string; text: string; steps: string[]; citations: { id: string }[]; claim_digest: string }
+export type ExplanationRun = {
+  run_id: string
+  plan_id: string
+  trace_digest: string
+  state: string
+  outcome: string | null
+  returned_model: string | null
+  rejection_codes: string[]
+  unknowns: string[]
+  requests_sent: number
+  claims: ExplanationClaim[]
+  label: string
+}
+
+export const getExplanationConfig = (projectId: string, snapshotId: string, signal?: AbortSignal) =>
+  request<ExplanationConfig>(`${base(projectId, snapshotId)}/explanations/config`, { signal })
+export const planExplanation = (projectId: string, snapshotId: string, traceDigest: string, signal?: AbortSignal) =>
+  request<ExplanationPlan>(`${base(projectId, snapshotId)}/explanations/plan`, { method: 'POST', body: JSON.stringify({ trace_digest: traceDigest }), signal })
+export const runExplanation = (projectId: string, snapshotId: string, plan: ExplanationPlan, signal?: AbortSignal) =>
+  request<ExplanationRun>(`${base(projectId, snapshotId)}/explanations`, { method: 'POST', body: JSON.stringify({ plan_id: plan.plan_id, plan_digest: plan.plan_digest, confirm: true }), signal })
+export const listExplanations = (projectId: string, snapshotId: string, traceDigest: string, signal?: AbortSignal) =>
+  request<{ items: ExplanationRun[]; total: number }>(`${base(projectId, snapshotId)}/explanations?trace_digest=${traceDigest}`, { signal })

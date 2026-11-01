@@ -15,6 +15,7 @@ from buildlens.application.context import ContextService, RerankerRuntime
 from buildlens.application.embeddings import EmbeddingRuntime
 from buildlens.application.flow import FlowService
 from buildlens.application.flow_evidence import FlowEvidenceService
+from buildlens.application.flow_explanation import FlowExplanationService
 from buildlens.application.flow_trace_service import FlowTraceService, TraceGraphCache
 from buildlens.application.outbound_gate import StructuredGenerator
 from buildlens.application.processing import ProcessingService
@@ -38,6 +39,7 @@ from buildlens.infrastructure.persistence.database import (
 from buildlens.infrastructure.persistence.embeddings import SqlAlchemyEmbeddingStore
 from buildlens.infrastructure.persistence.flow import SqlAlchemyFlowStore
 from buildlens.infrastructure.persistence.flow_evidence import SqlAlchemyFlowEvidenceStore
+from buildlens.infrastructure.persistence.flow_explanation import SqlAlchemyFlowExplanationStore
 from buildlens.infrastructure.persistence.processing import SqlAlchemyProcessingStore
 from buildlens.infrastructure.persistence.retrieval import (
     SqlAlchemyContextEvidenceStore,
@@ -109,6 +111,18 @@ def flow_trace_service(state: Any) -> FlowTraceService:
         SqlAlchemyFlowStore(state.session_factory),
         retrieval_service(state),
         state.flow_trace_cache,
+    )
+
+
+def flow_explanation_service(state: Any) -> FlowExplanationService:
+    """Stage 15 explanations: plan-gated, through the Stage 13 gate and configured provider."""
+    settings = state.settings
+    return FlowExplanationService(
+        flow_trace_service(state),
+        semantic_catalog_service(state),
+        SqlAlchemyFlowExplanationStore(state.session_factory),
+        lambda: semantic_generator(settings),
+        generation_settings(settings),
     )
 
 

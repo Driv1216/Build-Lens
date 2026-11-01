@@ -498,3 +498,4 @@ deviations: [ARCHITECTURE_INTELLIGENCE.md](ARCHITECTURE_INTELLIGENCE.md).
   - response and branch panels;
   - a step inspector with stored source.
   State lives in URL parameters, and requests go through the same stale-safe `useRequest`/`useLatestRequest` hooks.
+- **Explanations (Milestone E).** `application/flow_explanation.py` explains a pinned trace through the unchanged Stage 13 outbound gate and generators: plan → confirm → one ticketed request. `flow-validator.v1` keeps only claims consistent with the trace's steps, tiers, lanes, effects and outcomes. Explanations live in `flow_explanation_*` tables (migration `0019`), never write the flow model and are never Ask evidence.

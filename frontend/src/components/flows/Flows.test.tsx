@@ -72,13 +72,23 @@ const entity = {
   package_chunks: [], integrity_errors: [], freshness_reasons: [],
 }
 
+let pinnedState: unknown = { status: 'current', freshness_reasons: [], failures: [], trace_digest: 'd'.repeat(64), run_id: 'r1', query: {} }
+let explanationsEnabled = true
+const plan = { plan_id: 'p-1', trace_digest: 'd'.repeat(64), package_digest: 'a'.repeat(64), request_digest: 'b'.repeat(64), request_bytes: 4321, provider: 'local', model: 'stub', retention_note: 'Loopback endpoint on this machine.', plan_digest: 'c'.repeat(64), expires_at: '2026-11-01T12:00:00Z', package: { steps: 10, excerpts: 1, truncated: false, caveats: [] }, enabled: true, sent: 0 }
+const explanationRun = { run_id: 'x', plan_id: 'p-1', trace_digest: 'd'.repeat(64), state: 'complete', outcome: 'accepted_with_rejections', returned_model: 'stub', rejection_codes: ['claim1:LEVEL_OVERSTATED'], unknowns: ['What notify does is unknown.'], requests_sent: 1, label: '', claims: [{ ordinal: 0, level: 'path', text: 'The request may reach the handler.', steps: ['S2'], citations: [], claim_digest: 'e'.repeat(64) }] }
+
 function route(path: string): unknown {
   if (path === '/projects') return [{ id: 'p1', name: 'Demo', root_path: '/tmp/demo', created_at: '' }]
   if (path.endsWith('/flow')) return fresh
   if (path.includes('/flow/entries') && path.includes('q=')) return candidates
   if (path.includes('/flow/entries')) return entries
+  if (path.includes('/flow/traces/')) return pinnedState
   if (path.includes('/flow/trace')) return trace(path.includes('entry%3Ab') ? 'only-in-trace-B' : 'only-in-trace-A')
   if (path.includes('/semantic/entities/')) return entity
+  if (path.endsWith('/explanations/config')) return { enabled: explanationsEnabled, provider: 'local', model: 'stub', sharing_class: 'loopback', retention_note: 'Loopback endpoint on this machine.', status: {}, contract: {} }
+  if (path.includes('/explanations?trace_digest')) return { items: [], total: 0 }
+  if (path.endsWith('/explanations/plan')) return plan
+  if (path.endsWith('/explanations')) return explanationRun
   throw new Error(`unexpected ${path}`)
 }
 
@@ -88,6 +98,8 @@ function show(path: string) {
 
 let reactErrors: unknown[][] = []
 beforeEach(() => {
+  pinnedState = { status: 'current', freshness_reasons: [], failures: [], trace_digest: 'd'.repeat(64), run_id: 'r1', query: {} }
+  explanationsEnabled = true
   mocked.mockReset()
   reactErrors = []
   vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { reactErrors.push(args) })
@@ -195,5 +207,40 @@ describe('FlowsPage', () => {
     const second = pending.shift() as Pending
     await act(async () => { second.resolve(route(second.path)) })
     expect(screen.getByText('only-in-trace-B')).toBeInTheDocument()
+  })
+
+  it('explains only pinned traces, plans without sending and labels AI claims', async () => {
+    mocked.mockImplementation(async (path: string) => route(path))
+    show('/flows?project=p1&snapshot=s1&entry=entry:a&view=explanation')
+    fireEvent.click(await screen.findByRole('button', { name: 'Plan an explanation' }))
+    expect(await screen.findByText(/Nothing has been sent/)).toBeInTheDocument()
+    expect(screen.getByText(/one request of 4,321 bytes/)).toBeInTheDocument()
+    expect(mocked.mock.calls.some(([path, init]) => String(path).endsWith('/explanations') && init?.method === 'POST')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and send this request' }))
+    expect(await screen.findByText('The request may reach the handler.')).toBeInTheDocument()
+    expect(screen.getByText('AI · path')).toBeInTheDocument()
+    expect(screen.getByText(/never used as evidence/)).toBeInTheDocument()
+    expect(screen.getByText(/1 rejected/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'S2' }))
+    expect(await screen.findByText(/S2 · may reach endpoint/)).toBeInTheDocument()
+  })
+
+  it('asks for a pin first and never offers to send when generation is disabled', async () => {
+    pinnedState = null
+    mocked.mockImplementation(async (path: string) => {
+      if (path.includes('/flow/traces/')) throw new ApiError(404, 'FLOW_TRACE_NOT_FOUND', 'x')
+      return route(path)
+    })
+    show('/flows?project=p1&snapshot=s1&entry=entry:a&view=explanation')
+    expect(await screen.findByText(/Pin this trace first/)).toBeInTheDocument()
+  })
+
+  it('disables sending when generation is off', async () => {
+    explanationsEnabled = false
+    mocked.mockImplementation(async (path: string) => path.endsWith('/explanations/plan') ? { ...plan, enabled: false } : route(path))
+    show('/flows?project=p1&snapshot=s1&entry=entry:a&view=explanation')
+    expect(await screen.findByText(/generation is disabled, so nothing can be sent/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Plan an explanation' }))
+    expect(await screen.findByRole('button', { name: 'Confirm and send this request' })).toBeDisabled()
   })
 })

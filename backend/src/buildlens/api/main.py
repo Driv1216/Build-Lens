@@ -83,6 +83,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "/flow/evidence",
                         "/flow",
                         "/flow/traces",
+                        "/flow/explanations/plan",
+                        "/flow/explanations",
                         "/semantic/generation/plan",
                         "/semantic/generation",
                         "/embeddings",

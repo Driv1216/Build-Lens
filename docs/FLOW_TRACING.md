@@ -6,7 +6,8 @@
 - Nothing has been independently reviewed.
 - **Milestone C (the `FlowTrace` engine) is implemented and committed locally.** Its designed oracles pass locally.
 - **Milestone D (the `/flows` UI) is implemented and committed locally.** Its frontend tests and a browser run on a real BuildLens trace pass locally.
-- Milestones E–F (explanations, evaluation) are **not started**.
+- **Milestone E (explanations) is implemented and committed locally.** It is verified with a loopback stub only. The real-model evaluation is pre-registered as a draft and **not run**.
+- Milestone F (evaluation and stage closure) is **not started**.
 
 The approved plan is Revision 3.1, which includes the A0 amendments approved on 2026-11-01. It lives outside the repository, in the owner's planning notes.
 
@@ -660,4 +661,111 @@ A read-only workspace at `/flows?project=&snapshot=&entry=&direction=&depth=&vie
   - **One finding, not a UI defect:** the "Build architecture" button's trace reaches `request(base(p, s), …)` but crosses no HTTP link. Stage 14 records no request site for a non-literal URL builder, and its contract stays unchanged.
 
 **Not run:** the full backend suite and the Python 3.11 suite, which belong to stage closure.
+
+## Milestone E — explanations of pinned traces (implemented; committed locally)
+
+An explanation is AI-generated text about one **pinned** trace (D4). It is bound to:
+- the trace's `trace_digest`;
+- a `FlowPackage` `package_digest`;
+- a confirmed plan's `plan_digest`.
+
+Every claim is re-checked by `flow-validator.v1` against the exact package that was sent. A kept claim is *consistent with the trace*, not a statement of runtime behaviour. Explanations never write flow nodes or edges and are never Ask evidence (INV-8).
+
+**Code:**
+- `domain/flow_explanation.py` and `application/flow_package.py`;
+- `application/flow_validation.py` and `application/flow_explanation.py`;
+- `infrastructure/persistence/flow_explanation.py`;
+- migration `0019_flow_explanations`, six tables: `flow_explanation_{plans,items,runs,attempts,outcomes,claims}`;
+- routes under `…/flow/explanations`;
+- CLI `buildlens flow explain plan|run|show`;
+- an "explanation" tab on `/flows`.
+
+### D5 — no shared validator (decision, for owner review)
+
+The Stage 13 validator's generic checks (1–4, 8, 9) are interleaved with its own package type inside `_claim`. Sharing them would require refactoring Stage 13 and then proving behavioural parity. Instead, `flow-validator.v1` stands alone. It reuses only Stage 13's unchanged pure helpers (`identifiers`, `static_claim_problem`, `screen_content`). The Stage 13 `OutboundGate` and generators are also reused unchanged: flow requests carry `buildlens.flow.outbound.v1` through a `CanonicalOutbound` subclass, so a flow ticket cannot authorise semantic-generation bytes, and the reverse holds too.
+
+**No Stage 13 code changed.** As the parity check, the Stage 13 validation, outbound, generation and adversarial test modules run unchanged in the gate and pass.
+
+### Lifecycle (as in Stage 13)
+
+1. **Plan** (`POST …/explanations/plan {trace_digest}`). The pinned trace must re-verify as `current`. The plan:
+   - builds the `FlowPackage` from the pinned record plus up to 8 hash-verified stored-chunk excerpts `E#` (catalog entity evidence; no disk reads);
+   - renders the exact outbound request with the configured generator;
+   - records its digest and size, the provider and model, the retention note, the configuration digest and an expiry;
+   - **sends nothing**.
+2. **Confirm and run** (`POST …/explanations {plan_id, plan_digest, confirm: true}`). Generation must be enabled (the same switch as Stage 13), and all of the following are re-checked:
+   - the package digest;
+   - that the pinned trace is still current;
+   - the configuration digest;
+   - the exact request digest.
+
+   The plan is then used **exactly once**: a row lock plus a unique run per plan. One single-use gate ticket is minted for the planned bytes, and the generator redeems it to send one request.
+3. **Validate and store.** Kept claims are stored with their step ids and quote citations. Rejected claims keep only their reason codes. Failures are refused, incomplete or provider errors (classes and status only).
+
+**Plan errors** fail closed with nothing sent: 409 `FLOW_EXPLANATION_PLAN_INVALID`, with one of these reasons:
+- `TRACE_NOT_CURRENT`;
+- `PLAN_DIGEST_MISMATCH`;
+- `PLAN_ALREADY_USED`;
+- `PLAN_EXPIRED`;
+- `PLAN_CONFIG_CHANGED`;
+- `PLAN_CHANGED`;
+- `PACKAGE_CHANGED`;
+- `REQUEST_TOO_LARGE`.
+
+A disabled switch gives 409 `FLOW_EXPLANATION_DISABLED`.
+
+### `FlowPackage` (`flow-package.v1`)
+
+The package holds:
+- the pinned trace's hops `H#` and its first 160 steps `S#` (`truncated` is set beyond that), each with all four verdicts, conditions, lane, segment and outcome attributes;
+- caveats, lanes and their order statements;
+- the gaps and database effects of the included steps;
+- the `E#` excerpts.
+
+The instructions say the project data is untrusted and spell out the wording rules. The JSON schema allows at most 12 claims (each citing 1–6 steps and 0–3 quotes) and at most 6 one-sentence unknowns.
+
+### `flow-validator.v1`
+
+**Generic checks:** structure; evidence ids; exact, unique quotes of 8–200 characters; identifier grounding in the package; the verdict lexicon; bidi and secret screening.
+
+**Flow checks:**
+
+| Code | Rejects |
+|---|---|
+| `EDGE_NOT_IN_TRACE` | A cited step that is not in the package, or a named hop that no cited step connects (an invented edge) |
+| `LEVEL_OVERSTATED` | "executes", "runs", "is called" or similar |
+| `TIER_OVERSTATED` | Certainty words or "calls" over an inferred or unknown step |
+| `ORDER_NOT_IN_TRACE` | Order words across lanes whose order is not determined; the response-boundary order is exempt |
+| `BEHAVIOR_IN_GAP` | Behaviour asserted for an unresolved step without saying it is unknown |
+| `COMMIT_OVERSTATED` | "saved"/"persisted"/"stored", or a commit not phrased as "reaches a commit" on a cited path that reaches one |
+| `RENDER_OVERSTATED` | "re-renders" or "the effect runs" |
+| `STATUS_OVERSTATED` | A status code that no cited outcome states |
+
+The checks are lexical and deliberately conservative: an honest claim worded outside them is dropped rather than accepted.
+
+### Verification
+
+- **`tests/unit/test_flow_validation.py` (23):** honest claims pass, and 21 attacker claims each produce their designed code, one per generic and flow rule, while the honest claims around them stay. Also whole-output shape and empty-result semantics.
+- **`tests/integration/test_flow_explanation.py` (4)**, using a **loopback stub only** (an in-process `httpx.MockTransport` behind the real `LoopbackGenerator`; no model contacted):
+  - planning sends nothing;
+  - without confirmation, or with a wrong digest, nothing is sent;
+  - one confirmed plan sends exactly one request;
+  - of 3 honest and 8 attacker claims, exactly the 3 honest ones are kept, and the 8 are rejected with the designed codes. **Hard gates: 0 invented or overstated claims accepted.**
+  - plan reuse, a disabled switch, a changed configuration and a tampered (no longer current) pinned trace all refuse with **0 outbound requests**;
+  - the INV-3/INV-8 fingerprint check: after an explanation, every table except `flow_explanation_*` (the flow model, pinned traces and all earlier-stage tables) is byte-identical;
+  - the HTTP contract: config, plan, a 422 without confirmation, a 409 when disabled, the 415 guard, a 404 for an unpinned digest;
+  - the 0019 downgrade refusal.
+- **`frontend/src/components/flows/Flows.test.tsx` (+3):**
+  - the tab asks for a pin first;
+  - planning shows the exact request and sends nothing;
+  - confirming shows AI-labelled claims linked to their steps, the stated unknowns and the rejected-claim count;
+  - sending is disabled when generation is off.
+- **Gate:** the backend selection passed 165 tests: the flow A–E modules, the Stage 13 parity modules, schema, upgrade and persistent embeddings. ruff, format and mypy are clean. The frontend passed 56/56 tests, lint and build.
+- **Migrations:** single head `0019_flow_explanations`; the empty-database round trip 0019 → 0016 → 0019 gives an identical schema (4,200 lines) and leaves no `flow_` objects after the downgrade.
+
+**Real-model evaluation:** pre-registered as a draft in `.buildlens-eval/reviews/flow-explanation-preregistration-draft/preregistration.json` (git-ignored) and **not run**.
+- **Judging:** human review only, by the owner or an independent reviewer (D12).
+- **Hard gates:** H1 is kept claims failing re-validation = 0; H2 is outbound requests outside confirmed plans = 0.
+- **Thresholds and sample size:** left for the owner to set.
+- **Before running:** it needs approval of those criteria and of real-provider access.
 

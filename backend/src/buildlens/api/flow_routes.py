@@ -12,10 +12,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field
 
-from buildlens.api.dependencies import get_flow_evidence_service, get_flow_trace_service
+from buildlens.api.dependencies import (
+    get_flow_evidence_service,
+    get_flow_explanation_service,
+    get_flow_trace_service,
+)
 from buildlens.application.flow_evidence import FlowEvidenceService
+from buildlens.application.flow_explanation import FlowExplanationService
 from buildlens.application.flow_trace_service import FlowTraceService
 from buildlens.domain.flow_evidence import ArtifactFlowCoverage, FlowEvidenceRun, FlowScope
+from buildlens.domain.flow_explanation import ExplanationRun
 from buildlens.domain.flow_trace import MAX_DEPTH, MAX_HOPS, TraceQuery
 
 router = APIRouter(
@@ -653,3 +659,101 @@ def pinned_trace(
     service: FlowTraceService = Depends(get_flow_trace_service),
 ) -> dict[str, Any]:
     return service.pinned(project_id, snapshot_id, trace_digest)
+
+
+# ----------------------------------------------------------------------------- explanations (E)
+
+
+class ExplanationPlanRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    trace_digest: str = Field(..., pattern="^[0-9a-f]{64}$")
+
+
+class ExplanationRunRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    plan_id: UUID
+    plan_digest: str = Field(..., pattern="^[0-9a-f]{64}$")
+    confirm: Literal[True]
+
+
+def explanation_run(run: ExplanationRun) -> dict[str, Any]:
+    return {
+        "run_id": run.id,
+        "plan_id": run.plan_id,
+        "trace_digest": run.trace_digest,
+        "package_digest": run.package_digest,
+        "state": run.state,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "outcome": run.outcome,
+        "returned_model": run.returned_model,
+        "rejection_codes": list(run.rejection_codes),
+        "unknowns": list(run.unknowns),
+        "requests_sent": run.requests_sent,
+        "claims": [
+            {
+                "ordinal": c.ordinal,
+                "level": c.level,
+                "text": c.text,
+                "steps": list(c.steps),
+                "citations": list(c.citations),
+                "claim_digest": c.claim_digest,
+            }
+            for c in run.claims
+        ],
+        "label": "AI-generated explanation, validated against the pinned trace; never evidence",
+    }
+
+
+@router.get("/explanations/config")
+def explanation_config(
+    project_id: UUID,
+    snapshot_id: UUID,
+    service: FlowExplanationService = Depends(get_flow_explanation_service),
+) -> dict[str, Any]:
+    return service.configuration()
+
+
+@router.post("/explanations/plan")
+def plan_explanation(
+    project_id: UUID,
+    snapshot_id: UUID,
+    body: ExplanationPlanRequest,
+    service: FlowExplanationService = Depends(get_flow_explanation_service),
+) -> dict[str, Any]:
+    return service.plan(project_id, snapshot_id, body.trace_digest)
+
+
+@router.post("/explanations")
+def run_explanation(
+    project_id: UUID,
+    snapshot_id: UUID,
+    body: ExplanationRunRequest,
+    service: FlowExplanationService = Depends(get_flow_explanation_service),
+) -> dict[str, Any]:
+    return explanation_run(
+        service.execute(project_id, snapshot_id, body.plan_id, body.plan_digest, body.confirm)
+    )
+
+
+@router.get("/explanations")
+def list_explanations(
+    project_id: UUID,
+    snapshot_id: UUID,
+    trace_digest: str = Query(..., pattern="^[0-9a-f]{64}$"),
+    service: FlowExplanationService = Depends(get_flow_explanation_service),
+) -> dict[str, Any]:
+    runs = service.runs(project_id, snapshot_id, trace_digest)
+    return {"items": [explanation_run(run) for run in runs], "total": len(runs)}
+
+
+@router.get("/explanations/{run_id}")
+def get_explanation(
+    project_id: UUID,
+    snapshot_id: UUID,
+    run_id: UUID,
+    service: FlowExplanationService = Depends(get_flow_explanation_service),
+) -> dict[str, Any]:
+    return explanation_run(service.run(project_id, snapshot_id, run_id))

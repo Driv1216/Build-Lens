@@ -262,5 +262,6 @@ def test_downgrade_refuses_while_flow_evidence_exists(pg_engine: Engine, tmp_pat
         command.downgrade(config, "0016_architecture_rules")
     with pg_engine.connect() as connection:
         assert (
-            connection.scalar(text("SELECT version_num FROM alembic_version")) == "0018_flow_model"
+            connection.scalar(text("SELECT version_num FROM alembic_version"))
+            == "0019_flow_explanations"
         )

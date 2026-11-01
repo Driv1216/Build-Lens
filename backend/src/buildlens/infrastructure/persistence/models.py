@@ -2883,6 +2883,142 @@ class FlowTraceRecord(Base):
     )
 
 
+class FlowExplanationPlanRecord(Base):
+    """A confirmed-before-send explanation plan for one pinned trace (Milestone E)."""
+
+    __tablename__ = "flow_explanation_plans"
+    __table_args__ = (
+        CheckConstraint("state IN ('planned', 'used')", name="ck_flow_explanation_plans_state"),
+        CheckConstraint(f"package_digest {_FLOW_DIGEST}", name="ck_flow_explanation_plans_package"),
+        CheckConstraint(f"request_digest {_FLOW_DIGEST}", name="ck_flow_explanation_plans_request"),
+        CheckConstraint(f"plan_digest {_FLOW_DIGEST}", name="ck_flow_explanation_plans_digest"),
+        CheckConstraint("request_bytes > 0", name="ck_flow_explanation_plans_bytes"),
+        ForeignKeyConstraint(
+            ["flow_run_id", "trace_digest"],
+            ["flow_trace_records.flow_run_id", "flow_trace_records.trace_digest"],
+            name="fk_flow_explanation_plans_trace",
+        ),
+        ForeignKeyConstraint(
+            ["project_version_id"],
+            ["project_versions.id"],
+            name="fk_flow_explanation_plans_version",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    flow_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    trace_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    package_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_bytes: Mapped[int] = mapped_column(nullable=False)
+    config_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    retention_note: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    contract: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class FlowExplanationItemRecord(Base):
+    __tablename__ = "flow_explanation_items"
+    __table_args__ = (
+        CheckConstraint(f"package_digest {_FLOW_DIGEST}", name="ck_flow_explanation_items_package"),
+        ForeignKeyConstraint(
+            ["plan_id"], ["flow_explanation_plans.id"], name="fk_flow_explanation_items_plan"
+        ),
+    )
+    plan_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    trace_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    package: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    package_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class FlowExplanationRunRecord(Base):
+    __tablename__ = "flow_explanation_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('running', 'complete', 'failed', 'abandoned')",
+            name="ck_flow_explanation_runs_state",
+        ),
+        ForeignKeyConstraint(
+            ["plan_id"], ["flow_explanation_plans.id"], name="fk_flow_explanation_runs_plan"
+        ),
+        UniqueConstraint("plan_id", name="uq_flow_explanation_runs_plan"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    plan_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    project_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    lease_token: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FlowExplanationAttemptRecord(Base):
+    __tablename__ = "flow_explanation_attempts"
+    __table_args__ = (
+        CheckConstraint(
+            f"request_digest {_FLOW_DIGEST}", name="ck_flow_explanation_attempts_request"
+        ),
+        ForeignKeyConstraint(
+            ["run_id"], ["flow_explanation_runs.id"], name="fk_flow_explanation_attempts_run"
+        ),
+        UniqueConstraint("run_id", "ordinal", name="uq_flow_explanation_attempts_ordinal"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FlowExplanationOutcomeRecord(Base):
+    __tablename__ = "flow_explanation_outcomes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id"],
+            ["flow_explanation_attempts.id"],
+            name="fk_flow_explanation_outcomes_attempt",
+        ),
+    )
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    validator: Mapped[str] = mapped_column(String(32), nullable=False)
+    returned_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(nullable=True)
+    response_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rejection_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    unknowns: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    diagnostics: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class FlowExplanationClaimRecord(Base):
+    __tablename__ = "flow_explanation_claims"
+    __table_args__ = (
+        CheckConstraint(f"claim_digest {_FLOW_DIGEST}", name="ck_flow_explanation_claims_digest"),
+        ForeignKeyConstraint(
+            ["attempt_id"],
+            ["flow_explanation_outcomes.attempt_id"],
+            name="fk_flow_explanation_claims_outcome",
+        ),
+    )
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    level: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    steps: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    citations: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    claim_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 Base.metadata.tables["project_versions"].append_constraint(
     ForeignKeyConstraint(
         ["active_flow_run_id", "id"],
