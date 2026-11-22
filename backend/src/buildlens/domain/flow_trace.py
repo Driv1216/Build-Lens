@@ -20,7 +20,8 @@ from typing import Any, Literal
 
 from buildlens.domain.source import digest
 
-FLOW_TRACE_VERSION = "flow-trace.v1"
+# v2: a hop reached by several routes carries their disjunction (shared-hop conditions).
+FLOW_TRACE_VERSION = "flow-trace.v2"
 FEASIBILITY_VERSION = "flow-feasibility.v1"
 ENTRY_POINTS_VERSION = "flow-entry-points.v1"
 

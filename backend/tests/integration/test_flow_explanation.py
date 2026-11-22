@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 import pytest
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
@@ -381,5 +382,5 @@ def test_flow_explanation_http_contract_and_downgrade(pg_engine: Engine, tmp_pat
     with pg_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0019_flow_explanations"
+            == ScriptDirectory.from_config(config_).get_current_head()
         )

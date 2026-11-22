@@ -6,6 +6,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from sqlalchemy import create_engine
+
 from buildlens.application.architecture import ArchitectureGraphCache, ArchitectureService
 from buildlens.application.architecture_evaluation import ArchitectureEvaluationService
 from buildlens.application.architecture_queries import ArchitectureQueries
@@ -17,6 +19,7 @@ from buildlens.application.flow import FlowService
 from buildlens.application.flow_evidence import FlowEvidenceService
 from buildlens.application.flow_explanation import FlowExplanationService
 from buildlens.application.flow_trace_service import FlowTraceService, TraceGraphCache
+from buildlens.application.impact import ImpactService
 from buildlens.application.outbound_gate import StructuredGenerator
 from buildlens.application.processing import ProcessingService
 from buildlens.application.retrieval import RetrievalService
@@ -40,6 +43,7 @@ from buildlens.infrastructure.persistence.embeddings import SqlAlchemyEmbeddingS
 from buildlens.infrastructure.persistence.flow import SqlAlchemyFlowStore
 from buildlens.infrastructure.persistence.flow_evidence import SqlAlchemyFlowEvidenceStore
 from buildlens.infrastructure.persistence.flow_explanation import SqlAlchemyFlowExplanationStore
+from buildlens.infrastructure.persistence.impact import SqlAlchemyImpactStore
 from buildlens.infrastructure.persistence.processing import SqlAlchemyProcessingStore
 from buildlens.infrastructure.persistence.retrieval import (
     SqlAlchemyContextEvidenceStore,
@@ -49,6 +53,7 @@ from buildlens.infrastructure.persistence.semantic import SqlAlchemySemanticCata
 from buildlens.infrastructure.persistence.semantic_generation import SqlAlchemyGenerationStore
 from buildlens.infrastructure.persistence.structural import SqlAlchemyStructuralAnalysisStore
 from buildlens.infrastructure.reranking.supervisor import SupervisedCrossEncoder
+from buildlens.infrastructure.structural.impact import syntax_contract
 from buildlens.infrastructure.structural.supervisor import SupervisedSourceReader
 from buildlens.infrastructure.structural.worker import DEFAULT_MAX_RSS_BYTES
 
@@ -236,12 +241,32 @@ def ask_service(state: Any) -> AskService:
     )
 
 
+def impact_service(state: Any) -> ImpactService:
+    return ImpactService(
+        SqlAlchemyImpactStore(state.impact_engine),
+        lambda: SupervisedSourceReader(
+            state.settings.structure_artifact_timeout_seconds, DEFAULT_MAX_RSS_BYTES
+        ),
+        syntax_contract(),
+        max_source=state.settings.structure_max_source_bytes,
+    )
+
+
 class LocalRuntime:
     """One worker/lock set per CLI invocation or HTTP lifespan; no eager model loading."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.engine = create_database_engine(settings)
+        self.impact_engine = create_engine(
+            settings.database_url,
+            pool_pre_ping=True,
+            hide_parameters=True,
+            pool_size=2,
+            max_overflow=0,
+            pool_timeout=0.3,
+            connect_args={"connect_timeout": 2},
+        )
         self.session_factory = create_session_factory_from_engine(self.engine)
         self.scan_lock = Lock()
         self.analysis_lock = Lock()
@@ -301,4 +326,7 @@ class LocalRuntime:
                 try:
                     await self.generation_provider.close()
                 finally:
-                    self.engine.dispose()
+                    try:
+                        self.impact_engine.dispose()
+                    finally:
+                        self.engine.dispose()

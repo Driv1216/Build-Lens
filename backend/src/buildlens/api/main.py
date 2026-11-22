@@ -83,6 +83,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "/flow/evidence",
                         "/flow",
                         "/flow/traces",
+                        "/impact/preparations",
+                        "/impact/proposals/interpret",
+                        "/impact/analyses",
                         "/flow/explanations/plan",
                         "/flow/explanations",
                         "/semantic/generation/plan",
@@ -141,6 +144,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from buildlens.api.flow_routes import router as flow_router
 
     app.include_router(flow_router)
+    from buildlens.api.impact_routes import router as impact_router
+
+    app.include_router(impact_router)
     app.include_router(generation_router)
     app.include_router(generation_runtime_router)
     app.include_router(embedding_router)

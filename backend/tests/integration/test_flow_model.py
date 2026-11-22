@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select, text
 
@@ -720,5 +721,5 @@ def test_downgrade_refuses_while_flow_model_runs_exist(pg_engine: Engine, tmp_pa
     with pg_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0019_flow_explanations"
+            == ScriptDirectory.from_config(config).get_current_head()
         )

@@ -112,7 +112,7 @@ afterEach(() => {
 describe('FlowsPage', () => {
   it('renders four separate verdicts, caveats, alternatives, lanes and responses', async () => {
     mocked.mockImplementation(async (path: string) => route(path))
-    show('/flows?project=p1&snapshot=s1&entry=entry:a')
+    await act(async () => { show('/flows?project=p1&snapshot=s1&entry=entry:a') })
     expect(await screen.findByText('only-in-trace-A')).toBeInTheDocument()
     expect(screen.getByText(/the Stage 14 API matching has not been independently evaluated/)).toBeInTheDocument()
     expect(screen.getAllByText('HTTP link not independently evaluated').length).toBeGreaterThan(0)

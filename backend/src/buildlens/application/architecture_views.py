@@ -683,21 +683,28 @@ class ViewsProjection:
                 {"model": item.model, "recognizer": item.recognizer},
                 [catalog],
             )
-            for value in item.assignments:
-                for referenced in _FOREIGN_KEY.findall(value):
-                    target = f"db_table:{referenced}"
-                    tables[target]  # noqa: B018 - make sure the referenced table node exists
-                    links[target].add(catalog)
-                    self._edge(
-                        f"references_table|{key}|{target}|{item.model}",
-                        "references_table",
-                        key,
-                        target,
-                        "inferred",
-                        {"model": item.model, "pattern": "ForeignKey"},
-                        [catalog],
-                        ("FOREIGN_KEY_FROM_TEXT_PATTERN",),
-                    )
+            # One relationship per model/target table. Several columns (or a composite FK)
+            # can cite that same table; their identical edge key and catalog evidence must
+            # not be emitted once per textual occurrence.
+            referenced_tables = {
+                referenced
+                for value in item.assignments
+                for referenced in _FOREIGN_KEY.findall(value)
+            }
+            for referenced in sorted(referenced_tables):
+                target = f"db_table:{referenced}"
+                tables[target]  # noqa: B018 - make sure the referenced table node exists
+                links[target].add(catalog)
+                self._edge(
+                    f"references_table|{key}|{target}|{item.model}",
+                    "references_table",
+                    key,
+                    target,
+                    "inferred",
+                    {"model": item.model, "pattern": "ForeignKey"},
+                    [catalog],
+                    ("FOREIGN_KEY_FROM_TEXT_PATTERN",),
+                )
         for module in self.modules.values():
             for row in module.literals if module.usable else ():
                 if row["kind"] != "migration_table":

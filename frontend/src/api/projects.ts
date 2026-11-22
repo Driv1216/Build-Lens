@@ -8,8 +8,8 @@ export type Project = {
 
 export type CreateProjectInput = Pick<Project, 'name' | 'root_path'>
 
-export function listProjects(): Promise<Project[]> {
-  return request<Project[]>('/projects')
+export function listProjects(signal?: AbortSignal): Promise<Project[]> {
+  return request<Project[]>('/projects', signal ? { signal } : undefined)
 }
 
 export function createProject(input: CreateProjectInput): Promise<Project> {

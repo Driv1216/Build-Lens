@@ -97,7 +97,7 @@ export function ArchitecturePage() {
           {CLASS_SETS.map(item => <option key={item.value} value={item.value}>{item.text}</option>)}
         </select>
       </label>
-      <p className="note">{scopeLabel} · snapshot <code>{snapshotId || 'none'}</code> · <Link to="/">Back to projects</Link> · <Link to={`/explore?project=${projectId}&snapshot=${snapshotId}`}>Explore</Link></p>
+      <p className="note">{scopeLabel} · snapshot <code>{snapshotId || 'none'}</code> · <Link to="/">Back to projects</Link> · <Link to={`/explore?project=${projectId}&snapshot=${snapshotId}`}>Explore</Link> · <Link to={`/impact?project=${projectId}&snapshot=${snapshotId}`}>Impact</Link></p>
     </div>
     {error && <p className="error" role="alert">{error}</p>}
     {status && !ready && <p className="error" role="alert">{status.freshness === 'none'

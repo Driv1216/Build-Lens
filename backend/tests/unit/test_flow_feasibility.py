@@ -75,3 +75,36 @@ def test_literal_identity_and_trace_digest_are_canonical() -> None:
     one = trace_digest("g" * 64, {"entry": "e"}, {"steps": [1]})
     assert one == trace_digest("g" * 64, {"entry": "e"}, {"steps": [1]})
     assert one != trace_digest("g" * 64, {"entry": "e"}, {"steps": [2]})
+
+
+def test_routes_into_a_shared_hop_are_alternatives_within_bounds() -> None:
+    from buildlens.application.flow_trace import _disjoin
+    from buildlens.domain.flow_trace import DNF_TERMS
+
+    Route = tuple[list[tuple[Atom, ...]], bool]
+    none, not_none = Atom("nullish", X, True), Atom("nullish", X, False)
+    refuted_route: Route = ([(none, not_none)], False)
+    # Alternatives, never one conjunction: a feasible route keeps the hop feasible.
+    feasible_route: Route = ([(Atom("eq", Y, True, ONE),)], False)
+    merged = _disjoin([refuted_route, feasible_route])
+    assert merged == ([(none, not_none), (Atom("eq", Y, True, ONE),)], False)
+    assert decide_dnf(*merged) == "consistent_in_fragment"
+    # Two refuted routes stay refuted; a repeated term is kept once.
+    assert _disjoin([refuted_route, refuted_route]) == ([(none, not_none)], False)
+    assert decide_dnf(*_disjoin([refuted_route, refuted_route])) == "refuted_in_fragment"
+    # An exact unconditional route makes the hop unconditional; an approximate one does not
+    # make the merge exact.
+    unconditional: Route = ([()], False)
+    unconditional_approximate: Route = ([()], True)
+    assert _disjoin([refuted_route, unconditional]) == ([()], False)
+    assert _disjoin([refuted_route, unconditional_approximate]) == ([()], True)
+    # Beyond the DNF bound the merge is truncated and approximate: never refuted, even when
+    # every kept term contradicts.
+    many: list[Route] = [
+        ([(Atom("eq", X, True, ("int", i)), Atom("eq", X, True, ("int", i + 1)))], False)
+        for i in range(DNF_TERMS + 1)
+    ]
+    terms, approximate = _disjoin(many)
+    assert len(terms) == DNF_TERMS and approximate
+    assert all(decide(t) == "refuted_in_fragment" for t in terms)
+    assert decide_dnf(terms, approximate) == "undetermined"

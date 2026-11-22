@@ -220,3 +220,13 @@ pre.attributes { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8r
 .verdict-list dd { margin: 0 0 0 8px; }
 .entry-list, .entry-candidates ol { padding-left: 16px; font-size: .86rem; }
 .entry-list li.selected { font-weight: 600; }
+
+.impact-before-after {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  gap: 1rem;
+}
+
+.impact-before-after > div {
+  min-width: 0;
+}

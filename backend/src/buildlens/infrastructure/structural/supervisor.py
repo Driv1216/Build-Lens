@@ -339,6 +339,14 @@ def _worker(connection: Connection, progress: Any, max_rss_bytes: int = 0) -> No
                     if max_rss_bytes and _peak_rss_bytes() > max_rss_bytes:
                         connection.send((False, ("RESOURCE_LIMIT", int(progress.value))))
                         continue
+                elif operation == "impact_syntax":
+                    from buildlens.infrastructure.structural.impact import extract_impact
+
+                    locator, raw = args
+                    result = extract_impact(locator, raw)
+                    if max_rss_bytes and _peak_rss_bytes() > max_rss_bytes:
+                        connection.send((False, ("RESOURCE_LIMIT", int(progress.value))))
+                        continue
                 elif operation == "flow_versions":
                     result = _versions(reader, args)
                 elif operation == "process":
@@ -424,6 +432,19 @@ class SupervisedSourceReader(SecureSourceReader):
         return cast(
             SourceRead,
             self._run("read", (root, locator, max_bytes, expected_root_identity), self.timeout),
+        )
+
+    def read_with_timeout(
+        self,
+        root: str,
+        locator: str,
+        max_bytes: int,
+        expected_root_identity: tuple[int, int],
+        timeout: float,
+    ) -> SourceRead:
+        return cast(
+            SourceRead,
+            self._run("read", (root, locator, max_bytes, expected_root_identity), timeout),
         )
 
     def fingerprint(
@@ -588,6 +609,9 @@ class SupervisedSourceReader(SecureSourceReader):
                 timeout,
             ),
         )
+
+    def extract_impact(self, locator: str, raw: bytes, timeout: float) -> dict[str, Any]:
+        return cast(dict[str, Any], self._run("impact_syntax", (locator, raw), timeout))
 
     def read_version_file(
         self,

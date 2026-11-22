@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
@@ -470,5 +471,5 @@ def test_persistence_restart_exact_search_and_unchanged_reuse(
     with pg_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0019_flow_explanations"
+            == ScriptDirectory.from_config(config).get_current_head()
         )

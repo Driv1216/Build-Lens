@@ -357,11 +357,13 @@ def test_ts_context_survives_try_and_if_blocks() -> None:
 
 
 def _scopes(source: str, locator: str = "web/api.ts") -> dict[int | None, str]:
-    return {
-        row.span.start_line: row.attributes["callee_scope"]
-        for row in _ts(source, locator).literals
-        if row.kind in {"http_call", "url_call"}
-    }
+    result: dict[int | None, str] = {}
+    for row in _ts(source, locator).literals:
+        if row.kind in {"http_call", "url_call"}:
+            scope = row.attributes["callee_scope"]
+            assert isinstance(scope, str)
+            result[row.span.start_line] = scope
+    return result
 
 
 def test_ts_callee_scope_sees_parameters_and_local_declarations() -> None:

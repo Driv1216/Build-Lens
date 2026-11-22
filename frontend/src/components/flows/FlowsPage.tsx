@@ -88,7 +88,7 @@ export function FlowsPage() {
           {projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
       </label>
-      <p className="note">{scopeLabel} · snapshot <code>{snapshotId || 'none'}</code> · <Link to="/">Back to projects</Link> · <Link to={`/architecture?project=${projectId}&snapshot=${snapshotId}`}>Architecture</Link></p>
+      <p className="note">{scopeLabel} · snapshot <code>{snapshotId || 'none'}</code> · <Link to="/">Back to projects</Link> · <Link to={`/architecture?project=${projectId}&snapshot=${snapshotId}`}>Architecture</Link> · <Link to={`/impact?project=${projectId}&snapshot=${snapshotId}&entity=${entry}`}>Impact</Link></p>
     </div>
     {error && <p className="error" role="alert">{error}</p>}
     {status && !ready && <p className="error" role="alert">{status.freshness === 'none'

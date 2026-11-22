@@ -1,4 +1,4 @@
-"""Stage 15 Milestone C: the ``FlowTrace`` engine (``flow-trace.v1``).
+"""Stage 15 Milestone C: the ``FlowTrace`` engine (``flow-trace.v2``).
 
 A pure, bounded walk over one verified flow model run plus the scope CFGs it cites. It reads
 PostgreSQL only through the loaders it is given (INV-1) and never infers execution order from
@@ -12,6 +12,7 @@ feasibility in the sound fragment. A structural path is never presented as an ex
 
 from __future__ import annotations
 
+import heapq
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -594,6 +595,13 @@ class _Walk:
         self.status_flags: set[str] = set()
         self.deadline = engine._clock() + DEADLINE_SECONDS
         self.languages: set[str] = set()
+        # step id -> (parent hop id, the step's own guard terms, whether they are approximate).
+        # A step's path condition is its parent hop's condition conjoined with these.
+        self.factors: dict[str, tuple[str, list[tuple[Atom, ...]], bool]] = {}
+        # Steps that are a route into their target hop: the step that created it, or a
+        # ``shared`` revisit. A leaf link back to an existing hop (``responds`` to its request)
+        # and a ``cycle_ref`` are continuations, not further ways to reach the hop.
+        self.routes: set[str] = set()
 
     # ----------------------------------------------------------------- hops and steps
 
@@ -640,9 +648,9 @@ class _Walk:
         terms: list[tuple[Atom, ...]],
         approximate: bool,
         lane: str,
+        factor: tuple[list[tuple[Atom, ...]], bool] | None = None,
         **extra: Any,
     ) -> dict[str, Any]:
-        verdict = decide_dnf(terms, approximate)
         language = self.language_of(parent.node)
         value = {
             "id": f"S{len(self.steps)}",
@@ -657,21 +665,15 @@ class _Walk:
                 "conditions": list(edge.conditions),
             },
             "reachability": reach,
-            "path_condition": {
-                "terms": [[atom_json(a) for a in term] for term in terms if term],
-                "approximate": approximate,
-            },
-            "feasibility": {
-                "verdict": verdict,
-                "fragment": "flow-feasibility.v1",
-                "assumptions": list(ASSUMPTIONS_JS if language != "Python" else ASSUMPTIONS_PY),
-            },
+            **_condition(terms, approximate, language),
             "attributes": dict(edge.attributes),
             "lane": lane,
             "evidence": list(edge.evidence),
             **extra,
         }
         self.steps.append(value)
+        if factor is not None:
+            self.factors[value["id"]] = (parent.id, factor[0], factor[1])
         return value
 
     def language_of(self, key: str) -> str:
@@ -764,7 +766,30 @@ class _Walk:
             for edge in sorted(
                 (e for e in outgoing if e.relation == "exits_with"), key=lambda e: e.key
             ):
-                self.follow(hop, edge, facts, None, active)
+                self.follow(hop, edge, facts, self.exit_anchor(hop, facts, edge), active)
+
+    def exit_anchor(self, hop: _Hop, facts: _ScopeFacts | None, edge: FlowEdge) -> int | None:
+        """The CFG node of the raise that produces this outcome, when it is in this scope.
+
+        A raise outcome belongs to one raise site (its ``raises_to`` source), so the handler
+        exits with it only where that raise is reached. Other outcomes (returns, unhandled,
+        raises in callees) keep no anchor: unconditional, an over-approximation."""
+        if facts is None or not edge.target_key:
+            return None
+        own = {
+            e.target_key for e in self.g.out.get(hop.node, []) if e.relation == "contains_callsite"
+        }
+        for raised in self.g.inc.get(edge.target_key, []):
+            if raised.relation != "raises_to" or raised.source_key not in own:
+                continue
+            site = self.g.nodes.get(raised.source_key)
+            if site is None:
+                continue
+            cfg_node = site.attributes.get("cfg_node")
+            if isinstance(cfg_node, int):
+                anchor = _representative(facts, cfg_node, site.attributes.get("copies"))
+                return anchor if isinstance(anchor, int) else None
+        return None
 
     def in_phase(
         self, facts: _ScopeFacts | None, hop: _Hop, cfg_node: Any, copies: Any = ()
@@ -799,9 +824,8 @@ class _Walk:
                 facts, node = self.e.facts(handler), registered.attributes["cfg_node"]
         local, approximate = self.e.local_guards(facts, node)
         known = self.e.known_values(facts, node) if local != [()] else ()
-        terms, approximate = _conjoin(
-            hop.terms, [(*t, *known) for t in local], hop.approximate or approximate
-        )
+        factor = ([(*t, *known) for t in local], approximate)
+        terms, approximate = _conjoin(hop.terms, factor[0], hop.approximate or approximate)
         reach = self.e.reachability(facts, node)
         lane = _lane(hop.lane, edge)
         extra: dict[str, Any] = {"callsite": via} if via else {}
@@ -810,7 +834,9 @@ class _Walk:
             extra["line"] = line
         target_key = edge.target_key
         if edge.relation == "unresolved" or target_key is None:
-            step = self.step(hop, edge, None, reach, terms, approximate, lane, **extra)
+            step = self.step(
+                hop, edge, None, reach, terms, approximate, lane, factor=factor, **extra
+            )
             reasons = list(edge.conditions)
             record = {"step": step["id"], "reasons": reasons, "callsite": via or edge.source_key}
             if all(r.startswith(_BOUNDARY_REASONS) for r in reasons):
@@ -819,10 +845,15 @@ class _Walk:
                 self.gaps.append({**record, "kind": "unresolved_callsite"})
             return
         if edge.relation in _LEAF:
+            created = len(self.hops)
             target = self.leaf(target_key, hop, lane, terms, approximate)
             if edge.relation.startswith("creates_"):
                 extra["body_runs"] = False
-            self.step(hop, edge, target, reach, terms, approximate, lane, **extra)
+            step = self.step(
+                hop, edge, target, reach, terms, approximate, lane, factor=factor, **extra
+            )
+            if len(self.hops) > created:
+                self.routes.add(step["id"])
             return
         phase = _phase(edge)
         # Each outcome expands its own response boundary (its own path condition).
@@ -843,12 +874,13 @@ class _Walk:
                 terms,
                 approximate,
                 lane,
+                factor=factor,
                 cycle_ref=True,
                 **extra,
             )
             return
         if existing is not None:
-            self.step(
+            step = self.step(
                 hop,
                 edge,
                 self.hop_by_id(existing),
@@ -856,12 +888,15 @@ class _Walk:
                 terms,
                 approximate,
                 lane,
+                factor=factor,
                 shared=True,
                 **extra,
             )
+            self.routes.add(step["id"])
             return
         target = self.hop(target_key, context, hop.depth + 1, lane, terms, approximate, phase)
-        step = self.step(hop, edge, target, reach, terms, approximate, lane, **extra)
+        step = self.step(hop, edge, target, reach, terms, approximate, lane, factor=factor, **extra)
+        self.routes.add(step["id"])
         self.segment(hop, edge, step, via)
         if edge.relation == "dispatch_candidate":
             step["candidate"] = True
@@ -971,7 +1006,63 @@ class _Walk:
 
     # ----------------------------------------------------------------- result
 
+    def settle(self) -> None:
+        """Give every hop the disjunction of all the routes that reach it.
+
+        During the walk a revisited hop is linked as ``shared`` and not expanded again, so the
+        steps below it were computed from the first route only. Here each hop's condition
+        becomes the alternatives of every non-``cycle_ref`` route into it (never one
+        conjunction), and every step below is recomputed in dependency order. Only routes count
+        (``self.routes``): a ``cycle_ref`` implies its ancestor's route, and a leaf link back to
+        an existing hop continues the path rather than reaching the hop anew. Routes form a DAG.
+        A merge beyond ``DNF_TERMS`` is approximate, which is never refuted.
+        """
+        incoming: dict[str, list[str]] = defaultdict(list)
+        outgoing: dict[str, list[str]] = defaultdict(list)
+        for step_id, (parent, _, _) in self.factors.items():
+            step = self.steps[int(step_id[1:])]
+            outgoing[parent].append(step_id)
+            if step["to"] and step_id in self.routes:
+                incoming[step["to"]].append(step_id)
+        if not any(len(ids) > 1 for ids in incoming.values()):
+            return  # no hop is reached twice: every condition is already exact
+        computed: dict[str, tuple[list[tuple[Atom, ...]], bool]] = {}
+        waiting = {h.id: len(incoming[h.id]) for h in self.hops}
+        ready = [int(h.id[1:]) for h in self.hops if not waiting[h.id]]
+        heapq.heapify(ready)
+        done: set[str] = set()
+
+        def visit(hop: _Hop, partial: bool) -> None:
+            routes = [computed[s] for s in incoming[hop.id] if s in computed]
+            if len(incoming[hop.id]) == 1 and routes:
+                hop.terms, hop.approximate = routes[0]
+            elif routes:
+                hop.terms, hop.approximate = _disjoin(routes)
+            hop.approximate = hop.approximate or partial
+            done.add(hop.id)
+            for step_id in outgoing[hop.id]:
+                _, factor, local_approximate = self.factors[step_id]
+                terms, approximate = _conjoin(
+                    hop.terms, factor, hop.approximate or local_approximate
+                )
+                computed[step_id] = (terms, approximate)
+                step = self.steps[int(step_id[1:])]
+                step.update(_condition(terms, approximate, self.language_of(hop.node)))
+                target = step["to"]
+                if target and step_id in self.routes:
+                    waiting[target] -= 1
+                    if not waiting[target]:
+                        heapq.heappush(ready, int(target[1:]))
+
+        while ready:
+            visit(self.hops[heapq.heappop(ready)], False)
+        # Unreachable for a walk (routes form a DAG); fail towards approximation, not refutation.
+        for hop in self.hops:
+            if hop.id not in done:
+                visit(hop, True)
+
     def result(self) -> dict[str, Any]:
+        self.settle()
         if "deadline" in self.status_flags:
             status = "deadline"
         elif "truncated_limit" in self.status_flags:
@@ -1220,6 +1311,45 @@ def _conjoin(
             if len(terms) > DNF_TERMS:
                 return terms[:DNF_TERMS], True
     return terms, approximate
+
+
+def _disjoin(
+    routes: list[tuple[list[tuple[Atom, ...]], bool]],
+) -> tuple[list[tuple[Atom, ...]], bool]:
+    """Routes into one hop as alternatives: the union of their DNF terms, never a conjunction.
+
+    An exact unconditional route makes the hop unconditional. Beyond ``DNF_TERMS`` the union
+    is truncated and approximate, so it can never be refuted (``decide_dnf``)."""
+    terms: list[tuple[Atom, ...]] = []
+    approximate = False
+    unconditional: bool | None = None  # None: no route is unconditional; else its exactness
+    for route, route_approximate in routes:
+        for term in route or [()]:
+            if not term:
+                exact = not route_approximate
+                unconditional = exact if unconditional is None else unconditional or exact
+            elif term not in terms:
+                terms.append(term)
+        approximate = approximate or route_approximate
+    if unconditional is not None:
+        return [()], not unconditional
+    if len(terms) > DNF_TERMS:
+        return terms[:DNF_TERMS], True
+    return terms or [()], approximate
+
+
+def _condition(terms: list[tuple[Atom, ...]], approximate: bool, language: str) -> dict[str, Any]:
+    return {
+        "path_condition": {
+            "terms": [[atom_json(a) for a in term] for term in terms if term],
+            "approximate": approximate,
+        },
+        "feasibility": {
+            "verdict": decide_dnf(terms, approximate),
+            "fragment": "flow-feasibility.v1",
+            "assumptions": list(ASSUMPTIONS_JS if language != "Python" else ASSUMPTIONS_PY),
+        },
+    }
 
 
 def _lane(current: str, edge: FlowEdge) -> str:

@@ -19,6 +19,7 @@ from buildlens.application.flow_inputs import ScopeInput
 from buildlens.application.flow_trace import TraceEngine, TraceGraph
 from buildlens.domain.flow import FlowEdge, FlowNode, FlowRun
 from buildlens.domain.flow_trace import (
+    FLOW_TRACE_VERSION,
     MAX_DEPTH,
     MAX_HOPS,
     VERIFICATION_BUDGET,
@@ -223,7 +224,11 @@ class FlowTraceService:
             raise FlowTraceNotFoundError("Pinned trace not found.")
         run_id, query, result = records[-1]
         run = self._flow.run(project_id, snapshot_id, run_id)
-        reasons = self._flow.freshness(project_id, snapshot_id, run)
+        reasons = list(self._flow.freshness(project_id, snapshot_id, run))
+        if result.get("contract") != FLOW_TRACE_VERSION:
+            # Pinned under an earlier trace contract: recomputation follows different rules,
+            # so a digest difference is staleness, not an integrity failure.
+            reasons.append("TRACE_CONTRACT_CHANGED")
         status: Literal["current", "stale", "integrity_failed"]
         failures: list[str] = []
         if reasons:

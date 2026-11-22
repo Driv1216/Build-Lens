@@ -1,5 +1,21 @@
 # BuildLens current state
 
+**Stage 16 independent-review corrections (2026-11-21).** The bounded correction pass
+uses `impact.v5`, `impact-syntax.v8`, and additive migration `0021_impact_provenance`.
+C1–C4 are corrected with focused evidence; C5 adds bounded change operations and established
+artifact membership comparisons. Broader C5 variants are explicit scope proposals awaiting
+owner decision. The understanding gate remains closed. Historical quality remains inconclusive;
+the original full performance score retains its earlier source identity. See
+[the corrective implementation report](docs/STAGE16_CORRECTIONS.md).
+
+**Stage 16 — Engineering Impact Intelligence.** The workbench, application contracts,
+indexed flow exposure, bounded source comparison and patch overlay are implemented. Scoped
+architecture rules, matched SQLAlchemy columns and operation order, FastAPI field contracts,
+configuration declarations and static test relevance are supported. The bounded repeat of
+the frozen 60-observation performance packet passed for the measured revision. The 24-pair
+comparative quality gate remains inconclusive pending independent labels. See
+[Impact analysis](docs/IMPACT_ANALYSIS.md) for the evidence and supported scope.
+
 **As of 2026-10-31, BuildLens is implemented through Phase 3, Stage 14 — Architecture
 Intelligence (Milestones A–D plus review remediation R01–R05), merged into `main` from
 `stage14/architecture-intelligence` on 2026-10-31.** Stage 13 (Semantic Project Model) is also

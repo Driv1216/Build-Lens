@@ -3029,3 +3029,68 @@ Base.metadata.tables["project_versions"].append_constraint(
         initially="DEFERRED",
     )
 )
+
+
+class ImpactPreparationRecord(Base):
+    __tablename__ = "impact_preparations"
+    __table_args__ = (
+        Index(
+            "uq_impact_preparations_sealed_input",
+            "project_id",
+            "locator",
+            "fingerprint",
+            "contract",
+            unique=True,
+            postgresql_where=text("input_seal_digest IS NOT NULL"),
+        ),
+        ForeignKeyConstraint(
+            ["snapshot_id", "project_id"],
+            ["project_versions.id", "project_versions.project_id"],
+            ondelete="CASCADE",
+            name="fk_impact_preparation_owner",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    snapshot_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    locator: Mapped[str] = mapped_column(Text, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    contract: Mapped[str] = mapped_column(String(64), nullable=False)
+    facts_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    facts: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    source_identity: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    input_seal_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class ImpactSealRecord(Base):
+    __tablename__ = "impact_flow_seals"
+    flow_run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("flow_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    graph_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    seal_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    shards: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class ImpactSealShardRecord(Base):
+    __tablename__ = "impact_flow_seal_shards"
+    flow_run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("impact_flow_seals.flow_run_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    shard: Mapped[int] = mapped_column(primary_key=True)
+    members: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
+class ImpactReportRecord(Base):
+    __tablename__ = "impact_reports"
+    project_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    result_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)

@@ -811,10 +811,11 @@ def test_shared_runtime_cleans_every_owner_when_one_close_fails(
     monkeypatch.setattr(
         runtime, "generation_provider", SimpleNamespace(close=provider_close), raising=False
     )
+    runtime.impact_engine = SimpleNamespace(dispose=lambda: closed.append("impact"))
     runtime.engine = SimpleNamespace(dispose=lambda: closed.append("engine"))
     with pytest.raises(RuntimeError, match="synthetic close failure"):
         asyncio.run(runtime.close())
-    assert closed == ["embedding", "reranker", "provider", "engine"]
+    assert closed == ["embedding", "reranker", "provider", "impact", "engine"]
 
 
 def test_independent_verification_record_is_explicit_and_digest_checked(

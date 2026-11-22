@@ -17,6 +17,40 @@ from tests.semantic_support import CatalogStack, write
 
 pytestmark = pytest.mark.integration
 
+
+def test_repeated_foreign_keys_to_one_table_share_one_reference_edge(
+    pg_engine: Engine, tmp_path: Path
+) -> None:
+    # Polar has multiple FK columns into the same table, including self references. The
+    # view represents one model-to-table relationship, not one edge per source occurrence.
+    write(
+        tmp_path,
+        {
+            "app/__init__.py": "",
+            "app/models.py": (
+                "from sqlalchemy import ForeignKey\n"
+                "from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column\n"
+                "class Base(DeclarativeBase):\n    pass\n"
+                "class Event(Base):\n"
+                "    __tablename__ = 'events'\n"
+                "    parent_id: Mapped[int] = mapped_column(ForeignKey('events.id'))\n"
+                "    root_id: Mapped[int] = mapped_column(ForeignKey('events.id'))\n"
+            ),
+        },
+    )
+    stack = CatalogStack(pg_engine, tmp_path)
+    snapshot = stack.prepared()
+    stack.catalog.build(stack.project.id, snapshot.id)
+    store = SqlAlchemyArchitectureStore(stack.factory)
+    service = ArchitectureService(store, stack.catalog)
+    run = service.build(stack.project.id, snapshot.id)
+    _, _, loaded = service.graph(stack.project.id, snapshot.id, run.id)
+    edges = [e for e in loaded.edges.values() if e.kind == "references_table"]
+    assert len(edges) == 1
+    assert edges[0].source_key == edges[0].target_key == "db_table:events"
+    assert service.integrity(stack.project.id, snapshot.id, None)["evidence_failure_count"] == 0
+
+
 MODEL = (
     "from sqlalchemy import ForeignKey\n"
     "from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column\n\n\n"

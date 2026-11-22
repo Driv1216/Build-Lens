@@ -835,15 +835,23 @@ class SqlAlchemyFlowStore(FlowStore):
         failures: list[str] = []
         if not digests:
             return failures
-        items = {
-            r.digest: r
-            for r in session.scalars(
-                select(FlowEvidenceItemRecord).where(
-                    FlowEvidenceItemRecord.flow_run_id == run.id,
-                    FlowEvidenceItemRecord.digest.in_(list(digests)),
-                )
+        # A full integrity check can cite more than PostgreSQL's 65,535 bind parameters.
+        # Bound each query while keeping every requested digest in the verification below;
+        # batching must never silently truncate the evidence set.
+        items: dict[str, FlowEvidenceItemRecord] = {}
+        requested = sorted(digests)
+        for offset in range(0, len(requested), 1000):
+            items.update(
+                {
+                    r.digest: r
+                    for r in session.scalars(
+                        select(FlowEvidenceItemRecord).where(
+                            FlowEvidenceItemRecord.flow_run_id == run.id,
+                            FlowEvidenceItemRecord.digest.in_(requested[offset : offset + 1000]),
+                        )
+                    )
+                }
             )
-        }
         verified: dict[str, bool] = {}  # one check per distinct cited row within this call
         facts: dict[tuple[str, str], list[Any]] = {}
         if bulk:

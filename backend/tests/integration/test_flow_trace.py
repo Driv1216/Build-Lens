@@ -85,7 +85,7 @@ def test_whole_path_from_a_dom_event_to_the_database_and_back(
     click = _entry(service, stack, "dom_event", "<button onClick>")
     trace = service.trace(stack.project_id, stack.snapshot_id, None, TraceQuery(click))
     w = Walk(trace)
-    assert trace["contract"] == "flow-trace.v1" and trace["verification"] == "verified"
+    assert trace["contract"] == "flow-trace.v2" and trace["verification"] == "verified"
 
     # The ordered journey (first visits), frontend → HTTP → route → dependencies → service →
     # data → response → frontend continuation.
@@ -222,6 +222,67 @@ def test_feasibility_oracles_in_the_sound_fragment(pg_engine: Engine, tmp_path: 
     assert "HOST_OBJECT_FALSY_EXCLUDED" in refuted["feasibility"]["assumptions"]
     ops = [a["op"] for a in refuted["path_condition"]["terms"][0]]
     assert ops == ["eq", "eq"]
+
+
+SHARED_HELPER = (
+    "def target() -> None:\n    pass\n\n\n"
+    "def leaf() -> None:\n    target()\n\n\n"
+    "def helper() -> None:\n    leaf()\n\n\n"
+    "def routes(v):\n"
+    "    if v is None:\n"
+    "        if v is not None:\n"
+    "            helper()\n"
+    "    helper()\n"
+)
+
+
+def test_a_shared_hop_keeps_every_route_condition(pg_engine: Engine, tmp_path: Path) -> None:
+    # Two routes reach ``helper``: the first is contradictory (``v is None`` and
+    # ``v is not None``), the second is unconditional. Both ``helper`` activations call
+    # ``leaf`` from the same callsite, so ``leaf`` is one shared hop. Its condition is the
+    # disjunction of both routes, so ``leaf -> target`` must not be refuted.
+    files = {**TRACE_REPOSITORY, "backend/app/shared.py": SHARED_HELPER}
+    stack = FlowStack(pg_engine, tmp_path, files)
+    run = stack.build()
+    trace = _trace(stack, Graph(stack, run).scope("backend/app/shared.py", "routes"))
+    walk = Walk(trace)
+
+    def verdicts(label: str) -> list[str]:
+        return [s["feasibility"]["verdict"] for s in walk.steps("invokes", label=label)]
+
+    # Each route into ``helper`` keeps its own condition: one refuted, one consistent.
+    assert sorted(verdicts("helper")) == ["consistent_in_fragment", "refuted_in_fragment"]
+    # The first ``helper -> leaf`` step stays on the refuted route; the shared one does not.
+    into_leaf = walk.steps("invokes", label="leaf")
+    assert len(into_leaf) == 2 and sum(bool(s.get("shared")) for s in into_leaf) == 1
+    assert {s["feasibility"]["verdict"] for s in into_leaf} == {
+        "refuted_in_fragment",
+        "consistent_in_fragment",
+    }
+    # Below the shared hop, the condition is both routes as alternatives, never one
+    # conjunction: the unconditional route absorbs the contradictory one.
+    (below,) = walk.steps("invokes", label="target")
+    assert below["feasibility"]["verdict"] == "consistent_in_fragment"
+    assert below["path_condition"] == {"terms": [], "approximate": False}
+    # Recomputation stays byte-identical (INV-7).
+    again = _trace(stack, Graph(stack, run).scope("backend/app/shared.py", "routes"))
+    assert again["trace_digest"] == trace["trace_digest"]
+    # A trace pinned under the earlier contract (first-route conditions) re-verifies as
+    # stale, not as an integrity failure: the rules changed, the evidence did not.
+    service = _service(stack)
+    query = TraceQuery(Graph(stack, run).scope("backend/app/shared.py", "routes"))
+    digest = service.pin(stack.project_id, stack.snapshot_id, None, query)["trace_digest"]
+    assert service.pinned(stack.project_id, stack.snapshot_id, digest)["status"] == "current"
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE flow_trace_records SET result = "
+                "jsonb_set(result, '{contract}', '\"flow-trace.v1\"') WHERE trace_digest = :d"
+            ),
+            {"d": digest},
+        )
+    old = service.pinned(stack.project_id, stack.snapshot_id, digest)
+    assert old["status"] == "stale" and old["freshness_reasons"] == ["TRACE_CONTRACT_CHANGED"]
 
 
 def test_commit_in_dependency_teardown_is_after_the_response_and_absence_is_gated(
